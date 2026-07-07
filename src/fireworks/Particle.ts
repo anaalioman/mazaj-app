@@ -35,6 +35,8 @@ export interface ParticleOptions {
   /** Age in frames at which this particle hands off to `onSplit` children (e.g. Crossette). */
   splitAt?: number;
   onSplit?: (x: number, y: number, vx: number, vy: number) => void;
+  /** Strobe/Glitter: randomized on-off blinking instead of a smooth twinkle fade. */
+  strobe?: boolean;
 }
 
 // A single point of light: an explosion spark, a rocket trail dot, or a
@@ -61,6 +63,10 @@ export class Particle {
   private readonly onSplit?: (x: number, y: number, vx: number, vy: number) => void;
   private hasSplit = false;
 
+  private readonly strobe: boolean;
+  private strobeTimer: number;
+  private strobeOn = true;
+
   constructor(texture: Texture, options: ParticleOptions) {
     const {
       x,
@@ -77,6 +83,7 @@ export class Particle {
       onSparkle,
       splitAt,
       onSplit,
+      strobe = false,
     } = options;
 
     this.vx = vx;
@@ -91,6 +98,8 @@ export class Particle {
     this.onSparkle = onSparkle;
     this.splitAt = splitAt;
     this.onSplit = onSplit;
+    this.strobe = strobe;
+    this.strobeTimer = 3 + Math.random() * 10;
 
     this.sprite = new Sprite(texture);
     this.sprite.anchor.set(0.5);
@@ -117,6 +126,15 @@ export class Particle {
     let alpha = fade * fade;
     if (this.twinkle) {
       alpha *= 0.55 + 0.45 * Math.sin(this.age * 2.4 + this.sprite.x);
+    }
+    if (this.strobe) {
+      this.strobeTimer -= delta;
+      if (this.strobeTimer <= 0) {
+        this.strobeOn = !this.strobeOn;
+        // Re-randomized every flip so the blink speed itself varies, not just on/off.
+        this.strobeTimer = 3 + Math.random() * 10;
+      }
+      alpha *= this.strobeOn ? 1 : 0.04;
     }
     this.sprite.alpha = Math.max(0, alpha);
 

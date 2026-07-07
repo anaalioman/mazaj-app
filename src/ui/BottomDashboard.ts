@@ -27,10 +27,12 @@ const SLIDERS = {
 } satisfies Record<string, SliderSpec>;
 
 const BURST_LABELS: Record<BurstType, string> = {
-  peony: '🌸 بيوني',
+  peony: '🌸 بيوني بقلب',
   rose: '🌹 وردة',
   kamuro: '✨ كامورو ذهبي',
-  crossette: '✚ كروسيت',
+  crossette: '🌴 كروسيت نخلة',
+  multiRing: '💫 حلقات متعددة',
+  strobe: '💎 وميض متلألئ',
 };
 
 const PRESETS: { id: BackgroundPreset; label: string }[] = [
@@ -60,6 +62,7 @@ export class BottomDashboard {
 
     this.wireTabs();
     this.wireBurstToggles();
+    this.wireRandomMode();
     this.wireAutoShow();
     this.wirePresets();
     this.wireMedia();
@@ -83,6 +86,7 @@ export class BottomDashboard {
               (type) => `<button type="button" class="mcp-burst-btn" data-type="${type}">${BURST_LABELS[type]}</button>`,
             ).join('')}
           </div>
+          <button type="button" id="mzj-random-mode" class="mcp-primary-btn mzj-random-btn">🎲 توليد عشوائي هجين</button>
           <button type="button" id="mzj-auto-show" class="mcp-primary-btn active">العرض التلقائي: يعمل</button>
         </section>
 
@@ -181,6 +185,22 @@ export class BottomDashboard {
     }
 
     sync();
+  }
+
+  private wireRandomMode(): void {
+    const button = this.query<HTMLButtonElement>('#mzj-random-mode');
+    const burstButtons = Array.from(this.root.querySelectorAll<HTMLButtonElement>('.mcp-burst-btn'));
+    let enabled = false;
+
+    button.addEventListener('click', () => {
+      enabled = !enabled;
+      this.deps.fireworks.setRandomMode(enabled);
+      button.classList.toggle('active', enabled);
+      button.textContent = enabled ? '🎲 التوليد العشوائي: يعمل' : '🎲 توليد عشوائي هجين';
+      // The individual shell toggles are meaningless while the randomizer
+      // is picking freely across every pattern, so grey them out.
+      for (const btn of burstButtons) btn.disabled = enabled;
+    });
   }
 
   private wireAutoShow(): void {

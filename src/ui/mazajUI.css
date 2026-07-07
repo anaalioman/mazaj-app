@@ -233,6 +233,23 @@
   color: #ffe9b3;
 }
 
+.mcp-burst-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.mzj-random-btn {
+  background: linear-gradient(180deg, #c084fc, #7c3aed);
+  border-color: rgba(192, 132, 252, 0.5);
+  color: #fff;
+}
+
+.mzj-random-btn.active {
+  background: linear-gradient(180deg, #f0abfc, #a855f7);
+  box-shadow: 0 0 16px rgba(192, 132, 252, 0.55);
+}
+
 .mcp-slider-row {
   display: flex;
   align-items: center;
