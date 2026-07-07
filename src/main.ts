@@ -5,6 +5,8 @@ import { FireworksSystem } from './fireworks/FireworksSystem';
 import { TextReveal } from './effects/TextReveal';
 import { MortarField } from './effects/MortarField';
 import { GlowFrame } from './effects/GlowFrame';
+import { ScreenFlash } from './effects/ScreenFlash';
+import { ShockwaveManager } from './effects/Shockwave';
 import { AudioManager } from './audio/AudioManager';
 import { RecordingManager, downloadBlob } from './recording/RecordingManager';
 import { BackgroundLayer } from './background';
@@ -43,6 +45,8 @@ const background = new BackgroundLayer(app);
 
 const audio = new AudioManager(app);
 const mortarField = new MortarField(app);
+const explosionFlash = new ScreenFlash(app);
+const shockwave = new ShockwaveManager(app);
 
 let inputMode: InputMode = 'tap';
 
@@ -52,7 +56,11 @@ const fireworks = new FireworksSystem(app, {
     audio.playLaunch();
     mortarField.fireNear(x);
   },
-  onExplode: (x, y) => audio.playExplosion(x, y),
+  onExplode: (x, y) => {
+    audio.playExplosion(x, y);
+    explosionFlash.flash();
+    shockwave.trigger(x, y);
+  },
 });
 
 const textReveal = new TextReveal(app);
@@ -80,6 +88,8 @@ app.ticker.add((ticker) => {
   fireworks.update(ticker.deltaTime);
   mortarField.update(ticker.deltaTime);
   textReveal.update(ticker.deltaTime);
+  explosionFlash.update(ticker.deltaMS / 1000);
+  shockwave.update(ticker.deltaMS / 1000);
 });
 
 setupOverlay.addEventListener('submit', (event) => {
