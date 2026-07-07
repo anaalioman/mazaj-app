@@ -4,4 +4,9 @@
     <string name="title_activity_main">مزاج</string>
     <string name="package_name">com.mazaj.app</string>
     <string name="custom_url_scheme">com.mazaj.app</string>
+
+    <!-- Google's official AdMob TEST App ID (https://developers.google.com/admob/android/test-ads).
+         Safe to ship in debug builds; MUST be swapped for the real App ID from the
+         AdMob console (Apps > App settings > App ID) before any release build. -->
+    <string name="admob_app_id">ca-app-pub-3940256099942544~3347511713</string>
 </resources>

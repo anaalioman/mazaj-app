@@ -3,6 +3,11 @@ import './ui/mazajUI.css';
 import './home/homeScreen.css';
 import { HomeScreen, type MoodId } from './home/HomeScreen';
 import type { FireworksMoodHandle } from './moods/fireworksMood';
+import { initializeMonetization } from './services';
+
+// Fire-and-forget: no-ops on web/dev, and shouldn't block the home screen
+// from rendering while the native SDKs (if present) spin up.
+void initializeMonetization();
 
 const homeScreenEl = document.querySelector<HTMLDivElement>('#home-screen')!;
 const fireworksContainer = document.querySelector<HTMLDivElement>('#fireworks-mood')!;
