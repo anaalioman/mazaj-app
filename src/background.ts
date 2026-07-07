@@ -1,6 +1,21 @@
-import { Application, Container, Graphics, Sprite, Texture } from 'pixi.js';
+import { Application, BlurFilter, Container, FillGradient, Graphics, Sprite, Texture } from 'pixi.js';
 
 export type BackgroundPreset = 'none' | 'city' | 'mountains';
+
+// Deep Sky Canvas palette.
+const SKY_TOP = 0x050508; // Royal Black
+const SKY_BOTTOM = 0x0f111a; // Deep Midnight Blue
+const HORIZON_GLOW_COLOR = '91, 74, 181'; // indigo/violet, as an rgb() triplet for alpha stops
+const STAR_MIN_COUNT = 50;
+const STAR_MAX_COUNT = 80;
+const STAR_UPPER_BAND = 0.8; // stars only scattered across the upper 80% of the screen
+
+interface TwinkleStar {
+  display: Graphics;
+  baseAlpha: number;
+  speed: number;
+  phase: number;
+}
 
 function coverFit(sprite: Sprite, width: number, height: number): void {
   const scale = Math.max(width / sprite.texture.width, height / sprite.texture.height);
@@ -16,23 +31,35 @@ function grayscaleTint(brightness: number): number {
 }
 
 /**
- * Owns whatever sits behind the show — the default starfield, an uploaded
- * photo, or a looping video — plus the dimmer applied to it. Swapping the
- * backdrop or dimming it never touches per-pixel CPU work: cover-fit is a
- * transform, and dimming is a GPU tint multiply, so neither costs frames.
+ * Owns whatever sits behind the show — the Deep Sky Canvas (gradient +
+ * horizon glow + twinkling stars), an uploaded photo, or a looping video —
+ * plus the dimmer applied to it. It always sits at stage index 0, safely
+ * behind the fireworks and mortar layers added on top of it later.
+ *
+ * Swapping the backdrop or dimming it never touches per-pixel CPU work:
+ * cover-fit is a transform and dimming is a GPU tint multiply, so neither
+ * costs frames. The only per-frame cost is the twinkle animation, which is
+ * just a handful of `alpha` writes driven by `Math.sin()`.
  */
 export class BackgroundLayer {
   private readonly app: Application;
   private current: Container;
   private currentSprite: Sprite | null = null;
+  private currentPreset: BackgroundPreset = 'none';
   private videoEl: HTMLVideoElement | null = null;
   private dimmer = 1;
 
+  private stars: TwinkleStar[] = [];
+  private twinkleClock = 0;
+  private skyGradient: FillGradient | null = null;
+  private glowGradient: FillGradient | null = null;
+
   constructor(app: Application) {
     this.app = app;
-    this.current = this.buildStarfield();
+    this.current = this.buildDeepSky();
     app.stage.addChildAt(this.current, 0);
     app.renderer.on('resize', () => this.handleResize());
+    app.ticker.add((ticker) => this.updateTwinkle(ticker.deltaTime));
   }
 
   /** Loads a user-supplied photo and displays it full-screen, cover-fit. */
@@ -44,12 +71,14 @@ export class BackgroundLayer {
       await image.decode();
 
       this.stopVideo();
+      this.stars = []; // the old preset's stars are about to be destroyed by replace()
+      const oldGradients = this.takeTrackedGradients();
       const sprite = new Sprite(Texture.from(image));
       sprite.anchor.set(0.5);
       coverFit(sprite, this.app.screen.width, this.app.screen.height);
       sprite.tint = grayscaleTint(this.dimmer);
 
-      this.replace(sprite);
+      this.replace(sprite, oldGradients);
       this.currentSprite = sprite;
     } finally {
       URL.revokeObjectURL(objectUrl);
@@ -68,6 +97,8 @@ export class BackgroundLayer {
     await video.play().catch(() => undefined);
 
     this.stopVideo();
+    this.stars = []; // the old preset's stars are about to be destroyed by replace()
+    const oldGradients = this.takeTrackedGradients();
     this.videoEl = video;
 
     const sprite = new Sprite(Texture.from(video));
@@ -75,7 +106,7 @@ export class BackgroundLayer {
     coverFit(sprite, this.app.screen.width, this.app.screen.height);
     sprite.tint = grayscaleTint(this.dimmer);
 
-    this.replace(sprite);
+    this.replace(sprite, oldGradients);
     this.currentSprite = sprite;
     // objectUrl is intentionally not revoked here — the <video> element keeps
     // streaming from it for as long as this backdrop is active.
@@ -87,17 +118,104 @@ export class BackgroundLayer {
     if (this.currentSprite) this.currentSprite.tint = grayscaleTint(this.dimmer);
   }
 
-  /** Quick built-in backdrops — a starfield-only sky, or a flat skyline/ridge silhouette over it. */
+  /** Quick built-in backdrops — the Deep Sky Canvas alone, or with a flat skyline/ridge silhouette over it. */
   setPreset(preset: BackgroundPreset): void {
     this.stopVideo();
-    const next = preset === 'none' ? this.buildStarfield() : this.buildSilhouette(preset);
-    this.replace(next);
+    this.currentPreset = preset;
+    const oldGradients = this.takeTrackedGradients();
+    const next = preset === 'none' ? this.buildDeepSky() : this.buildSilhouette(preset);
+    this.replace(next, oldGradients);
     this.currentSprite = null;
   }
 
-  private buildSilhouette(preset: 'city' | 'mountains'): Container {
+  /** Full-screen vertical gradient + ambient horizon glow + twinkling stars. */
+  private buildDeepSky(): Container {
     const group = new Container();
-    group.addChild(this.buildStarfield());
+    const { width, height } = this.app.screen;
+
+    group.addChild(this.buildSkyGradient(width, height));
+    group.addChild(this.buildHorizonGlow(width, height));
+    group.addChild(this.buildStars(width, height));
+
+    return group;
+  }
+
+  private buildSkyGradient(width: number, height: number): Graphics {
+    const gradient = new FillGradient({
+      type: 'linear',
+      start: { x: 0, y: 0 },
+      end: { x: 0, y: 1 },
+      textureSpace: 'local',
+      colorStops: [
+        { offset: 0, color: SKY_TOP },
+        { offset: 1, color: SKY_BOTTOM },
+      ],
+    });
+    this.skyGradient = gradient;
+
+    return new Graphics().rect(0, 0, width, height).fill(gradient);
+  }
+
+  private buildHorizonGlow(width: number, height: number): Graphics {
+    const glowHeight = Math.max(height * 0.16, 100);
+
+    const gradient = new FillGradient({
+      type: 'linear',
+      start: { x: 0, y: 0 },
+      end: { x: 0, y: 1 },
+      textureSpace: 'local',
+      colorStops: [
+        { offset: 0, color: `rgba(${HORIZON_GLOW_COLOR}, 0)` },
+        { offset: 1, color: `rgba(${HORIZON_GLOW_COLOR}, 0.55)` },
+      ],
+    });
+    this.glowGradient = gradient;
+
+    const glow = new Graphics().rect(0, height - glowHeight, width, glowHeight).fill(gradient);
+    glow.filters = [new BlurFilter({ strength: 20 })];
+    return glow;
+  }
+
+  private buildStars(width: number, height: number): Container {
+    const container = new Container();
+    const count = STAR_MIN_COUNT + Math.floor(Math.random() * (STAR_MAX_COUNT - STAR_MIN_COUNT + 1));
+    const stars: TwinkleStar[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const x = Math.random() * width;
+      const y = Math.random() * height * STAR_UPPER_BAND;
+      const radius = 0.4 + Math.random() * 1.3;
+      const baseAlpha = 0.35 + Math.random() * 0.5;
+
+      const display = new Graphics().circle(x, y, radius).fill({ color: 0xffffff });
+      display.alpha = baseAlpha;
+      container.addChild(display);
+
+      stars.push({
+        display,
+        baseAlpha,
+        // Staggered speed + phase so stars never blink in unison.
+        speed: 0.6 + Math.random() * 1.4,
+        phase: Math.random() * Math.PI * 2,
+      });
+    }
+
+    this.stars = stars;
+    return container;
+  }
+
+  private updateTwinkle(delta: number): void {
+    if (this.stars.length === 0) return;
+
+    this.twinkleClock += delta * 0.02;
+    for (const star of this.stars) {
+      const wave = Math.sin(this.twinkleClock * star.speed + star.phase);
+      star.display.alpha = star.baseAlpha * (0.55 + 0.45 * wave);
+    }
+  }
+
+  private buildSilhouette(preset: 'city' | 'mountains'): Container {
+    const group = this.buildDeepSky();
 
     const { width, height } = this.app.screen;
     const g = new Graphics();
@@ -128,34 +246,35 @@ export class BackgroundLayer {
     return group;
   }
 
-  private buildStarfield(): Container {
-    const stars = new Container();
-    const graphics = new Graphics();
-    const count = 140;
-
-    for (let i = 0; i < count; i++) {
-      const x = Math.random() * this.app.screen.width;
-      const y = Math.random() * this.app.screen.height * 0.75;
-      const r = Math.random() * 1.2 + 0.3;
-      graphics.circle(x, y, r).fill({ color: 0xffffff, alpha: 0.3 + Math.random() * 0.5 });
-    }
-
-    stars.addChild(graphics);
-    return stars;
-  }
-
   private handleResize(): void {
     if (this.currentSprite) {
       coverFit(this.currentSprite, this.app.screen.width, this.app.screen.height);
+      return;
     }
+
+    // Currently showing a procedural preset (Deep Sky ± silhouette) — regenerate
+    // it at the new size so the gradient bounds and star field stay correct.
+    const oldGradients = this.takeTrackedGradients();
+    const next = this.currentPreset === 'none' ? this.buildDeepSky() : this.buildSilhouette(this.currentPreset);
+    this.replace(next, oldGradients);
   }
 
-  private replace(next: Container): void {
+  private replace(next: Container, oldGradients: FillGradient[] = []): void {
     this.app.stage.addChildAt(next, 0);
     const old = this.current;
     this.app.stage.removeChild(old);
     old.destroy({ children: true, texture: true, textureSource: true });
+    for (const gradient of oldGradients) gradient.destroy();
     this.current = next;
+  }
+
+  /** Captures whichever gradients the *current* (about-to-be-replaced) container owns, so
+   * they can be destroyed after the swap — without touching the fresh ones a rebuild just made. */
+  private takeTrackedGradients(): FillGradient[] {
+    const gradients = [this.skyGradient, this.glowGradient].filter((g): g is FillGradient => g !== null);
+    this.skyGradient = null;
+    this.glowGradient = null;
+    return gradients;
   }
 
   private stopVideo(): void {
