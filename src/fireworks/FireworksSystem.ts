@@ -2,10 +2,16 @@ import { Application, Container } from 'pixi.js';
 import { Particle } from './Particle';
 import { Rocket } from './Rocket';
 import { getParticleTexture } from './textures';
-import { randomColor, randomPalette } from './colors';
+import { pickBurstColors, randomColor, randomPalette } from './colors';
 
 const MIN_LAUNCH_INTERVAL = 0.9;
 const MAX_LAUNCH_INTERVAL = 2.4;
+
+export interface FireworksSystemOptions {
+  autoLaunch?: boolean;
+  onLaunch?: () => void;
+  onExplode?: () => void;
+}
 
 /**
  * Owns every rocket and spark on screen: spawning, physics, and cleanup.
@@ -14,6 +20,8 @@ const MAX_LAUNCH_INTERVAL = 2.4;
 export class FireworksSystem {
   private readonly app: Application;
   private readonly layer: Container;
+  private readonly onLaunch?: () => void;
+  private readonly onExplode?: () => void;
 
   private rockets: Rocket[] = [];
   private particles: Particle[] = [];
@@ -21,10 +29,12 @@ export class FireworksSystem {
   private autoLaunchEnabled: boolean;
   private timeToNextAutoLaunch: number;
 
-  constructor(app: Application, options: { autoLaunch?: boolean } = {}) {
+  constructor(app: Application, options: FireworksSystemOptions = {}) {
     this.app = app;
     this.layer = new Container();
     app.stage.addChild(this.layer);
+    this.onLaunch = options.onLaunch;
+    this.onExplode = options.onExplode;
 
     // Force-build the shared particle texture up front so the first
     // firework doesn't stall on texture generation.
@@ -49,6 +59,7 @@ export class FireworksSystem {
     });
     this.layer.addChild(rocket.sprite);
     this.rockets.push(rocket);
+    this.onLaunch?.();
   }
 
   update(delta: number): void {
@@ -63,7 +74,8 @@ export class FireworksSystem {
     this.rockets = this.rockets.filter((rocket) => {
       const reachedApex = rocket.update(delta, (x, y) => this.spawnTrailSpark(x, y, rocket.color));
       if (reachedApex) {
-        this.explode(rocket.x, rocket.y, rocket.color);
+        this.explode(rocket.x, rocket.y);
+        this.onExplode?.();
         this.layer.removeChild(rocket.sprite);
         rocket.destroy();
         return false;
@@ -86,8 +98,10 @@ export class FireworksSystem {
     if (enabled) this.timeToNextAutoLaunch = this.randomLaunchDelay();
   }
 
-  private explode(x: number, y: number, seedColor: number): void {
-    const palette = randomPalette();
+  private explode(x: number, y: number): void {
+    // Every burst draws from several distinct, randomly chosen colors so it
+    // always reads as multi-colored rather than a single tone.
+    const burstColors = pickBurstColors(4 + Math.floor(Math.random() * 3));
     const count = 55 + Math.floor(Math.random() * 60);
     const baseSpeed = 2.4 + Math.random() * 2.2;
     const texture = getParticleTexture(this.app);
@@ -95,7 +109,7 @@ export class FireworksSystem {
     for (let i = 0; i < count; i++) {
       const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
       const speed = baseSpeed * (0.5 + Math.random() * 0.6);
-      const color = Math.random() < 0.7 ? randomColor(palette) : seedColor;
+      const color = burstColors[Math.floor(Math.random() * burstColors.length)];
 
       const particle = new Particle(texture, {
         x,

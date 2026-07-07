@@ -1,24 +1,54 @@
 import './style.css';
-import { Application, Container, Graphics } from 'pixi.js';
+import { Application } from 'pixi.js';
 import { FireworksSystem } from './fireworks/FireworksSystem';
+import { TextReveal } from './effects/TextReveal';
+import { AudioManager } from './audio/AudioManager';
+import { RecordingManager, downloadBlob } from './recording/RecordingManager';
+import { drawStarfield, setBackgroundImage } from './background';
 
-const container = document.querySelector<HTMLDivElement>('#app')!;
+const appContainer = document.querySelector<HTMLDivElement>('#app')!;
+const setupOverlay = document.querySelector<HTMLFormElement>('#setup-overlay')!;
+const imageInput = document.querySelector<HTMLInputElement>('#image-input')!;
+const phraseInput = document.querySelector<HTMLInputElement>('#phrase-input')!;
+const recordBtn = document.querySelector<HTMLButtonElement>('#record-btn')!;
+const stopRecordBtn = document.querySelector<HTMLButtonElement>('#stop-record-btn')!;
+const recordIndicator = document.querySelector<HTMLSpanElement>('#record-indicator')!;
+const hint = document.querySelector<HTMLDivElement>('.hint')!;
+
+// Royal black: a deep, rich near-black backdrop for the fireworks stage.
+const ROYAL_BLACK = '#040406';
 
 const app = new Application();
 
 await app.init({
   resizeTo: window,
-  background: '#030512',
+  background: ROYAL_BLACK,
+  backgroundAlpha: 1,
   antialias: true,
   resolution: Math.min(window.devicePixelRatio || 1, 2),
   autoDensity: true,
+  powerPreference: 'high-performance',
+  // Needed so canvas.captureStream() (video recording) sees fresh frames
+  // instead of an already-cleared WebGL buffer.
+  preserveDrawingBuffer: true,
 });
 
-container.appendChild(app.canvas);
+appContainer.appendChild(app.canvas);
 
-drawStarfield(app);
+let background = drawStarfield(app);
 
-const fireworks = new FireworksSystem(app, { autoLaunch: true });
+const audio = new AudioManager();
+
+const fireworks = new FireworksSystem(app, {
+  autoLaunch: false,
+  onLaunch: () => audio.playLaunch(),
+  onExplode: () => audio.playExplosion(),
+});
+
+const textReveal = new TextReveal(app);
+const recording = new RecordingManager(app.canvas as HTMLCanvasElement, audio.getRecordingStream());
+
+let fireworksEnabled = false;
 
 app.stage.eventMode = 'static';
 app.stage.hitArea = app.screen;
@@ -26,27 +56,71 @@ app.renderer.on('resize', () => {
   app.stage.hitArea = app.screen;
 });
 
+// Free-form launch: the shell always fires from wherever the player taps,
+// straight up to that same point — no fixed grid or lanes.
 app.stage.on('pointerdown', (event) => {
+  if (!fireworksEnabled) return;
   const { x, y } = event.global;
   fireworks.launch(x, y);
 });
 
 app.ticker.add((ticker) => {
   fireworks.update(ticker.deltaTime);
+  textReveal.update(ticker.deltaTime);
 });
 
-function drawStarfield(app: Application): void {
-  const stars = new Container();
-  const graphics = new Graphics();
-  const count = 140;
+setupOverlay.addEventListener('submit', (event) => {
+  event.preventDefault();
+  void startShow();
+});
 
-  for (let i = 0; i < count; i++) {
-    const x = Math.random() * app.screen.width;
-    const y = Math.random() * app.screen.height * 0.75;
-    const r = Math.random() * 1.2 + 0.3;
-    graphics.circle(x, y, r).fill({ color: 0xffffff, alpha: 0.3 + Math.random() * 0.5 });
+async function startShow(): Promise<void> {
+  setupOverlay.classList.add('hidden');
+  hint.classList.remove('hidden');
+
+  await audio.unlock();
+  if (audio.hasMissingSounds()) {
+    console.info('أضف ملفات الصوت في public/audio/ لتفعيل المؤثرات الصوتية (راجع public/audio/README.md).');
   }
 
-  stars.addChild(graphics);
-  app.stage.addChild(stars);
+  const file = imageInput.files?.[0];
+  if (file) {
+    background = await setBackgroundImage(app, file, background);
+  }
+
+  audio.playReveal();
+  await textReveal.reveal(phraseInput.value);
+
+  fireworksEnabled = true;
+  fireworks.setAutoLaunch(true);
 }
+
+const canRecord = typeof MediaRecorder !== 'undefined' && typeof app.canvas.captureStream === 'function';
+if (!canRecord) {
+  recordBtn.disabled = true;
+  recordBtn.title = 'تسجيل الفيديو غير مدعوم في هذا المتصفح';
+}
+
+recordBtn.addEventListener('click', () => {
+  try {
+    recording.start();
+    recordBtn.disabled = true;
+    stopRecordBtn.disabled = false;
+    recordIndicator.classList.remove('hidden');
+  } catch (error) {
+    console.error('تعذّر بدء التسجيل:', error);
+  }
+});
+
+stopRecordBtn.addEventListener('click', async () => {
+  stopRecordBtn.disabled = true;
+  try {
+    const blob = await recording.stop();
+    downloadBlob(blob, `mazaj-fireworks-${Date.now()}.webm`);
+  } catch (error) {
+    console.error('تعذّر إنهاء التسجيل:', error);
+  } finally {
+    recordBtn.disabled = false;
+    recordIndicator.classList.add('hidden');
+  }
+});
