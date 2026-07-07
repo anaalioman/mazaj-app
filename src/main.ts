@@ -1,11 +1,14 @@
 import './style.css';
+import './ui/controlPanel.css';
 import { Application } from 'pixi.js';
 import { FireworksSystem } from './fireworks/FireworksSystem';
 import { TextReveal } from './effects/TextReveal';
 import { MortarField } from './effects/MortarField';
+import { GlowFrame } from './effects/GlowFrame';
 import { AudioManager } from './audio/AudioManager';
 import { RecordingManager, downloadBlob } from './recording/RecordingManager';
-import { drawStarfield, setBackgroundImage } from './background';
+import { BackgroundLayer } from './background';
+import { ControlPanel } from './ui/ControlPanel';
 
 const appContainer = document.querySelector<HTMLDivElement>('#app')!;
 const setupOverlay = document.querySelector<HTMLFormElement>('#setup-overlay')!;
@@ -36,7 +39,7 @@ await app.init({
 
 appContainer.appendChild(app.canvas);
 
-let background = drawStarfield(app);
+const background = new BackgroundLayer(app);
 
 const audio = new AudioManager(app);
 const mortarField = new MortarField(app);
@@ -51,7 +54,10 @@ const fireworks = new FireworksSystem(app, {
 });
 
 const textReveal = new TextReveal(app);
+const glowFrame = new GlowFrame(app);
 const recording = new RecordingManager(app.canvas as HTMLCanvasElement, audio.getRecordingStream());
+
+new ControlPanel({ app, fireworks, background, glowFrame, recording });
 
 let fireworksEnabled = false;
 
@@ -91,7 +97,7 @@ async function startShow(): Promise<void> {
 
   const file = imageInput.files?.[0];
   if (file) {
-    background = await setBackgroundImage(app, file, background);
+    await background.setImage(file);
   }
 
   audio.playReveal();
