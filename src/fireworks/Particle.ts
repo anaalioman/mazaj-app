@@ -1,5 +1,23 @@
 import { Sprite, Texture } from 'pixi.js';
 
+// Thermal Color Decay: every particle ignites white-hot, cools into its
+// assigned shell color, then dies as dim ember ash. Boundaries are fractions
+// of the particle's own lifespan, so short sparks and long willow trails both
+// run the full curve at their own pace.
+const FLASH_STAGE_END = 0.15;
+const STABLE_STAGE_END = 0.75;
+const IGNITION_COLOR = 0xffffff;
+const COOLING_ASH_COLOR = 0xcc5500; // alternate embers-gone-cold tone: 0x882200
+
+/** Per-channel lerp via bit-shifting — no allocations, no texture/sprite work. */
+function lerpColor(from: number, to: number, t: number): number {
+  const ratio = t < 0 ? 0 : t > 1 ? 1 : t;
+  const r = ((from >> 16) & 0xff) + (((to >> 16) & 0xff) - ((from >> 16) & 0xff)) * ratio;
+  const g = ((from >> 8) & 0xff) + (((to >> 8) & 0xff) - ((from >> 8) & 0xff)) * ratio;
+  const b = (from & 0xff) + ((to & 0xff) - (from & 0xff)) * ratio;
+  return ((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff);
+}
+
 export interface ParticleOptions {
   x: number;
   y: number;
@@ -32,6 +50,7 @@ export class Particle {
   private readonly life: number;
   private age = 0;
   private readonly baseSize: number;
+  private readonly baseColor: number;
   private readonly twinkle: boolean;
 
   private readonly sparkleInterval?: number;
@@ -66,6 +85,7 @@ export class Particle {
     this.drag = drag;
     this.life = life;
     this.baseSize = size;
+    this.baseColor = color;
     this.twinkle = twinkle;
     this.sparkleInterval = sparkleInterval;
     this.onSparkle = onSparkle;
@@ -75,7 +95,7 @@ export class Particle {
     this.sprite = new Sprite(texture);
     this.sprite.anchor.set(0.5);
     this.sprite.blendMode = 'add';
-    this.sprite.tint = color;
+    this.sprite.tint = IGNITION_COLOR; // stage 1 starts white-hot; update() takes over next tick
     this.sprite.width = size;
     this.sprite.height = size;
     this.sprite.position.set(x, y);
@@ -103,6 +123,18 @@ export class Particle {
     const scale = 0.4 + 0.6 * fade;
     this.sprite.width = this.baseSize * scale;
     this.sprite.height = this.baseSize * scale;
+
+    // Thermal Color Decay: white ignition -> shell color -> cooling ash,
+    // purely as a per-frame tint reassignment (no redraw, no new textures).
+    if (lifeRatio < FLASH_STAGE_END) {
+      this.sprite.tint = IGNITION_COLOR;
+    } else if (lifeRatio < STABLE_STAGE_END) {
+      const t = (lifeRatio - FLASH_STAGE_END) / (STABLE_STAGE_END - FLASH_STAGE_END);
+      this.sprite.tint = lerpColor(IGNITION_COLOR, this.baseColor, t);
+    } else {
+      const t = (lifeRatio - STABLE_STAGE_END) / (1 - STABLE_STAGE_END);
+      this.sprite.tint = lerpColor(this.baseColor, COOLING_ASH_COLOR, t);
+    }
 
     if (this.sparkleInterval && this.onSparkle) {
       this.sparkleAccumulator += delta;
