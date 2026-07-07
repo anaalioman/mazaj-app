@@ -1,5 +1,5 @@
 import './style.css';
-import './ui/controlPanel.css';
+import './ui/mazajUI.css';
 import { Application } from 'pixi.js';
 import { FireworksSystem } from './fireworks/FireworksSystem';
 import { TextReveal } from './effects/TextReveal';
@@ -8,15 +8,15 @@ import { GlowFrame } from './effects/GlowFrame';
 import { AudioManager } from './audio/AudioManager';
 import { RecordingManager, downloadBlob } from './recording/RecordingManager';
 import { BackgroundLayer } from './background';
-import { ControlPanel } from './ui/ControlPanel';
+import { HeaderBar, type InputMode } from './ui/HeaderBar';
+import { BottomDashboard } from './ui/BottomDashboard';
+import { IdleFadeController } from './ui/IdleFade';
+import { attachTactileFeedback } from './ui/tactile';
 
 const appContainer = document.querySelector<HTMLDivElement>('#app')!;
 const setupOverlay = document.querySelector<HTMLFormElement>('#setup-overlay')!;
 const imageInput = document.querySelector<HTMLInputElement>('#image-input')!;
 const phraseInput = document.querySelector<HTMLInputElement>('#phrase-input')!;
-const recordBtn = document.querySelector<HTMLButtonElement>('#record-btn')!;
-const stopRecordBtn = document.querySelector<HTMLButtonElement>('#stop-record-btn')!;
-const recordIndicator = document.querySelector<HTMLSpanElement>('#record-indicator')!;
 const hint = document.querySelector<HTMLDivElement>('.hint')!;
 
 // Royal black: a deep, rich near-black backdrop for the fireworks stage.
@@ -44,6 +44,8 @@ const background = new BackgroundLayer(app);
 const audio = new AudioManager(app);
 const mortarField = new MortarField(app);
 
+let inputMode: InputMode = 'tap';
+
 const fireworks = new FireworksSystem(app, {
   autoLaunch: false,
   onLaunch: (x) => {
@@ -57,8 +59,6 @@ const textReveal = new TextReveal(app);
 const glowFrame = new GlowFrame(app);
 const recording = new RecordingManager(app.canvas as HTMLCanvasElement, audio.getRecordingStream());
 
-new ControlPanel({ app, fireworks, background, glowFrame, recording });
-
 let fireworksEnabled = false;
 
 app.stage.eventMode = 'static';
@@ -67,12 +67,13 @@ app.renderer.on('resize', () => {
   app.stage.hitArea = app.screen;
 });
 
-// Free-form launch: the shell always fires from wherever the player taps,
-// straight up to that same point — no fixed grid or lanes.
+// Free Tap fires exactly where the player touches; Mortar Field snaps the
+// launch x to whichever tube is closest, for a more "grounded" show.
 app.stage.on('pointerdown', (event) => {
   if (!fireworksEnabled) return;
   const { x, y } = event.global;
-  fireworks.launch(x, y);
+  const launchX = inputMode === 'mortar' ? mortarField.getNearestX(x) : x;
+  fireworks.launch(launchX, y);
 });
 
 app.ticker.add((ticker) => {
@@ -107,32 +108,77 @@ async function startShow(): Promise<void> {
   fireworks.setAutoLaunch(true);
 }
 
-const canRecord = typeof MediaRecorder !== 'undefined' && typeof app.canvas.captureStream === 'function';
-if (!canRecord) {
-  recordBtn.disabled = true;
-  recordBtn.title = 'تسجيل الفيديو غير مدعوم في هذا المتصفح';
+// --- Header bar: branding/FPS, input-mode switch, mute/snapshot/record dock ---
+
+const flash = document.createElement('div');
+flash.id = 'mzj-flash';
+flash.className = 'mzj-hidden';
+document.body.appendChild(flash);
+
+function flashScreen(): void {
+  flash.classList.remove('mzj-hidden');
+  flash.style.transition = 'none';
+  flash.style.opacity = '1';
+  void flash.offsetWidth; // force reflow so the fade-out transition below actually animates
+  flash.style.transition = 'opacity 400ms ease-out';
+  flash.style.opacity = '0';
+
+  window.setTimeout(() => {
+    flash.classList.add('mzj-hidden');
+    flash.style.transition = '';
+  }, 420);
 }
 
-recordBtn.addEventListener('click', () => {
+async function takeSnapshot(): Promise<void> {
+  flashScreen();
+  try {
+    const dataUrl = await app.renderer.extract.base64({
+      target: app.stage,
+      resolution: Math.min(app.renderer.resolution * 1.5, 3),
+    });
+
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = `mazaj-snapshot-${Date.now()}.png`;
+    link.click();
+  } catch (error) {
+    console.error('تعذّر التقاط اللقطة:', error);
+  }
+}
+
+async function toggleRecording(): Promise<void> {
+  if (recording.isRecording) {
+    try {
+      const blob = await recording.stop();
+      downloadBlob(blob, `mazaj-fireworks-${Date.now()}.webm`);
+    } catch (error) {
+      console.error('تعذّر إنهاء التسجيل:', error);
+    } finally {
+      header.setRecordingState(false);
+    }
+    return;
+  }
+
   try {
     recording.start();
-    recordBtn.disabled = true;
-    stopRecordBtn.disabled = false;
-    recordIndicator.classList.remove('hidden');
+    header.setRecordingState(true);
   } catch (error) {
     console.error('تعذّر بدء التسجيل:', error);
   }
+}
+
+const header = new HeaderBar({
+  app,
+  audio,
+  onModeChange: (mode) => {
+    inputMode = mode;
+  },
+  onSnapshot: () => void takeSnapshot(),
+  onToggleRecording: () => void toggleRecording(),
 });
 
-stopRecordBtn.addEventListener('click', async () => {
-  stopRecordBtn.disabled = true;
-  try {
-    const blob = await recording.stop();
-    downloadBlob(blob, `mazaj-fireworks-${Date.now()}.webm`);
-  } catch (error) {
-    console.error('تعذّر إنهاء التسجيل:', error);
-  } finally {
-    recordBtn.disabled = false;
-    recordIndicator.classList.add('hidden');
-  }
-});
+const dashboard = new BottomDashboard({ fireworks, background, glowFrame });
+
+new IdleFadeController([header.root, dashboard.root]);
+attachTactileFeedback(header.root, audio);
+attachTactileFeedback(dashboard.root, audio);

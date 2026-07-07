@@ -64,6 +64,17 @@ export class MortarField {
 
   /** Flashes/recoils whichever tube sits closest to `x` — cosmetic only. */
   fireNear(x: number): void {
+    const nearest = this.findNearest(x);
+    nearest.flashTimer = FLASH_FRAMES;
+    nearest.flash.visible = true;
+  }
+
+  /** The x-coordinate of the tube closest to `x` — used by Mortar Field input mode. */
+  getNearestX(x: number): number {
+    return this.findNearest(x).x;
+  }
+
+  private findNearest(x: number): Station {
     let nearest = this.stations[0];
     let bestDistance = Infinity;
     for (const station of this.stations) {
@@ -73,8 +84,7 @@ export class MortarField {
         nearest = station;
       }
     }
-    nearest.flashTimer = FLASH_FRAMES;
-    nearest.flash.visible = true;
+    return nearest;
   }
 
   update(delta: number): void {

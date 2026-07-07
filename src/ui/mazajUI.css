@@ -1,0 +1,371 @@
+/* ---------- Header bar ---------- */
+
+#mzj-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  box-sizing: border-box;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  background: transparent;
+  pointer-events: none;
+}
+
+#mzj-header > * {
+  pointer-events: auto;
+}
+
+.mzj-header-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mzj-brand {
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffe9b3;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+
+.mzj-fps {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(10px) saturate(180%);
+  -webkit-backdrop-filter: blur(10px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.mzj-mode-toggle {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e5e7eb;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(10px) saturate(180%);
+  -webkit-backdrop-filter: blur(10px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.mzj-mode-toggle.mzj-mode-mortar {
+  border-color: rgba(255, 159, 69, 0.6);
+  color: #ffe9b3;
+}
+
+#mzj-header .mzj-header-left button {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(10px) saturate(180%);
+  -webkit-backdrop-filter: blur(10px) saturate(180%);
+  color: #e5e7eb;
+  cursor: pointer;
+}
+
+#mzj-header .mzj-header-left button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+#mzj-record.mzj-recording {
+  border-color: #ff2d3d;
+  color: #ff5a63;
+  animation: mzj-rec-pulse 1s ease-in-out infinite;
+}
+
+@keyframes mzj-rec-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(255, 45, 61, 0.6);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(255, 45, 61, 0.85);
+  }
+}
+
+/* ---------- Bottom tabbed dashboard ---------- */
+
+#mzj-dashboard {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 30;
+  width: min(560px, 94vw);
+  max-height: 62vh;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  color: #f1f5f9;
+
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 20px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.mzj-tabs {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.mzj-tab {
+  flex: 1;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.65);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 12px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.mzj-tab.active {
+  color: #ffe9b3;
+  border-bottom-color: #ff9f45;
+}
+
+.mzj-tab-panels {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.mzj-tab-content {
+  display: none;
+}
+
+.mzj-tab-content.active {
+  display: block;
+  animation: mzj-tab-fade 0.22s ease;
+}
+
+@keyframes mzj-tab-fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mzj-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.mzj-preset-btn {
+  padding: 9px 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  color: #e5e7eb;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.mzj-preset-btn.active {
+  background: linear-gradient(135deg, rgba(124, 245, 255, 0.28), rgba(124, 245, 255, 0.1));
+  border-color: rgba(124, 245, 255, 0.6);
+  color: #eafeff;
+}
+
+/* ---------- Shared field/slider/button styles (used by the dashboard tabs) ---------- */
+
+.mcp-burst-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.mcp-burst-btn {
+  padding: 10px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  color: #e5e7eb;
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.mcp-burst-btn:hover {
+  transform: translateY(-1px);
+}
+
+.mcp-burst-btn.active {
+  background: linear-gradient(135deg, rgba(255, 207, 107, 0.28), rgba(255, 159, 69, 0.18));
+  border-color: rgba(255, 207, 107, 0.65);
+  color: #ffe9b3;
+}
+
+.mcp-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.mcp-slider-row label {
+  flex: 0 0 106px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.mcp-slider-row input[type='range'] {
+  flex: 1;
+  accent-color: #ff9f45;
+}
+
+.mcp-slider-row output {
+  flex: 0 0 36px;
+  text-align: end;
+  font-size: 12px;
+  color: #ffe9b3;
+  font-variant-numeric: tabular-nums;
+}
+
+.mcp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.mcp-field input[type='text'],
+.mcp-field input[type='file'],
+.mcp-field select {
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  font-family: inherit;
+}
+
+.mcp-primary-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 4px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 233, 179, 0.4);
+  background: linear-gradient(180deg, #ffcf6b, #ff9f45);
+  color: #2a1400;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.mcp-primary-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mcp-primary-btn.active {
+  background: linear-gradient(180deg, #7cf5ff, #34c9dd);
+  color: #052024;
+}
+
+/* ---------- Idle sensing fade ---------- */
+
+.mzj-fade-target {
+  opacity: 1;
+  transition: opacity 0.18s ease;
+}
+
+.mzj-fade-target.mzj-idle {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.6s ease;
+}
+
+/* ---------- Tactile feedback: cyan flash on any press ---------- */
+
+.mzj-tactile-target,
+#mzj-header button,
+#mzj-dashboard button {
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.mzj-flash {
+  box-shadow: 0 0 15px #06b6d4 !important;
+  border-color: #06b6d4 !important;
+}
+
+/* ---------- Camera flash + generic hidden helper ---------- */
+
+#mzj-flash {
+  position: fixed;
+  inset: 0;
+  background: #ffffff;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+.mzj-hidden {
+  display: none !important;
+}
+
+@media (max-width: 640px) {
+  #mzj-header {
+    padding: 8px 10px;
+  }
+
+  .mzj-brand {
+    font-size: 13px;
+  }
+
+  #mzj-dashboard {
+    width: 96vw;
+    bottom: 10px;
+    max-height: 56vh;
+  }
+
+  .mzj-tab {
+    font-size: 11px;
+    padding: 10px 4px;
+  }
+}

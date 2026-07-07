@@ -1,5 +1,7 @@
 import { Application, Container, Graphics, Sprite, Texture } from 'pixi.js';
 
+export type BackgroundPreset = 'none' | 'city' | 'mountains';
+
 function coverFit(sprite: Sprite, width: number, height: number): void {
   const scale = Math.max(width / sprite.texture.width, height / sprite.texture.height);
   sprite.width = sprite.texture.width * scale;
@@ -83,6 +85,47 @@ export class BackgroundLayer {
   setDimmer(value: number): void {
     this.dimmer = Math.max(0, Math.min(1, value));
     if (this.currentSprite) this.currentSprite.tint = grayscaleTint(this.dimmer);
+  }
+
+  /** Quick built-in backdrops — a starfield-only sky, or a flat skyline/ridge silhouette over it. */
+  setPreset(preset: BackgroundPreset): void {
+    this.stopVideo();
+    const next = preset === 'none' ? this.buildStarfield() : this.buildSilhouette(preset);
+    this.replace(next);
+    this.currentSprite = null;
+  }
+
+  private buildSilhouette(preset: 'city' | 'mountains'): Container {
+    const group = new Container();
+    group.addChild(this.buildStarfield());
+
+    const { width, height } = this.app.screen;
+    const g = new Graphics();
+
+    if (preset === 'city') {
+      let x = 0;
+      while (x < width) {
+        const w = 30 + Math.random() * 50;
+        const h = 60 + Math.random() * 160;
+        g.rect(x, height - h, w, h).fill({ color: 0x05050a });
+        x += w + 4;
+      }
+    } else {
+      g.moveTo(0, height);
+      let x = 0;
+      while (x <= width) {
+        x += 60;
+        g.lineTo(x, height - (80 + Math.random() * 140));
+        x += 60;
+        g.lineTo(x, height - (20 + Math.random() * 30));
+      }
+      g.lineTo(width, height);
+      g.closePath();
+      g.fill({ color: 0x05050a });
+    }
+
+    group.addChild(g);
+    return group;
   }
 
   private buildStarfield(): Container {

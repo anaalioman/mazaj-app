@@ -86,8 +86,7 @@ body {
   font-family: inherit;
 }
 
-#setup-overlay button,
-#controls-panel button {
+#setup-overlay button {
   cursor: pointer;
   font-family: inherit;
   font-size: 15px;
@@ -100,41 +99,7 @@ body {
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-#setup-overlay button:hover,
-#controls-panel button:hover:not(:disabled) {
+#setup-overlay button:hover {
   transform: translateY(-1px);
   box-shadow: 0 6px 18px rgba(255, 159, 69, 0.3);
-}
-
-#controls-panel button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-#controls-panel {
-  position: fixed;
-  top: 16px;
-  inset-inline-end: 16px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  z-index: 5;
-}
-
-#controls-panel button {
-  padding: 8px 14px;
-  font-size: 13px;
-  background: rgba(20, 20, 30, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  color: #fff;
-}
-
-#stop-record-btn {
-  background: rgba(255, 90, 60, 0.25) !important;
-}
-
-#record-indicator {
-  color: #ff5a3c;
-  font-size: 13px;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }

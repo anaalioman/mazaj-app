@@ -28,6 +28,7 @@ export class AudioManager {
   private readonly buffers = new Map<SoundName, AudioBuffer>();
   private readonly missing = new Set<SoundName>();
   private loaded = false;
+  private muted = false;
 
   constructor(app: Application) {
     this.app = app;
@@ -82,6 +83,38 @@ export class AudioManager {
     return this.missing.size > 0;
   }
 
+  /** Toggles master mute; returns the new muted state. */
+  toggleMute(): boolean {
+    this.muted = !this.muted;
+    return this.muted;
+  }
+
+  isMuted(): boolean {
+    return this.muted;
+  }
+
+  /** Short synthesized mechanical tick for UI presses — no audio file needed. */
+  playUiClick(): void {
+    if (this.muted) return;
+
+    const now = this.context.currentTime;
+    const osc = this.context.createOscillator();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(1200, now);
+    osc.frequency.exponentialRampToValueAtTime(600, now + 0.03);
+
+    const gain = this.context.createGain();
+    gain.gain.setValueAtTime(0.18, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+
+    osc.connect(gain);
+    gain.connect(this.context.destination);
+    gain.connect(this.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.05);
+  }
+
   private async load(name: SoundName): Promise<void> {
     try {
       const response = await fetch(SOUND_FILES[name]);
@@ -96,6 +129,7 @@ export class AudioManager {
   }
 
   private play(name: SoundName, volume: number): void {
+    if (this.muted) return;
     const buffer = this.buffers.get(name);
     if (!buffer) return;
 
