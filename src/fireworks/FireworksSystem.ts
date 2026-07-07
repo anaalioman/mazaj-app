@@ -475,10 +475,10 @@ export class FireworksSystem {
   }
 
   /**
-   * Multi-Ring: two ellipses expanding from the same center at the same
-   * instant — one squashed vertically ("horizontal" ring), one squashed
-   * horizontally ("vertical" ring) — approximating an intersecting pair of
-   * rings as seen from an angle, like a simple 3D wireframe sphere in 2D.
+   * Multi-Ring: two flat ellipses expanding from the same center at the
+   * same instant — one squashed vertically ("horizontal" ring), one
+   * squashed horizontally ("vertical" ring) — crossing each other to read
+   * as two intersecting rings, entirely with 2D coordinates (x, y only).
    */
   private burstMultiRing(x: number, y: number): void {
     const texture = getParticleTexture(this.app);
