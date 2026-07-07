@@ -4,28 +4,32 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>الألعاب النارية - مزاج</title>
+    <title>مزاج</title>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="home-screen"></div>
 
-    <form id="setup-overlay" class="panel">
-      <h1>جهّز عرض الألعاب النارية</h1>
+    <div id="fireworks-mood" class="mzj-hidden">
+      <div id="app"></div>
 
-      <label class="field">
-        <span>الصورة الاحتفالية (اختياري)</span>
-        <input type="file" id="image-input" accept="image/*" />
-      </label>
+      <form id="setup-overlay" class="panel">
+        <h1>جهّز عرض الألعاب النارية</h1>
 
-      <label class="field">
-        <span>العبارة التي تريد كتابتها</span>
-        <input type="text" id="phrase-input" value="مبروك" maxlength="40" />
-      </label>
+        <label class="field">
+          <span>الصورة الاحتفالية (اختياري)</span>
+          <input type="file" id="image-input" accept="image/*" />
+        </label>
 
-      <button id="start-show-btn" type="submit">ابدأ العرض 🎆</button>
-    </form>
+        <label class="field">
+          <span>العبارة التي تريد كتابتها</span>
+          <input type="text" id="phrase-input" value="مبروك" maxlength="40" />
+        </label>
 
-    <div class="hint hidden">انقر في أي مكان لإطلاق لعبة نارية</div>
+        <button id="start-show-btn" type="submit">ابدأ العرض 🎆</button>
+      </form>
+
+      <div class="hint hidden">انقر في أي مكان لإطلاق لعبة نارية</div>
+    </div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

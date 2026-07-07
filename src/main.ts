@@ -1,194 +1,34 @@
 import './style.css';
 import './ui/mazajUI.css';
-import { Application } from 'pixi.js';
-import { FireworksSystem } from './fireworks/FireworksSystem';
-import { TextReveal } from './effects/TextReveal';
-import { MortarField } from './effects/MortarField';
-import { GlowFrame } from './effects/GlowFrame';
-import { ScreenFlash } from './effects/ScreenFlash';
-import { ShockwaveManager } from './effects/Shockwave';
-import { AudioManager } from './audio/AudioManager';
-import { RecordingManager, downloadBlob } from './recording/RecordingManager';
-import { BackgroundLayer } from './background';
-import { HeaderBar, type InputMode } from './ui/HeaderBar';
-import { BottomDashboard } from './ui/BottomDashboard';
-import { IdleFadeController } from './ui/IdleFade';
-import { attachTactileFeedback } from './ui/tactile';
+import './home/homeScreen.css';
+import { HomeScreen, type MoodId } from './home/HomeScreen';
+import type { FireworksMoodHandle } from './moods/fireworksMood';
 
-const appContainer = document.querySelector<HTMLDivElement>('#app')!;
-const setupOverlay = document.querySelector<HTMLFormElement>('#setup-overlay')!;
-const imageInput = document.querySelector<HTMLInputElement>('#image-input')!;
-const phraseInput = document.querySelector<HTMLInputElement>('#phrase-input')!;
-const hint = document.querySelector<HTMLDivElement>('.hint')!;
+const homeScreenEl = document.querySelector<HTMLDivElement>('#home-screen')!;
+const fireworksContainer = document.querySelector<HTMLDivElement>('#fireworks-mood')!;
 
-// Royal black: a deep, rich near-black backdrop for the fireworks stage.
-const ROYAL_BLACK = '#040406';
+let fireworksHandle: FireworksMoodHandle | null = null;
 
-const app = new Application();
-
-await app.init({
-  resizeTo: window,
-  background: ROYAL_BLACK,
-  backgroundAlpha: 1,
-  antialias: true,
-  resolution: Math.min(window.devicePixelRatio || 1, 2),
-  autoDensity: true,
-  powerPreference: 'high-performance',
-  // Needed so canvas.captureStream() (video recording) sees fresh frames
-  // instead of an already-cleared WebGL buffer.
-  preserveDrawingBuffer: true,
-});
-
-appContainer.appendChild(app.canvas);
-
-const background = new BackgroundLayer(app);
-
-const audio = new AudioManager(app);
-const mortarField = new MortarField(app);
-const explosionFlash = new ScreenFlash(app);
-const shockwave = new ShockwaveManager(app);
-
-let inputMode: InputMode = 'tap';
-
-const fireworks = new FireworksSystem(app, {
-  autoLaunch: false,
-  onLaunch: (x) => {
-    audio.playLaunch();
-    mortarField.fireNear(x);
-  },
-  onExplode: (x, y) => {
-    audio.playExplosion(x, y);
-    explosionFlash.flash();
-    shockwave.trigger(x, y);
-  },
-});
-
-const textReveal = new TextReveal(app);
-const glowFrame = new GlowFrame(app);
-const recording = new RecordingManager(app.canvas as HTMLCanvasElement, audio.getRecordingStream());
-
-let fireworksEnabled = false;
-
-app.stage.eventMode = 'static';
-app.stage.hitArea = app.screen;
-app.renderer.on('resize', () => {
-  app.stage.hitArea = app.screen;
-});
-
-// Free Tap fires exactly where the player touches; Mortar Field snaps the
-// launch x to whichever tube is closest, for a more "grounded" show.
-app.stage.on('pointerdown', (event) => {
-  if (!fireworksEnabled) return;
-  const { x, y } = event.global;
-  const launchX = inputMode === 'mortar' ? mortarField.getNearestX(x) : x;
-  fireworks.launch(launchX, y);
-});
-
-app.ticker.add((ticker) => {
-  fireworks.update(ticker.deltaTime);
-  mortarField.update(ticker.deltaTime);
-  textReveal.update(ticker.deltaTime);
-  explosionFlash.update(ticker.deltaMS / 1000);
-  shockwave.update(ticker.deltaMS / 1000);
-});
-
-setupOverlay.addEventListener('submit', (event) => {
-  event.preventDefault();
-  void startShow();
-});
-
-async function startShow(): Promise<void> {
-  setupOverlay.classList.add('hidden');
-  hint.classList.remove('hidden');
-
-  await audio.unlock();
-  if (audio.hasMissingSounds()) {
-    console.info('أضف ملفات الصوت في public/audio/ لتفعيل المؤثرات الصوتية (راجع public/audio/README.md).');
-  }
-
-  const file = imageInput.files?.[0];
-  if (file) {
-    await background.setImage(file);
-  }
-
-  audio.playReveal();
-  await textReveal.reveal(phraseInput.value);
-
-  fireworksEnabled = true;
-  fireworks.setAutoLaunch(true);
+function goHome(): void {
+  homeScreenEl.classList.remove('mzj-hidden');
 }
 
-// --- Header bar: branding/FPS, input-mode switch, mute/snapshot/record dock ---
+async function enterFireworks(): Promise<void> {
+  homeScreenEl.classList.add('mzj-hidden');
 
-const flash = document.createElement('div');
-flash.id = 'mzj-flash';
-flash.className = 'mzj-hidden';
-document.body.appendChild(flash);
-
-function flashScreen(): void {
-  flash.classList.remove('mzj-hidden');
-  flash.style.transition = 'none';
-  flash.style.opacity = '1';
-  void flash.offsetWidth; // force reflow so the fade-out transition below actually animates
-  flash.style.transition = 'opacity 400ms ease-out';
-  flash.style.opacity = '0';
-
-  window.setTimeout(() => {
-    flash.classList.add('mzj-hidden');
-    flash.style.transition = '';
-  }, 420);
-}
-
-async function takeSnapshot(): Promise<void> {
-  flashScreen();
-  try {
-    const dataUrl = await app.renderer.extract.base64({
-      target: app.stage,
-      resolution: Math.min(app.renderer.resolution * 1.5, 3),
-    });
-
-    const link = document.createElement('a');
-    link.href = dataUrl;
-    link.download = `mazaj-snapshot-${Date.now()}.png`;
-    link.click();
-  } catch (error) {
-    console.error('تعذّر التقاط اللقطة:', error);
-  }
-}
-
-async function toggleRecording(): Promise<void> {
-  if (recording.isRecording) {
-    try {
-      const blob = await recording.stop();
-      downloadBlob(blob, `mazaj-fireworks-${Date.now()}.webm`);
-    } catch (error) {
-      console.error('تعذّر إنهاء التسجيل:', error);
-    } finally {
-      header.setRecordingState(false);
-    }
+  if (fireworksHandle) {
+    fireworksHandle.show();
     return;
   }
 
-  try {
-    recording.start();
-    header.setRecordingState(true);
-  } catch (error) {
-    console.error('تعذّر بدء التسجيل:', error);
-  }
+  // Lazy-loaded so the home screen stays light — the fireworks bundle (and
+  // every other future mood's bundle) only downloads once actually chosen.
+  const { startFireworksMood } = await import('./moods/fireworksMood');
+  fireworksHandle = await startFireworksMood(fireworksContainer, goHome);
 }
 
-const header = new HeaderBar({
-  app,
-  audio,
-  onModeChange: (mode) => {
-    inputMode = mode;
+new HomeScreen(homeScreenEl, {
+  onSelect: (mood: MoodId) => {
+    if (mood === 'fireworks') void enterFireworks();
   },
-  onSnapshot: () => void takeSnapshot(),
-  onToggleRecording: () => void toggleRecording(),
 });
-
-const dashboard = new BottomDashboard({ fireworks, background, glowFrame });
-
-new IdleFadeController([header.root, dashboard.root]);
-attachTactileFeedback(header.root, audio);
-attachTactileFeedback(dashboard.root, audio);

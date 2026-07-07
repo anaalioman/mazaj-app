@@ -65,7 +65,8 @@
   color: #ffe9b3;
 }
 
-#mzj-header .mzj-header-left button {
+#mzj-header .mzj-header-left button,
+#mzj-home {
   width: 36px;
   height: 36px;
   display: flex;

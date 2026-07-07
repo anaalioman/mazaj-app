@@ -9,6 +9,7 @@ export interface HeaderBarDeps {
   onModeChange: (mode: InputMode) => void;
   onSnapshot: () => void;
   onToggleRecording: () => void;
+  onBackToHome: () => void;
 }
 
 const MODE_LABELS: Record<InputMode, string> = {
@@ -34,6 +35,7 @@ export class HeaderBar {
       this.root.addEventListener(type, (event) => event.stopPropagation());
     }
 
+    this.wireHome();
     this.wireModeToggle();
     this.wireMute();
     this.wireSnapshot();
@@ -51,6 +53,7 @@ export class HeaderBar {
   private template(): string {
     return `
       <div class="mzj-header-group mzj-header-right">
+        <button type="button" id="mzj-home" aria-label="العودة للقائمة الرئيسية">🏠</button>
         <span class="mzj-brand">مزاج 🎆</span>
         <span id="mzj-fps" class="mzj-fps">60 FPS</span>
       </div>
@@ -67,6 +70,11 @@ export class HeaderBar {
 
   private query<T extends HTMLElement>(selector: string): T {
     return this.root.querySelector<T>(selector)!;
+  }
+
+  private wireHome(): void {
+    const button = this.query<HTMLButtonElement>('#mzj-home');
+    button.addEventListener('click', () => this.deps.onBackToHome());
   }
 
   private wireModeToggle(): void {

@@ -1,0 +1,120 @@
+#home-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 40px 20px;
+  box-sizing: border-box;
+  background: radial-gradient(ellipse at 50% 20%, #101324 0%, #050508 55%, #030304 100%);
+}
+
+.mzj-home-inner {
+  width: min(760px, 100%);
+  text-align: center;
+}
+
+.mzj-home-title {
+  margin: 0;
+  font-size: 56px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  background: linear-gradient(180deg, #ffe9b3, #ff9f45);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 2px 24px rgba(255, 159, 69, 0.25);
+}
+
+.mzj-home-subtitle {
+  margin: 6px 0 36px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 16px;
+}
+
+.mzj-mood-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.mzj-mood-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 26px 14px 20px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  color: #f1f5f9;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mzj-mood-card:not(:disabled):hover {
+  transform: translateY(-3px);
+  border-color: rgba(255, 207, 107, 0.5);
+  box-shadow: 0 12px 30px rgba(255, 159, 69, 0.18);
+}
+
+.mzj-mood-card:not(:disabled):active {
+  transform: translateY(-1px);
+}
+
+.mzj-mood-emoji {
+  font-size: 34px;
+  line-height: 1;
+}
+
+.mzj-mood-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffe9b3;
+}
+
+.mzj-mood-desc {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  line-height: 1.4;
+}
+
+.mzj-mood-locked {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.mzj-mood-locked:hover {
+  transform: none;
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: none;
+}
+
+.mzj-mood-badge {
+  position: absolute;
+  top: 10px;
+  inset-inline-end: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.75);
+}
+
+@media (max-width: 640px) {
+  .mzj-mood-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .mzj-home-title {
+    font-size: 42px;
+  }
+}
