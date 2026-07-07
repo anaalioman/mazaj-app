@@ -2,6 +2,7 @@ import './style.css';
 import { Application } from 'pixi.js';
 import { FireworksSystem } from './fireworks/FireworksSystem';
 import { TextReveal } from './effects/TextReveal';
+import { MortarField } from './effects/MortarField';
 import { AudioManager } from './audio/AudioManager';
 import { RecordingManager, downloadBlob } from './recording/RecordingManager';
 import { drawStarfield, setBackgroundImage } from './background';
@@ -37,12 +38,16 @@ appContainer.appendChild(app.canvas);
 
 let background = drawStarfield(app);
 
-const audio = new AudioManager();
+const audio = new AudioManager(app);
+const mortarField = new MortarField(app);
 
 const fireworks = new FireworksSystem(app, {
   autoLaunch: false,
-  onLaunch: () => audio.playLaunch(),
-  onExplode: () => audio.playExplosion(),
+  onLaunch: (x) => {
+    audio.playLaunch();
+    mortarField.fireNear(x);
+  },
+  onExplode: (x, y) => audio.playExplosion(x, y),
 });
 
 const textReveal = new TextReveal(app);
@@ -66,6 +71,7 @@ app.stage.on('pointerdown', (event) => {
 
 app.ticker.add((ticker) => {
   fireworks.update(ticker.deltaTime);
+  mortarField.update(ticker.deltaTime);
   textReveal.update(ticker.deltaTime);
 });
 
