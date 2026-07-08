@@ -29,8 +29,20 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # GitHub-hosted ubuntu-latest runners already ship with Android SDK
+      # cmdline-tools preinstalled (ANDROID_HOME set). We only need
+      # platform-tools/platforms/build-tools to compile an APK — installing
+      # the full default package set (as android-actions/setup-android does)
+      # pulls in the Android Emulator + system images too, which are not
+      # needed here and have been flaky to download (corrupted zip).
+      - name: Install required Android SDK packages
+        run: |
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -n1)"
+          fi
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Sync web assets and native plugins into the Android project
         run: npx cap sync android
