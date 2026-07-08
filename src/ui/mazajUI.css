@@ -23,40 +23,44 @@
 .mzj-header-group {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  min-width: 0;
 }
 
-.mzj-brand {
-  font-size: 15px;
-  font-weight: 700;
-  color: #ffe9b3;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+.mzj-icon {
+  display: block;
+  flex-shrink: 0;
 }
 
 .mzj-fps {
-  font-size: 11.5px;
+  flex-shrink: 0;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(255, 255, 255, 0.55);
   background: rgba(15, 23, 42, 0.45);
   backdrop-filter: blur(10px) saturate(180%);
   -webkit-backdrop-filter: blur(10px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
-  padding: 3px 10px;
+  padding: 4px 9px;
 }
 
 .mzj-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-family: inherit;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: #e5e7eb;
   background: rgba(15, 23, 42, 0.45);
   backdrop-filter: blur(10px) saturate(180%);
   -webkit-backdrop-filter: blur(10px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 999px;
-  padding: 7px 16px;
+  padding: 7px 14px;
   cursor: pointer;
+  white-space: nowrap;
   transition: border-color 0.15s ease, color 0.15s ease;
 }
 
@@ -67,12 +71,12 @@
 
 #mzj-header .mzj-header-left button,
 #mzj-home {
+  flex-shrink: 0;
   width: 36px;
   height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(15, 23, 42, 0.45);
@@ -135,14 +139,18 @@
 
 .mzj-tab {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
   font-family: inherit;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.65);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.6);
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
-  padding: 12px 6px;
+  padding: 10px 6px;
   cursor: pointer;
   white-space: nowrap;
   transition: color 0.15s ease, border-color 0.15s ease;
@@ -150,6 +158,7 @@
 
 .mzj-tab.active {
   color: #ffe9b3;
+  font-weight: 700;
   border-bottom-color: #ff9f45;
 }
 
@@ -363,17 +372,14 @@
   z-index: 9999;
 }
 
-.mzj-hidden {
+.mzj-hidden,
+.mzj-await-start {
   display: none !important;
 }
 
 @media (max-width: 640px) {
   #mzj-header {
     padding: 8px 10px;
-  }
-
-  .mzj-brand {
-    font-size: 13px;
   }
 
   #mzj-dashboard {

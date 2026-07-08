@@ -13,6 +13,7 @@ import { BottomDashboard } from '../ui/BottomDashboard';
 import { IdleFadeController } from '../ui/IdleFade';
 import { attachTactileFeedback } from '../ui/tactile';
 import { withTimeout } from '../utils/withTimeout';
+import { icon } from '../ui/icons';
 
 export interface FireworksMoodHandle {
   show(): void;
@@ -34,6 +35,8 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   const imageInput = container.querySelector<HTMLInputElement>('#image-input')!;
   const phraseInput = container.querySelector<HTMLInputElement>('#phrase-input')!;
   const hint = container.querySelector<HTMLDivElement>('.hint')!;
+  const startShowBtn = container.querySelector<HTMLButtonElement>('#start-show-btn')!;
+  startShowBtn.insertAdjacentHTML('afterbegin', icon('play', 17));
 
   const app = new Application();
 
@@ -134,6 +137,11 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     } finally {
       fireworksEnabled = true;
       fireworks.setAutoLaunch(true);
+      // The header/dashboard only make sense once the show is actually
+      // running — showing them earlier, on top of the setup form, is what
+      // caused the two screens to visually collide.
+      header.root.classList.remove('mzj-await-start');
+      dashboard.root.classList.remove('mzj-await-start');
     }
   }
 
@@ -215,6 +223,10 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   });
 
   const dashboard = new BottomDashboard({ fireworks, background, glowFrame });
+
+  // Hidden until startShow() finishes setup — see the `finally` block above.
+  header.root.classList.add('mzj-await-start');
+  dashboard.root.classList.add('mzj-await-start');
 
   new IdleFadeController([header.root, dashboard.root]);
   attachTactileFeedback(header.root, audio);

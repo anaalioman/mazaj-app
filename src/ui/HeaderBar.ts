@@ -1,5 +1,6 @@
 import type { Application } from 'pixi.js';
 import type { AudioManager } from '../audio/AudioManager';
+import { icon, type IconName } from './icons';
 
 export type InputMode = 'tap' | 'mortar';
 
@@ -13,11 +14,16 @@ export interface HeaderBarDeps {
 }
 
 const MODE_LABELS: Record<InputMode, string> = {
-  tap: '🎯 نقر حر',
-  mortar: '🚀 حقل المدفع',
+  tap: 'حر',
+  mortar: 'مدفع',
 };
 
-/** Transparent horizontal bar: branding + FPS (right), input-mode switch (center), media dock (left). */
+const MODE_ICONS: Record<InputMode, IconName> = {
+  tap: 'target',
+  mortar: 'rocket',
+};
+
+/** Transparent horizontal bar: home (right), input-mode switch (center), media dock (left). */
 export class HeaderBar {
   readonly root: HTMLDivElement;
   private readonly deps: HeaderBarDeps;
@@ -47,23 +53,24 @@ export class HeaderBar {
   setRecordingState(isRecording: boolean): void {
     const button = this.query<HTMLButtonElement>('#mzj-record');
     button.classList.toggle('mzj-recording', isRecording);
-    button.textContent = isRecording ? '⏹' : '🔴';
+    button.innerHTML = icon(isRecording ? 'squareStop' : 'recordDot', 18);
   }
 
   private template(): string {
     return `
       <div class="mzj-header-group mzj-header-right">
-        <button type="button" id="mzj-home" aria-label="العودة للقائمة الرئيسية">🏠</button>
-        <span class="mzj-brand">مزاج 🎆</span>
-        <span id="mzj-fps" class="mzj-fps">60 FPS</span>
+        <button type="button" id="mzj-home" aria-label="العودة للقائمة الرئيسية">${icon('home', 18)}</button>
       </div>
       <div class="mzj-header-group mzj-header-center">
-        <button type="button" id="mzj-mode-toggle" class="mzj-mode-toggle">${MODE_LABELS.tap}</button>
+        <button type="button" id="mzj-mode-toggle" class="mzj-mode-toggle">
+          ${icon(MODE_ICONS.tap, 16)}<span>${MODE_LABELS.tap}</span>
+        </button>
       </div>
       <div class="mzj-header-group mzj-header-left">
-        <button type="button" id="mzj-mute" aria-label="كتم الصوت">🔊</button>
-        <button type="button" id="mzj-snapshot" aria-label="لقطة عالية الدقة">📸</button>
-        <button type="button" id="mzj-record" aria-label="تسجيل فيديو">🔴</button>
+        <span id="mzj-fps" class="mzj-fps">60</span>
+        <button type="button" id="mzj-mute" aria-label="كتم الصوت">${icon('volume2', 18)}</button>
+        <button type="button" id="mzj-snapshot" aria-label="لقطة عالية الدقة">${icon('camera', 18)}</button>
+        <button type="button" id="mzj-record" aria-label="تسجيل فيديو">${icon('recordDot', 18)}</button>
       </div>
     `;
   }
@@ -81,7 +88,7 @@ export class HeaderBar {
     const button = this.query<HTMLButtonElement>('#mzj-mode-toggle');
     button.addEventListener('click', () => {
       this.mode = this.mode === 'tap' ? 'mortar' : 'tap';
-      button.textContent = MODE_LABELS[this.mode];
+      button.innerHTML = `${icon(MODE_ICONS[this.mode], 16)}<span>${MODE_LABELS[this.mode]}</span>`;
       button.classList.toggle('mzj-mode-mortar', this.mode === 'mortar');
       this.deps.onModeChange(this.mode);
     });
@@ -91,7 +98,7 @@ export class HeaderBar {
     const button = this.query<HTMLButtonElement>('#mzj-mute');
     button.addEventListener('click', () => {
       const muted = this.deps.audio.toggleMute();
-      button.textContent = muted ? '🔇' : '🔊';
+      button.innerHTML = icon(muted ? 'volumeX' : 'volume2', 18);
     });
   }
 
@@ -117,7 +124,7 @@ export class HeaderBar {
     this.deps.app.ticker.add(() => {
       frame++;
       if (frame % 15 === 0) {
-        label.textContent = `${Math.round(this.deps.app.ticker.FPS)} FPS`;
+        label.textContent = `${Math.round(this.deps.app.ticker.FPS)}`;
       }
     });
   }

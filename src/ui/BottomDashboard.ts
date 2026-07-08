@@ -1,6 +1,7 @@
 import { ALL_BURST_TYPES, type BurstType, type FireworksSystem } from '../fireworks/FireworksSystem';
 import type { BackgroundLayer, BackgroundPreset } from '../background';
 import type { GlowFrame, GlowFrameShape } from '../effects/GlowFrame';
+import { icon } from './icons';
 
 export interface BottomDashboardDeps {
   fireworks: FireworksSystem;
@@ -27,18 +28,18 @@ const SLIDERS = {
 } satisfies Record<string, SliderSpec>;
 
 const BURST_LABELS: Record<BurstType, string> = {
-  peony: '🌸 بيوني بقلب',
-  rose: '🌹 وردة',
-  kamuro: '✨ كامورو ذهبي',
-  crossette: '🌴 كروسيت نخلة',
-  multiRing: '💫 حلقات متعددة',
-  strobe: '💎 وميض متلألئ',
+  peony: 'بيوني بقلب',
+  rose: 'وردة',
+  kamuro: 'كامورو ذهبي',
+  crossette: 'كروسيت نخلة',
+  multiRing: 'حلقات متعددة',
+  strobe: 'وميض متلألئ',
 };
 
 const PRESETS: { id: BackgroundPreset; label: string }[] = [
-  { id: 'none', label: '✨ نجوم فقط' },
-  { id: 'city', label: '🏙️ أفق مدينة' },
-  { id: 'mountains', label: '⛰️ جبال' },
+  { id: 'none', label: 'نجوم فقط' },
+  { id: 'city', label: 'أفق مدينة' },
+  { id: 'mountains', label: 'جبال' },
 ];
 
 /** Compact tabbed glass dashboard anchored at the bottom-center of the screen. */
@@ -73,10 +74,10 @@ export class BottomDashboard {
   private template(): string {
     return `
       <nav class="mzj-tabs">
-        <button type="button" class="mzj-tab active" data-tab="patterns">الأنماط 🌀</button>
-        <button type="button" class="mzj-tab" data-tab="environment">البيئة 🏙️</button>
-        <button type="button" class="mzj-tab" data-tab="messages">الرسائل ✍️</button>
-        <button type="button" class="mzj-tab" data-tab="lab">المختبر ⚙️</button>
+        <button type="button" class="mzj-tab active" data-tab="patterns">${icon('shapes', 17)}<span>الأنماط</span></button>
+        <button type="button" class="mzj-tab" data-tab="environment">${icon('mountain', 17)}<span>البيئة</span></button>
+        <button type="button" class="mzj-tab" data-tab="messages">${icon('messageSquare', 17)}<span>الرسائل</span></button>
+        <button type="button" class="mzj-tab" data-tab="lab">${icon('sliders', 17)}<span>المختبر</span></button>
       </nav>
 
       <div class="mzj-tab-panels">
@@ -86,7 +87,7 @@ export class BottomDashboard {
               (type) => `<button type="button" class="mcp-burst-btn" data-type="${type}">${BURST_LABELS[type]}</button>`,
             ).join('')}
           </div>
-          <button type="button" id="mzj-random-mode" class="mcp-primary-btn mzj-random-btn">🎲 توليد عشوائي هجين</button>
+          <button type="button" id="mzj-random-mode" class="mcp-primary-btn mzj-random-btn">${icon('shuffle', 16)}<span>توليد عشوائي هجين</span></button>
           <button type="button" id="mzj-auto-show" class="mcp-primary-btn active">العرض التلقائي: يعمل</button>
         </section>
 
@@ -120,7 +121,7 @@ export class BottomDashboard {
               <option value="circle">◯ هالة</option>
             </select>
           </label>
-          <button type="button" id="mzj-greeting-apply" class="mcp-primary-btn">أضف العبارة ✨</button>
+          <button type="button" id="mzj-greeting-apply" class="mcp-primary-btn">${icon('sparkles', 16)}<span>أضف العبارة</span></button>
         </section>
 
         <section class="mzj-tab-content" data-panel="lab">
@@ -196,7 +197,7 @@ export class BottomDashboard {
       enabled = !enabled;
       this.deps.fireworks.setRandomMode(enabled);
       button.classList.toggle('active', enabled);
-      button.textContent = enabled ? '🎲 التوليد العشوائي: يعمل' : '🎲 توليد عشوائي هجين';
+      button.innerHTML = `${icon('shuffle', 16)}<span>${enabled ? 'التوليد العشوائي: يعمل' : 'توليد عشوائي هجين'}</span>`;
       // The individual shell toggles are meaningless while the randomizer
       // is picking freely across every pattern, so grey them out.
       for (const btn of burstButtons) btn.disabled = enabled;

@@ -1,3 +1,5 @@
+import { icon, type IconName } from '../ui/icons';
+
 export type MoodId =
   | 'fireworks'
   | 'colorMix'
@@ -9,7 +11,7 @@ export type MoodId =
 
 interface MoodCard {
   id: MoodId;
-  emoji: string;
+  icon: IconName;
   title: string;
   description: string;
   active: boolean;
@@ -19,13 +21,13 @@ interface MoodCard {
 // far; the rest render as locked "قريبًا" cards so the hub reads as a
 // complete, growing product from day one.
 const MOODS: MoodCard[] = [
-  { id: 'fireworks', emoji: '🎆', title: 'الألعاب النارية', description: 'اصنع عرضًا مبهرًا من الألعاب النارية', active: true },
-  { id: 'colorMix', emoji: '🎨', title: 'خلط الألوان', description: 'امزج الألوان بإصبعك كأنها سوائل', active: false },
-  { id: 'shake', emoji: '🫨', title: 'الهزّة', description: 'هزّ الشاشة ومازج الألوان على الحواف', active: false },
-  { id: 'glassStones', emoji: '💎', title: 'أحجار الزجاج', description: 'حرّك أحجارًا ملوّنة بفيزياء تصادم حقيقية', active: false },
-  { id: 'ripples', emoji: '🌊', title: 'التموّجات', description: 'المس الماء واصنع تموّجات حقيقية', active: false },
-  { id: 'pendulum', emoji: '🔮', title: 'لوحة البندول', description: 'ارسم منحنيات ساحرة بفيزياء البندول', active: false },
-  { id: 'colorPour', emoji: '🌈', title: 'Color Pour', description: 'اسكب الألوان وأمِل جهازك', active: false },
+  { id: 'fireworks', icon: 'fireworksMood', title: 'الألعاب النارية', description: 'اصنع عرضًا مبهرًا من الألعاب النارية', active: true },
+  { id: 'colorMix', icon: 'palette', title: 'خلط الألوان', description: 'امزج الألوان بإصبعك كأنها سوائل', active: false },
+  { id: 'shake', icon: 'vibrate', title: 'الهزّة', description: 'هزّ الشاشة ومازج الألوان على الحواف', active: false },
+  { id: 'glassStones', icon: 'gem', title: 'أحجار الزجاج', description: 'حرّك أحجارًا ملوّنة بفيزياء تصادم حقيقية', active: false },
+  { id: 'ripples', icon: 'waves', title: 'التموّجات', description: 'المس الماء واصنع تموّجات حقيقية', active: false },
+  { id: 'pendulum', icon: 'pendulum', title: 'لوحة البندول', description: 'ارسم منحنيات ساحرة بفيزياء البندول', active: false },
+  { id: 'colorPour', icon: 'droplet', title: 'Color Pour', description: 'اسكب الألوان وأمِل جهازك', active: false },
 ];
 
 export interface HomeScreenDeps {
@@ -63,7 +65,7 @@ export class HomeScreen {
 
     return `
       <button type="button" class="mzj-mood-card${lockedClass}" data-mood="${mood.id}" ${disabledAttr}>
-        <span class="mzj-mood-emoji">${mood.emoji}</span>
+        <span class="mzj-mood-icon">${icon(mood.icon, 30)}</span>
         <span class="mzj-mood-title">${mood.title}</span>
         <span class="mzj-mood-desc">${mood.description}</span>
         ${badge}

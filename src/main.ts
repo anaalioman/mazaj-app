@@ -1,3 +1,4 @@
+import './fonts.css';
 import './style.css';
 import './ui/mazajUI.css';
 import './home/homeScreen.css';

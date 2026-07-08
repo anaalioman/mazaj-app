@@ -68,9 +68,21 @@
   transform: translateY(-1px);
 }
 
-.mzj-mood-emoji {
-  font-size: 34px;
-  line-height: 1;
+.mzj-mood-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  margin-bottom: 2px;
+  background: linear-gradient(160deg, rgba(255, 233, 179, 0.18), rgba(255, 159, 69, 0.08));
+  color: #ffcf6b;
+}
+
+.mzj-mood-locked .mzj-mood-icon {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.45);
 }
 
 .mzj-mood-title {
