@@ -12,6 +12,7 @@ import { HeaderBar, type InputMode } from '../ui/HeaderBar';
 import { BottomDashboard } from '../ui/BottomDashboard';
 import { IdleFadeController } from '../ui/IdleFade';
 import { attachTactileFeedback } from '../ui/tactile';
+import { withTimeout } from '../utils/withTimeout';
 
 export interface FireworksMoodHandle {
   show(): void;
@@ -111,21 +112,29 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     setupOverlay.classList.add('hidden');
     hint.classList.remove('hidden');
 
-    await audio.unlock();
-    if (audio.hasMissingSounds()) {
-      console.info('أضف ملفات الصوت في public/audio/ لتفعيل المؤثرات الصوتية (راجع public/audio/README.md).');
+    // Every step below is best-effort: a stuck or failing API (audio, image
+    // decoding, the text-reveal animation) must never prevent the fireworks
+    // show itself from starting — that's the one thing this screen exists
+    // for, so it runs unconditionally in `finally`.
+    try {
+      await audio.unlock();
+      if (audio.hasMissingSounds()) {
+        console.info('أضف ملفات الصوت في public/audio/ لتفعيل المؤثرات الصوتية (راجع public/audio/README.md).');
+      }
+
+      const file = imageInput.files?.[0];
+      if (file) {
+        await withTimeout(background.setImage(file), 5000, 'BackgroundLayer.setImage');
+      }
+
+      audio.playReveal();
+      await withTimeout(textReveal.reveal(phraseInput.value), 5000, 'TextReveal.reveal');
+    } catch (error) {
+      console.error('تعذّرت إحدى خطوات بدء العرض (سيبدأ العرض على أي حال):', error);
+    } finally {
+      fireworksEnabled = true;
+      fireworks.setAutoLaunch(true);
     }
-
-    const file = imageInput.files?.[0];
-    if (file) {
-      await background.setImage(file);
-    }
-
-    audio.playReveal();
-    await textReveal.reveal(phraseInput.value);
-
-    fireworksEnabled = true;
-    fireworks.setAutoLaunch(true);
   }
 
   // --- Camera-style flash + snapshot/recording ---

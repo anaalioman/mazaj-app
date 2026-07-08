@@ -1,4 +1,5 @@
 import type { Application } from 'pixi.js';
+import { withTimeout } from '../utils/withTimeout';
 
 // Sound cues for the show. Audio files are expected to be dropped into
 // public/audio/ later (see public/audio/README.md) — until then every
@@ -41,8 +42,21 @@ export class AudioManager {
     return this.destination.stream;
   }
 
-  /** Must be called from a user gesture (browsers block audio otherwise). */
+  /**
+   * Must be called from a user gesture (browsers block audio otherwise).
+   * Guarded by a timeout: some Android WebView builds leave
+   * AudioContext.resume() pending forever instead of resolving/rejecting,
+   * which must never be allowed to block the rest of the show.
+   */
   async unlock(): Promise<void> {
+    try {
+      await withTimeout(this.unlockInner(), 2000, 'AudioManager.unlock');
+    } catch (error) {
+      console.warn('تعذّر تفعيل الصوت (سيتابع العرض بصريًا بدون صوت):', error);
+    }
+  }
+
+  private async unlockInner(): Promise<void> {
     if (this.context.state === 'suspended') {
       await this.context.resume();
     }
