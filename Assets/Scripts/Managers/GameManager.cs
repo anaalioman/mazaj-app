@@ -1,30 +1,20 @@
 using UnityEngine;
-using UnityEngine.Events;
 
 namespace HiddenGold.Managers
 {
-    // Concrete subclass so the Inspector can serialize listeners for this
-    // event; a raw UnityEvent<int> field won't show persistent calls.
-    [System.Serializable]
-    public class ScoreChangedEvent : UnityEvent<int> { }
-
+    // Simple singleton so any stone can report score changes
+    // without needing a direct reference wired up in the Inspector.
     public class GameManager : MonoBehaviour
     {
         public static GameManager Instance { get; private set; }
 
-        [Header("Scoring")]
-        [SerializeField] private int scorePerGold = 100;
+        [Header("Score")]
+        [SerializeField] private int currentScore = 0;
 
-        [Header("Level Events")]
-        public ScoreChangedEvent onScoreChanged;
-        public UnityEvent onLevelComplete;
-        public UnityEvent onPlayerShocked;
+        public int CurrentScore => currentScore;
 
-        public int Score { get; private set; }
-        public int TotalGoldCount { get; private set; }
-        public int GoldFoundCount { get; private set; }
-
-        private bool _levelComplete;
+        // Simple event other scripts (like the UI) can subscribe to.
+        public System.Action<int> OnScoreChanged;
 
         private void Awake()
         {
@@ -33,50 +23,15 @@ namespace HiddenGold.Managers
                 Destroy(gameObject);
                 return;
             }
-
             Instance = this;
-        }
-
-        // Every gold stone calls this once (e.g. from its own Start) so the
-        // manager knows how many are hidden in the current pile without any
-        // scene-specific wiring.
-        public void RegisterGoldStone()
-        {
-            TotalGoldCount++;
-        }
-
-        public void ReportGoldFound()
-        {
-            if (_levelComplete) return;
-
-            GoldFoundCount++;
-            AddScore(scorePerGold);
-
-            if (GoldFoundCount >= TotalGoldCount)
-            {
-                _levelComplete = true;
-                onLevelComplete?.Invoke();
-            }
-        }
-
-        public void ReportTrapTriggered()
-        {
-            onPlayerShocked?.Invoke();
         }
 
         public void AddScore(int amount)
         {
-            Score += amount;
-            onScoreChanged?.Invoke(Score);
-        }
+            currentScore += amount;
+            if (currentScore < 0) currentScore = 0; // score never goes below zero
 
-        public void ResetLevel()
-        {
-            Score = 0;
-            TotalGoldCount = 0;
-            GoldFoundCount = 0;
-            _levelComplete = false;
-            onScoreChanged?.Invoke(Score);
+            OnScoreChanged?.Invoke(currentScore);
         }
     }
 }

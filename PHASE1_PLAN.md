@@ -35,12 +35,10 @@ assets land in them.
 
 ## 2. Scripts included in this phase
 
-- **`GameManager.cs`** — singleton. Tracks `Score`, `TotalGoldCount`,
-  `GoldFoundCount`. Stones call `RegisterGoldStone()` once at start (if they
-  hold gold) and `ReportGoldFound()` / `ReportTrapTriggered()` when tapped.
-  Exposes `UnityEvent`s (`onScoreChanged`, `onLevelComplete`,
-  `onPlayerShocked`) so UI/VFX can be wired in the Inspector with no extra
-  code.
+- **`GameManager.cs`** — simple singleton. Holds `CurrentScore` and exposes
+  `AddScore(amount)` plus a `System.Action<int> OnScoreChanged` event that
+  the UI subscribes to in code (e.g. from a `ScoreDisplay` script) to update
+  the score label. Score is clamped to never go below zero.
 - **`StoneType.cs`** — enum `Empty / Gold / Trap`, the hidden content of a
   stone. Purely data — never drives which material/mesh is shown, so stones
   stay visually identical.
@@ -59,9 +57,10 @@ assets land in them.
   - Tap vs. drag is distinguished by press duration + pointer travel
     distance; a tap calls `Reveal()`, a drag releases the stone with an
     outward force so it rolls away naturally.
-  - `Reveal()` reports to `GameManager` and fires a `UnityEvent` per outcome
-    (`onGoldRevealed`, `onTrapTriggered`, `onEmptyRevealed`) for VFX/SFX/UI
-    hookup without touching code.
+  - `Reveal()` calls `GameManager.Instance.AddScore(goldScoreValue)` when the
+    stone holds gold, and fires a `UnityEvent` per outcome (`onGoldRevealed`,
+    `onTrapTriggered`, `onEmptyRevealed`) for VFX/SFX/UI hookup without
+    touching code.
 
 Input uses the legacy `OnMouseDown/Drag/Up` events (via `SphereCollider` +
 `Camera.main`), which Unity's Input Manager already maps from touch on
@@ -83,8 +82,10 @@ be assembled in the Editor. Steps:
      `Box Collider` so stones rest and roll on it.
    - `StonePile` (empty GameObject) — parent for spawned stone instances.
    - `Canvas` (Screen Space – Overlay):
-     - `ScoreText` (TMP) bound to `GameManager.onScoreChanged`.
-     - `ShockFeedback` panel bound to `GameManager.onPlayerShocked`.
+     - `ScoreText` (TMP) — a small `ScoreDisplay` script subscribes to
+       `GameManager.Instance.OnScoreChanged` in code and updates the label.
+     - `ShockFeedback` panel — shown from each trap stone's own
+       `onTrapTriggered` UnityEvent.
    - `GameManager` — empty GameObject with the `GameManager` component.
 3. **Stone prefab** (`Assets/Prefabs/Stones/Stone.prefab`):
    - 3D **Sphere** primitive as the base.
@@ -110,7 +111,9 @@ be assembled in the Editor. Steps:
 ## 4. Next (phase 2 preview)
 
 - Randomized gold/trap distribution per level instead of hand-set types.
-- Electric shock VFX/SFX + brief input-lock on `onPlayerShocked`.
-- Win/lose UI flow off `onLevelComplete`.
+- Electric shock VFX/SFX + brief input-lock, driven by each stone's
+  `onTrapTriggered` event.
+- Gold-found / win tracking (`GameManager` currently only holds score; a
+  total-gold and found-gold count can be added once level generation needs it).
 - Save/progress persistence.
 - Google Play build settings (package name, icons, target API level).

@@ -14,6 +14,7 @@ namespace HiddenGold.Stones
     {
         [Header("Stone Content")]
         [SerializeField] private StoneType stoneType = StoneType.Empty;
+        [SerializeField] private int goldScoreValue = 100;
 
         [Header("Drag Settings")]
         [SerializeField] private float throwForceMultiplier = 8f;
@@ -45,14 +46,6 @@ namespace HiddenGold.Stones
             _mainCamera = Camera.main;
 
             ConfigurePhysicsForRealisticRolling();
-        }
-
-        private void Start()
-        {
-            if (stoneType == StoneType.Gold)
-            {
-                GameManager.Instance.RegisterGoldStone();
-            }
         }
 
         private void ConfigurePhysicsForRealisticRolling()
@@ -132,11 +125,10 @@ namespace HiddenGold.Stones
             switch (stoneType)
             {
                 case StoneType.Gold:
-                    GameManager.Instance.ReportGoldFound();
+                    GameManager.Instance.AddScore(goldScoreValue);
                     onGoldRevealed?.Invoke();
                     break;
                 case StoneType.Trap:
-                    GameManager.Instance.ReportTrapTriggered();
                     onTrapTriggered?.Invoke();
                     break;
                 default:
