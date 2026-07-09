@@ -1,4 +1,5 @@
-import { Application, BlurFilter, Container } from 'pixi.js';
+import { Application, Container } from 'pixi.js';
+import { AdvancedBloomFilter } from 'pixi-filters';
 import { Particle } from './Particle';
 import { Rocket } from './Rocket';
 import { getParticleTexture } from './textures';
@@ -8,6 +9,11 @@ const MIN_LAUNCH_INTERVAL = 0.9;
 const MAX_LAUNCH_INTERVAL = 2.4;
 
 const GOLD_HUES = [0xffd700, 0xffe9a8, 0xffc233, 0xfff4c2];
+
+// Particles spawned by one explosion, relative to this, become its "shake
+// intensity" — dense bursts (peony, rose, multi-ring) shake noticeably,
+// thin ones (a handful of crossette arms) don't shake at all.
+const BURST_INTENSITY_REFERENCE_COUNT = 150;
 
 export type BurstType = 'peony' | 'rose' | 'kamuro' | 'crossette' | 'multiRing' | 'strobe';
 export const ALL_BURST_TYPES: BurstType[] = ['peony', 'rose', 'kamuro', 'crossette', 'multiRing', 'strobe'];
@@ -36,7 +42,8 @@ export const DEFAULT_BURST_SETTINGS: BurstSettings = {
 export interface FireworksSystemOptions {
   autoLaunch?: boolean;
   onLaunch?: (x: number) => void;
-  onExplode?: (x: number, y: number) => void;
+  /** `intensity` is roughly 0-1.5, scaled by how many particles the burst spawned. */
+  onExplode?: (x: number, y: number, intensity: number) => void;
 }
 
 /** Picks a random palette guaranteed to differ from `exclude`, for real color contrast. */
@@ -54,9 +61,9 @@ function contrastingPalette(exclude: number[]): number[] {
 export class FireworksSystem {
   private readonly app: Application;
   private readonly layer: Container;
-  private readonly glowFilter: BlurFilter;
+  private readonly glowFilter: AdvancedBloomFilter;
   private readonly onLaunch?: (x: number) => void;
-  private readonly onExplode?: (x: number, y: number) => void;
+  private readonly onExplode?: (x: number, y: number, intensity: number) => void;
 
   private rockets: Rocket[] = [];
   private particles: Particle[] = [];
@@ -80,7 +87,12 @@ export class FireworksSystem {
     this.onLaunch = options.onLaunch;
     this.onExplode = options.onExplode;
 
-    this.glowFilter = new BlurFilter({ strength: 0 });
+    // True bloom (bright-pass extract + blur + additive-style composite),
+    // not a flat blur — only genuinely bright pixels (white-hot ignition,
+    // hot embers) bleed light into the dark around them. `quality: 4` is a
+    // deliberate mid-range-Android compromise (KawaseBlur's default is 4);
+    // drop it further if a real device shows an FPS hit.
+    this.glowFilter = new AdvancedBloomFilter({ threshold: 0.4, blur: 6, quality: 4, bloomScale: 1.2, brightness: 1 });
     this.applyGlow();
 
     // Force-build the shared particle texture up front so the first
@@ -123,7 +135,6 @@ export class FireworksSystem {
       const reachedApex = rocket.update(delta, (x, y) => this.spawnTrailSpark(x, y, rocket.color));
       if (reachedApex) {
         this.explode(rocket.x, rocket.y);
-        this.onExplode?.(rocket.x, rocket.y);
         this.layer.removeChild(rocket.sprite);
         rocket.destroy();
         return false;
@@ -168,8 +179,13 @@ export class FireworksSystem {
   }
 
   private applyGlow(): void {
-    const strength = Math.max(this.settings.glow, 0);
-    this.glowFilter.strength = strength;
+    const strength = Math.max(this.settings.glow, 0); // slider range 0-10
+    const normalized = Math.min(strength / 10, 1);
+    // Tuned so the default slider position (2/10) already reads as a clear
+    // bloom, not a barely-there one — matches roughly bloomScale 1.2/blur 8
+    // at the default, scaling up to a stronger halo at the slider's max.
+    this.glowFilter.bloomScale = 0.9 + normalized * 1.3;
+    this.glowFilter.blur = 4 + normalized * 8;
     this.layer.filters = strength > 0.05 ? [this.glowFilter] : [];
   }
 
@@ -179,32 +195,37 @@ export class FireworksSystem {
   }
 
   private explode(x: number, y: number): void {
+    const spawnedBefore = this.pendingSpawns.length;
+
     if (this.randomModeEnabled) {
       this.burstRandomHybrid(x, y);
-      return;
+    } else {
+      const type = this.enabledTypes[Math.floor(Math.random() * this.enabledTypes.length)];
+      switch (type) {
+        case 'rose':
+          this.burstRose(x, y);
+          break;
+        case 'kamuro':
+          this.burstKamuro(x, y);
+          break;
+        case 'crossette':
+          this.burstPalmCrossette(x, y);
+          break;
+        case 'multiRing':
+          this.burstMultiRing(x, y);
+          break;
+        case 'strobe':
+          this.burstStrobe(x, y);
+          break;
+        default:
+          this.burstPeony(x, y);
+          break;
+      }
     }
 
-    const type = this.enabledTypes[Math.floor(Math.random() * this.enabledTypes.length)];
-    switch (type) {
-      case 'rose':
-        this.burstRose(x, y);
-        break;
-      case 'kamuro':
-        this.burstKamuro(x, y);
-        break;
-      case 'crossette':
-        this.burstPalmCrossette(x, y);
-        break;
-      case 'multiRing':
-        this.burstMultiRing(x, y);
-        break;
-      case 'strobe':
-        this.burstStrobe(x, y);
-        break;
-      default:
-        this.burstPeony(x, y);
-        break;
-    }
+    const spawnedCount = this.pendingSpawns.length - spawnedBefore;
+    const intensity = spawnedCount / BURST_INTENSITY_REFERENCE_COUNT;
+    this.onExplode?.(x, y, intensity);
   }
 
   /**

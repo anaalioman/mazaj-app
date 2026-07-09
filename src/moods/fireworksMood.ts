@@ -5,6 +5,7 @@ import { MortarField } from '../effects/MortarField';
 import { GlowFrame } from '../effects/GlowFrame';
 import { ScreenFlash } from '../effects/ScreenFlash';
 import { ShockwaveManager } from '../effects/Shockwave';
+import { ScreenShakeManager } from '../effects/ScreenShake';
 import { AudioManager } from '../audio/AudioManager';
 import { RecordingManager, downloadBlob } from '../recording/RecordingManager';
 import { BackgroundLayer } from '../background';
@@ -61,6 +62,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   const mortarField = new MortarField(app);
   const explosionFlash = new ScreenFlash(app);
   const shockwave = new ShockwaveManager(app);
+  const screenShake = new ScreenShakeManager(app);
 
   let inputMode: InputMode = 'tap';
 
@@ -70,10 +72,11 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
       audio.playLaunch();
       mortarField.fireNear(x);
     },
-    onExplode: (x, y) => {
+    onExplode: (x, y, intensity) => {
       audio.playExplosion(x, y);
       explosionFlash.flash();
       shockwave.trigger(x, y);
+      screenShake.trigger(intensity);
     },
   });
 
@@ -104,6 +107,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     textReveal.update(ticker.deltaTime);
     explosionFlash.update(ticker.deltaMS / 1000);
     shockwave.update(ticker.deltaMS / 1000);
+    screenShake.update(ticker.deltaMS / 1000);
   });
 
   setupOverlay.addEventListener('submit', (event) => {

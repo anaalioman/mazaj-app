@@ -9,6 +9,13 @@ const STABLE_STAGE_END = 0.75;
 const IGNITION_COLOR = 0xffffff;
 const COOLING_ASH_COLOR = 0xcc5500; // alternate embers-gone-cold tone: 0x882200
 
+// Motion-streak trail: instead of spawning extra ghost sprites per particle
+// (expensive at hundreds-on-screen), the existing sprite is simply stretched
+// along its velocity and rotated to match — same single draw call, but reads
+// as a fading comet tail thanks to the soft radial-gradient particle texture.
+const TRAIL_STRETCH_FACTOR = 2.2;
+const TRAIL_MAX_STRETCH_RATIO = 3; // tail length caps at 3x the particle's own thickness
+
 /** Per-channel lerp via bit-shifting — no allocations, no texture/sprite work. */
 function lerpColor(from: number, to: number, t: number): number {
   const ratio = t < 0 ? 0 : t > 1 ? 1 : t;
@@ -139,8 +146,18 @@ export class Particle {
     this.sprite.alpha = Math.max(0, alpha);
 
     const scale = 0.4 + 0.6 * fade;
-    this.sprite.width = this.baseSize * scale;
-    this.sprite.height = this.baseSize * scale;
+    const thickness = this.baseSize * scale;
+    const speed = Math.hypot(this.vx, this.vy);
+    const stretch = Math.min(speed * TRAIL_STRETCH_FACTOR, thickness * TRAIL_MAX_STRETCH_RATIO);
+    const totalLength = thickness + stretch;
+
+    this.sprite.height = thickness;
+    this.sprite.width = totalLength;
+    // Anchor slides from centered (stationary particle, looks like a plain
+    // dot) toward the tail end (fast particle, position sits at the head)
+    // as stretch grows, so there's never a visible jump between the two.
+    this.sprite.anchor.set(0.5 + 0.5 * (stretch / totalLength), 0.5);
+    this.sprite.rotation = Math.atan2(this.vy, this.vx);
 
     // Thermal Color Decay: white ignition -> shell color -> cooling ash,
     // purely as a per-frame tint reassignment (no redraw, no new textures).
