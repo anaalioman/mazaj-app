@@ -98,6 +98,14 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     if (!fireworksEnabled) return;
     const { x, y } = event.global;
     const launchX = inputMode === 'mortar' ? mortarField.getNearestX(x) : x;
+
+    if (fireworks.isGroundFountainMode()) {
+      fireworks.igniteGroundFountain(launchX, y);
+      const stopSizzle = audio.startFountainSizzle();
+      window.setTimeout(stopSizzle, 5000);
+      return;
+    }
+
     fireworks.launch(launchX, y);
   });
 

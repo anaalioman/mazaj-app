@@ -2,6 +2,7 @@ import { Application, Container } from 'pixi.js';
 import { AdvancedBloomFilter } from 'pixi-filters';
 import { Particle } from './Particle';
 import { Rocket } from './Rocket';
+import { GroundFountain } from './GroundFountain';
 import { getParticleTexture } from './textures';
 import { pickBurstColors, randomColor, randomPalette } from './colors';
 
@@ -76,6 +77,9 @@ export class FireworksSystem {
   private settings: BurstSettings = { ...DEFAULT_BURST_SETTINGS };
   private enabledTypes: BurstType[] = [...ALL_BURST_TYPES];
   private randomModeEnabled = false;
+
+  private fountains: GroundFountain[] = [];
+  private groundFountainModeEnabled = false;
 
   private autoLaunchEnabled: boolean;
   private timeToNextAutoLaunch: number;
@@ -155,6 +159,31 @@ export class FireworksSystem {
       this.particles.push(...this.pendingSpawns);
       this.pendingSpawns = [];
     }
+
+    if (this.fountains.length > 0) {
+      this.fountains = this.fountains.filter((fountain) => {
+        fountain.update(delta);
+        if (fountain.finished) {
+          fountain.destroy();
+          return false;
+        }
+        return true;
+      });
+    }
+  }
+
+  /** Whether a tap should ignite a Ground Fountain instead of launching a rocket. */
+  isGroundFountainMode(): boolean {
+    return this.groundFountainModeEnabled;
+  }
+
+  setGroundFountainMode(enabled: boolean): void {
+    this.groundFountainModeEnabled = enabled;
+  }
+
+  /** A continuous 5s narrow-cone spark stream from (x, y) — see GroundFountain. */
+  igniteGroundFountain(x: number, y: number): void {
+    this.fountains.push(new GroundFountain(this.app, x, y, this.layer));
   }
 
   setAutoLaunch(enabled: boolean): void {

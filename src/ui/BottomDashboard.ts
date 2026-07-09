@@ -2,6 +2,7 @@ import { ALL_BURST_TYPES, type BurstType, type FireworksSystem } from '../firewo
 import type { BackgroundLayer, BackgroundPreset } from '../background';
 import type { GlowFrame, GlowFrameShape } from '../effects/GlowFrame';
 import { icon } from './icons';
+import { UploadHint } from './UploadHint';
 
 export interface BottomDashboardDeps {
   fireworks: FireworksSystem;
@@ -23,7 +24,7 @@ const SLIDERS = {
   gravity: { id: 'mzj-gravity', label: 'شدة الجاذبية', min: 0, max: 2, step: 0.05, value: 1 },
   lifespan: { id: 'mzj-lifespan', label: 'عمر الجسيمات', min: 0.4, max: 2.5, step: 0.05, value: 1 },
   scale: { id: 'mzj-scale', label: 'اتساع الانفجار', min: 0.5, max: 2, step: 0.05, value: 1 },
-  glow: { id: 'mzj-glow', label: 'توهج النيون', min: 0, max: 10, step: 0.5, value: 2 },
+  glow: { id: 'mzj-glow', label: 'توهج الألعاب النارية', min: 0, max: 10, step: 0.5, value: 2 },
   dimmer: { id: 'mzj-dimmer', label: 'إضاءة الخلفية', min: 0, max: 1, step: 0.01, value: 1 },
 } satisfies Record<string, SliderSpec>;
 
@@ -47,6 +48,7 @@ export class BottomDashboard {
   readonly root: HTMLDivElement;
   private readonly deps: BottomDashboardDeps;
   private readonly activeBurstTypes = new Set<BurstType>(ALL_BURST_TYPES);
+  private readonly uploadHint: UploadHint;
   private autoShowEnabled = true;
 
   constructor(deps: BottomDashboardDeps) {
@@ -56,6 +58,7 @@ export class BottomDashboard {
     this.root.id = 'mzj-dashboard';
     this.root.innerHTML = this.template();
     document.body.appendChild(this.root);
+    this.uploadHint = new UploadHint(this.root);
 
     for (const type of ['pointerdown', 'click', 'input', 'change'] as const) {
       this.root.addEventListener(type, (event) => event.stopPropagation());
@@ -64,6 +67,7 @@ export class BottomDashboard {
     this.wireTabs();
     this.wireBurstToggles();
     this.wireRandomMode();
+    this.wireGroundFountainMode();
     this.wireAutoShow();
     this.wirePresets();
     this.wireMedia();
@@ -88,6 +92,7 @@ export class BottomDashboard {
             ).join('')}
           </div>
           <button type="button" id="mzj-random-mode" class="mcp-primary-btn mzj-random-btn">${icon('shuffle', 16)}<span>توليد عشوائي هجين</span></button>
+          <button type="button" id="mzj-ground-fountain" class="mcp-primary-btn">${icon('groundFountain', 16)}<span>نافورة أرضية</span></button>
           <button type="button" id="mzj-auto-show" class="mcp-primary-btn active">العرض التلقائي: يعمل</button>
         </section>
 
@@ -106,6 +111,7 @@ export class BottomDashboard {
             <input type="file" id="mzj-bg-video" accept="video/*" />
           </label>
           ${this.sliderRow(SLIDERS.dimmer)}
+          ${this.sliderRow(SLIDERS.glow)}
         </section>
 
         <section class="mzj-tab-content" data-panel="messages">
@@ -129,7 +135,6 @@ export class BottomDashboard {
           ${this.sliderRow(SLIDERS.gravity)}
           ${this.sliderRow(SLIDERS.lifespan)}
           ${this.sliderRow(SLIDERS.scale)}
-          ${this.sliderRow(SLIDERS.glow)}
         </section>
       </div>
     `;
@@ -204,6 +209,17 @@ export class BottomDashboard {
     });
   }
 
+  private wireGroundFountainMode(): void {
+    const button = this.query<HTMLButtonElement>('#mzj-ground-fountain');
+    let enabled = false;
+
+    button.addEventListener('click', () => {
+      enabled = !enabled;
+      this.deps.fireworks.setGroundFountainMode(enabled);
+      button.classList.toggle('active', enabled);
+    });
+  }
+
   private wireAutoShow(): void {
     const button = this.query<HTMLButtonElement>('#mzj-auto-show');
     button.addEventListener('click', () => {
@@ -230,12 +246,12 @@ export class BottomDashboard {
 
     imageInput.addEventListener('change', () => {
       const file = imageInput.files?.[0];
-      if (file) void this.deps.background.setImage(file);
+      if (file) void this.deps.background.setImage(file).then(() => this.uploadHint.show('image'));
     });
 
     videoInput.addEventListener('change', () => {
       const file = videoInput.files?.[0];
-      if (file) void this.deps.background.setVideo(file);
+      if (file) void this.deps.background.setVideo(file).then(() => this.uploadHint.show('video'));
     });
   }
 

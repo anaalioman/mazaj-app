@@ -121,6 +121,43 @@ export class AudioManager {
     window.setTimeout(() => this.play(name, explosionVolume * 0.5), crackleDelay);
   }
 
+  /**
+   * Loops a sizzling bed for the Ground Fountain's duration. No dedicated
+   * continuous hiss sample was provided, so this reuses one of the crackle
+   * takes looped — swap in a real sizzle/hiss sample later if one shows up.
+   * Returns a `stop()` that fades out over 0.6s rather than cutting abruptly.
+   */
+  startFountainSizzle(): () => void {
+    const name = this.pickLoaded('crackle1', 'crackle2');
+    const buffer = this.buffers.get(name);
+    if (this.muted || !buffer) return () => {};
+
+    const source = this.context.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+
+    const gain = this.context.createGain();
+    const now = this.context.currentTime;
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.3, now + 0.2);
+
+    source.connect(gain);
+    gain.connect(this.context.destination);
+    gain.connect(this.destination);
+    source.start();
+
+    let stopped = false;
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      const stopAt = this.context.currentTime;
+      gain.gain.cancelScheduledValues(stopAt);
+      gain.gain.setValueAtTime(gain.gain.value, stopAt);
+      gain.gain.linearRampToValueAtTime(0, stopAt + 0.6);
+      source.stop(stopAt + 0.65);
+    };
+  }
+
   /** Randomly picks among whichever of these takes actually loaded; falls back to the first name if none did. */
   private pickLoaded(...names: SoundName[]): SoundName {
     const available = names.filter((name) => this.buffers.has(name));
