@@ -8,7 +8,14 @@ import { withTimeout } from '../utils/withTimeout';
 const SOUND_FILES = {
   reveal: '/audio/reveal.mp3',
   launch: '/audio/launch.mp3',
+  launchVariant: '/audio/gearpile-explosion-3-386885.mp3',
   explosion: '/audio/explosion.mp3',
+  // A lighter, more distant-sounding boom used for bursts that land well off
+  // the horizontal center — reads as if it came from a different mortar
+  // station rather than every shell sounding identical.
+  explosionDistant: '/audio/brvhrtz-boom-03-279195.mp3',
+  crackle1: '/audio/67213_cracklr-spark_1.mp3',
+  crackle2: '/audio/29367_freesound_community-firework-s_1.mp3',
 } as const;
 
 type SoundName = keyof typeof SOUND_FILES;
@@ -21,6 +28,11 @@ const SOUND_SPEED_PX_PER_SEC = 700;
 // off with the inverse square of distance, floored so nothing goes silent.
 const REFERENCE_DISTANCE = 160;
 const MIN_VOLUME_FACTOR = 0.08;
+// Bursts whose x lands beyond this fraction of the half-width from center
+// count as "off-center" and get the more distant-sounding boom.
+const OFF_CENTER_RATIO = 0.5;
+const CRACKLE_MIN_DELAY_MS = 90;
+const CRACKLE_MAX_DELAY_MS = 190;
 
 export class AudioManager {
   private readonly app: Application;
@@ -70,14 +82,18 @@ export class AudioManager {
     this.play('reveal', 0.5);
   }
 
+  /** Simple random variation between the two launch takes, when both loaded. */
   playLaunch(): void {
-    this.play('launch', 0.35);
+    this.play(this.pickLoaded('launch', 'launchVariant'), 0.35);
   }
 
   /**
    * Plays the explosion as if it physically happened at (x, y), with the
    * listener planted at the bottom-center of the screen: the sound is
    * delayed by travel time and attenuated by inverse-square distance falloff.
+   * Bursts landing well off the horizontal center get the lighter, more
+   * "distant" boom take instead of the main one, then a trailing crackle
+   * layers in shortly after — like a real shell's sparkle tail.
    */
   playExplosion(x: number, y: number): void {
     const listenerX = this.app.screen.width / 2;
@@ -89,7 +105,27 @@ export class AudioManager {
     const volume = 0.5 * attenuation;
     const delayMs = (distance / SOUND_SPEED_PX_PER_SEC) * 1000;
 
-    window.setTimeout(() => this.play('explosion', volume), delayMs);
+    const isOffCenter = Math.abs(x - listenerX) > (this.app.screen.width / 2) * OFF_CENTER_RATIO;
+    const explosionName = isOffCenter ? this.pickLoaded('explosionDistant', 'explosion') : 'explosion';
+
+    window.setTimeout(() => {
+      this.play(explosionName, volume);
+      this.playCrackle(volume);
+    }, delayMs);
+  }
+
+  private playCrackle(explosionVolume: number): void {
+    const name = this.pickLoaded('crackle1', 'crackle2');
+    if (!this.buffers.has(name)) return; // neither crackle take has loaded — skip silently
+    const crackleDelay = CRACKLE_MIN_DELAY_MS + Math.random() * (CRACKLE_MAX_DELAY_MS - CRACKLE_MIN_DELAY_MS);
+    window.setTimeout(() => this.play(name, explosionVolume * 0.5), crackleDelay);
+  }
+
+  /** Randomly picks among whichever of these takes actually loaded; falls back to the first name if none did. */
+  private pickLoaded(...names: SoundName[]): SoundName {
+    const available = names.filter((name) => this.buffers.has(name));
+    if (available.length === 0) return names[0];
+    return available[Math.floor(Math.random() * available.length)];
   }
 
   /** True if one or more sound files haven't been added to public/audio/ yet. */
