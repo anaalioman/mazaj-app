@@ -22,6 +22,16 @@ export class IdleFadeController {
     this.resetTimer();
   }
 
+  /**
+   * Hides the targets immediately (no fade transition) and restarts the idle
+   * timer. Used right when a show starts so the UI never lingers on screen
+   * waiting for the normal idle timeout to elapse.
+   */
+  hideNow(): void {
+    this.hide();
+    this.resetTimer();
+  }
+
   private handleActivity = (): void => {
     this.show();
     this.resetTimer();

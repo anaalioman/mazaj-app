@@ -1,7 +1,5 @@
 import { Application, BlurFilter, Container, FillGradient, Graphics, Sprite, Texture } from 'pixi.js';
 
-export type BackgroundPreset = 'none' | 'city' | 'mountains';
-
 // Deep Sky Canvas palette.
 const SKY_TOP = 0x050508; // Royal Black
 const SKY_BOTTOM = 0x0f111a; // Deep Midnight Blue
@@ -45,7 +43,6 @@ export class BackgroundLayer {
   private readonly app: Application;
   private current: Container;
   private currentSprite: Sprite | null = null;
-  private currentPreset: BackgroundPreset = 'none';
   private videoEl: HTMLVideoElement | null = null;
   private dimmer = 1;
 
@@ -116,16 +113,6 @@ export class BackgroundLayer {
   setDimmer(value: number): void {
     this.dimmer = Math.max(0, Math.min(1, value));
     if (this.currentSprite) this.currentSprite.tint = grayscaleTint(this.dimmer);
-  }
-
-  /** Quick built-in backdrops — the Deep Sky Canvas alone, or with a flat skyline/ridge silhouette over it. */
-  setPreset(preset: BackgroundPreset): void {
-    this.stopVideo();
-    this.currentPreset = preset;
-    const oldGradients = this.takeTrackedGradients();
-    const next = preset === 'none' ? this.buildDeepSky() : this.buildSilhouette(preset);
-    this.replace(next, oldGradients);
-    this.currentSprite = null;
   }
 
   /** Full-screen vertical gradient + ambient horizon glow + twinkling stars. */
@@ -214,49 +201,16 @@ export class BackgroundLayer {
     }
   }
 
-  private buildSilhouette(preset: 'city' | 'mountains'): Container {
-    const group = this.buildDeepSky();
-
-    const { width, height } = this.app.screen;
-    const g = new Graphics();
-
-    if (preset === 'city') {
-      let x = 0;
-      while (x < width) {
-        const w = 30 + Math.random() * 50;
-        const h = 60 + Math.random() * 160;
-        g.rect(x, height - h, w, h).fill({ color: 0x05050a });
-        x += w + 4;
-      }
-    } else {
-      g.moveTo(0, height);
-      let x = 0;
-      while (x <= width) {
-        x += 60;
-        g.lineTo(x, height - (80 + Math.random() * 140));
-        x += 60;
-        g.lineTo(x, height - (20 + Math.random() * 30));
-      }
-      g.lineTo(width, height);
-      g.closePath();
-      g.fill({ color: 0x05050a });
-    }
-
-    group.addChild(g);
-    return group;
-  }
-
   private handleResize(): void {
     if (this.currentSprite) {
       coverFit(this.currentSprite, this.app.screen.width, this.app.screen.height);
       return;
     }
 
-    // Currently showing a procedural preset (Deep Sky ± silhouette) — regenerate
-    // it at the new size so the gradient bounds and star field stay correct.
+    // Currently showing the procedural Deep Sky Canvas — regenerate it at the
+    // new size so the gradient bounds and star field stay correct.
     const oldGradients = this.takeTrackedGradients();
-    const next = this.currentPreset === 'none' ? this.buildDeepSky() : this.buildSilhouette(this.currentPreset);
-    this.replace(next, oldGradients);
+    this.replace(this.buildDeepSky(), oldGradients);
   }
 
   private replace(next: Container, oldGradients: FillGradient[] = []): void {

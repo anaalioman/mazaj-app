@@ -187,50 +187,56 @@
   }
 }
 
-.mzj-preset-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.mzj-preset-btn {
-  padding: 9px 6px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.05);
-  color: #e5e7eb;
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.mzj-preset-btn.active {
-  background: linear-gradient(135deg, rgba(124, 245, 255, 0.28), rgba(124, 245, 255, 0.1));
-  border-color: rgba(124, 245, 255, 0.6);
-  color: #eafeff;
-}
-
 /* ---------- Shared field/slider/button styles (used by the dashboard tabs) ---------- */
 
+/* Pattern cards: a horizontally-scrolling row of uniform, low-contrast cards
+   so the eye can rest on the single selected (gold) card instead of every
+   option competing at the same bright weight at once. */
 .mcp-burst-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  display: flex;
+  gap: 12px;
   margin-bottom: 12px;
+  padding: 2px 2px 10px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
 }
 
 .mcp-burst-btn {
-  padding: 10px 8px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.05);
-  color: #e5e7eb;
-  font-size: 12.5px;
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  width: 76px;
+  height: 88px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 6px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(30, 34, 54, 0.55);
+  color: rgba(226, 232, 240, 0.75);
+  font-size: 11.5px;
   font-family: inherit;
+  line-height: 1.25;
+  text-align: center;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.15s ease;
+}
+
+.mcp-burst-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(226, 232, 240, 0.55);
+}
+
+.mcp-burst-label {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .mcp-burst-btn:hover {
@@ -238,9 +244,13 @@
 }
 
 .mcp-burst-btn.active {
-  background: linear-gradient(135deg, rgba(255, 207, 107, 0.28), rgba(255, 159, 69, 0.18));
-  border-color: rgba(255, 207, 107, 0.65);
-  color: #ffe9b3;
+  background: linear-gradient(180deg, #ffcf6b, #ff9f45);
+  border-color: rgba(255, 233, 179, 0.6);
+  color: #2a1400;
+}
+
+.mcp-burst-btn.active .mcp-burst-preview {
+  color: #2a1400;
 }
 
 .mcp-burst-btn:disabled {
@@ -253,6 +263,63 @@
   background: linear-gradient(180deg, #c084fc, #7c3aed);
   border-color: rgba(192, 132, 252, 0.5);
   color: #fff;
+}
+
+/* ---------- Planning Mode: All-at-once / Sequential switch ---------- */
+
+.mzj-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.mzj-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.mzj-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.mzj-switch-track {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.mzj-switch-track::before {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  left: 2px;
+  top: 2px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s ease;
+}
+
+.mzj-switch input:checked + .mzj-switch-track {
+  background: linear-gradient(180deg, #ffcf6b, #ff9f45);
+  border-color: rgba(255, 207, 107, 0.6);
+}
+
+.mzj-switch input:checked + .mzj-switch-track::before {
+  transform: translateX(20px);
 }
 
 .mzj-random-btn.active {
@@ -343,9 +410,9 @@
 }
 
 .mzj-fade-target.mzj-idle {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.6s ease;
+  /* Full immersion: the UI must occupy zero footprint while a show is
+     running, not just sit at opacity:0 on top of the canvas. */
+  display: none !important;
 }
 
 /* ---------- Tactile feedback: cyan flash on any press ---------- */

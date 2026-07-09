@@ -15,6 +15,7 @@ import { IdleFadeController } from '../ui/IdleFade';
 import { attachTactileFeedback } from '../ui/tactile';
 import { withTimeout } from '../utils/withTimeout';
 import { icon } from '../ui/icons';
+import { PlanningMode } from '../ui/PlanningMode';
 
 export interface FireworksMoodHandle {
   show(): void;
@@ -86,6 +87,19 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
 
   let fireworksEnabled = false;
 
+  /** What a tap normally does: aerial burst, or a Ground Fountain if that mode is active. */
+  function fireAt(x: number, y: number): void {
+    if (fireworks.isGroundFountainMode()) {
+      fireworks.igniteGroundFountain(x, y);
+      const stopSizzle = audio.startFountainSizzle();
+      window.setTimeout(stopSizzle, 5000);
+      return;
+    }
+    fireworks.launch(x, y);
+  }
+
+  const planningMode = new PlanningMode({ app, onLaunchPin: fireAt });
+
   app.stage.eventMode = 'static';
   app.stage.hitArea = app.screen;
   app.renderer.on('resize', () => {
@@ -93,20 +107,20 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   });
 
   // Free Tap fires exactly where the player touches; Mortar Field snaps the
-  // launch x to whichever tube is closest, for a more "grounded" show.
+  // launch x to whichever tube is closest, for a more "grounded" show. While
+  // Planning Mode is active, taps place/remove numbered pins instead of
+  // firing immediately — see the dedicated "launch plan" button.
   app.stage.on('pointerdown', (event) => {
     if (!fireworksEnabled) return;
     const { x, y } = event.global;
     const launchX = inputMode === 'mortar' ? mortarField.getNearestX(x) : x;
 
-    if (fireworks.isGroundFountainMode()) {
-      fireworks.igniteGroundFountain(launchX, y);
-      const stopSizzle = audio.startFountainSizzle();
-      window.setTimeout(stopSizzle, 5000);
+    if (planningMode.isActive) {
+      planningMode.handleTap(launchX, y);
       return;
     }
 
-    fireworks.launch(launchX, y);
+    fireAt(launchX, y);
   });
 
   app.ticker.add((ticker) => {
@@ -154,6 +168,11 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
       // caused the two screens to visually collide.
       header.root.classList.remove('mzj-await-start');
       dashboard.root.classList.remove('mzj-await-start');
+      // Full-immersion: go straight to the completely-hidden state instead
+      // of leaving the UI visible for the first idle timeout. The player
+      // brings it back at any moment with the existing tap/move-to-reveal
+      // behaviour (IdleFadeController), same as it works everywhere else.
+      idleFade.hideNow();
     }
   }
 
@@ -234,13 +253,13 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     },
   });
 
-  const dashboard = new BottomDashboard({ fireworks, background, glowFrame });
+  const dashboard = new BottomDashboard({ fireworks, background, glowFrame, planningMode });
 
   // Hidden until startShow() finishes setup — see the `finally` block above.
   header.root.classList.add('mzj-await-start');
   dashboard.root.classList.add('mzj-await-start');
 
-  new IdleFadeController([header.root, dashboard.root]);
+  const idleFade = new IdleFadeController([header.root, dashboard.root]);
   attachTactileFeedback(header.root, audio);
   attachTactileFeedback(dashboard.root, audio);
 

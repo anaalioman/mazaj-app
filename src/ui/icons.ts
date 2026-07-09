@@ -40,6 +40,19 @@ const PATHS = {
   droplet: '<path d="M12 3c3.6 4.5 6.2 8.2 6.2 11.2a6.2 6.2 0 0 1-12.4 0C5.8 11.2 8.4 7.5 12 3Z"/>',
   groundFountain:
     '<path d="M12 20c0-4.5-2.2-6.5-2.2-11.5M12 20c0-5.5 0-8 0-13M12 20c0-4.5 2.2-6.5 2.2-11.5"/><path d="M6 20h12"/>',
+  mapPin: '<path d="M12 21S5 14.5 5 9a7 7 0 1 1 14 0c0 5.5-7 12-7 12Z"/><circle cx="12" cy="9" r="2.4"/>',
+  // Small schematic previews of each firework burst pattern, used on the
+  // pattern-picker cards so the eye has a shape to read, not just text.
+  peony:
+    '<path d="M15.5 12h5M14.47 14.47l3.54 3.54M12 15.5v5M9.53 14.47l-3.54 3.54M8.5 12h-5M9.53 9.53 5.99 5.99M12 8.5v-5M14.47 9.53l3.54-3.54"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
+  rose:
+    '<circle cx="19" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="17" cy="17" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.1" fill="currentColor" stroke="none"/><circle cx="7" cy="17" r="1.1" fill="currentColor" stroke="none"/><circle cx="5" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="7" cy="7" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="5" r="1.1" fill="currentColor" stroke="none"/><circle cx="17" cy="7" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>',
+  kamuro: '<path d="M12 12Q6 6 4 14M12 12Q9 4 8 15M12 12Q12 3 12 16M12 12Q15 4 16 15M12 12Q18 6 20 14"/>',
+  crossette:
+    '<path d="M12 12 12 5M12 5 10.3 3.3M12 5 13.7 3.3M12 12 19 12M19 12 20.7 10.3M19 12 20.7 13.7M12 12 12 19M12 19 10.3 20.7M12 19 13.7 20.7M12 12 5 12M5 12 3.3 10.3M5 12 3.3 13.7"/>',
+  multiRing: '<circle cx="12" cy="12" r="2.6"/><circle cx="12" cy="12" r="5.6"/><circle cx="12" cy="12" r="8.6"/>',
+  strobe:
+    '<path d="M12 3l1.3 4.7L18 9l-4.7 1.3L12 15l-1.3-4.7L6 9l4.7-1.3L12 3Z"/><path d="M19 15.2l.6 2.2 2.2.6-2.2.6-.6 2.2-.6-2.2-2.2-.6 2.2-.6.6-2.2Z"/>',
 } as const;
 
 export type IconName = keyof typeof PATHS;

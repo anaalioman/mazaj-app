@@ -1,13 +1,15 @@
 import { ALL_BURST_TYPES, type BurstType, type FireworksSystem } from '../fireworks/FireworksSystem';
-import type { BackgroundLayer, BackgroundPreset } from '../background';
+import type { BackgroundLayer } from '../background';
 import type { GlowFrame, GlowFrameShape } from '../effects/GlowFrame';
 import { icon } from './icons';
 import { UploadHint } from './UploadHint';
+import type { PlanningMode } from './PlanningMode';
 
 export interface BottomDashboardDeps {
   fireworks: FireworksSystem;
   background: BackgroundLayer;
   glowFrame: GlowFrame;
+  planningMode: PlanningMode;
 }
 
 interface SliderSpec {
@@ -37,12 +39,6 @@ const BURST_LABELS: Record<BurstType, string> = {
   strobe: 'وميض متلألئ',
 };
 
-const PRESETS: { id: BackgroundPreset; label: string }[] = [
-  { id: 'none', label: 'نجوم فقط' },
-  { id: 'city', label: 'أفق مدينة' },
-  { id: 'mountains', label: 'جبال' },
-];
-
 /** Compact tabbed glass dashboard anchored at the bottom-center of the screen. */
 export class BottomDashboard {
   readonly root: HTMLDivElement;
@@ -68,8 +64,8 @@ export class BottomDashboard {
     this.wireBurstToggles();
     this.wireRandomMode();
     this.wireGroundFountainMode();
+    this.wirePlanningMode();
     this.wireAutoShow();
-    this.wirePresets();
     this.wireMedia();
     this.wireSliders();
     this.wireGreeting();
@@ -88,20 +84,26 @@ export class BottomDashboard {
         <section class="mzj-tab-content active" data-panel="patterns">
           <div class="mcp-burst-grid">
             ${ALL_BURST_TYPES.map(
-              (type) => `<button type="button" class="mcp-burst-btn" data-type="${type}">${BURST_LABELS[type]}</button>`,
+              (type) =>
+                `<button type="button" class="mcp-burst-btn" data-type="${type}"><span class="mcp-burst-preview">${icon(type, 26)}</span><span class="mcp-burst-label">${BURST_LABELS[type]}</span></button>`,
             ).join('')}
           </div>
           <button type="button" id="mzj-random-mode" class="mcp-primary-btn mzj-random-btn">${icon('shuffle', 16)}<span>توليد عشوائي هجين</span></button>
           <button type="button" id="mzj-ground-fountain" class="mcp-primary-btn">${icon('groundFountain', 16)}<span>نافورة أرضية</span></button>
+          <button type="button" id="mzj-planning-mode" class="mcp-primary-btn">${icon('mapPin', 16)}<span>وضع التخطيط الزمني</span></button>
+          <div class="mzj-toggle-row">
+            <span>انطلاق جماعي</span>
+            <label class="mzj-switch">
+              <input type="checkbox" id="mzj-sequential-toggle" />
+              <span class="mzj-switch-track"></span>
+            </label>
+            <span>انطلاق متتابع</span>
+          </div>
+          <button type="button" id="mzj-launch-plan" class="mcp-primary-btn mzj-random-btn">${icon('play', 16)}<span>إطلاق العرض المخطط</span></button>
           <button type="button" id="mzj-auto-show" class="mcp-primary-btn active">العرض التلقائي: يعمل</button>
         </section>
 
         <section class="mzj-tab-content" data-panel="environment">
-          <div class="mzj-preset-grid">
-            ${PRESETS.map(
-              (p) => `<button type="button" class="mzj-preset-btn${p.id === 'none' ? ' active' : ''}" data-preset="${p.id}">${p.label}</button>`,
-            ).join('')}
-          </div>
           <label class="mcp-field">
             <span>رفع صورة خلفية</span>
             <input type="file" id="mzj-bg-image" accept="image/*" />
@@ -220,6 +222,27 @@ export class BottomDashboard {
     });
   }
 
+  private wirePlanningMode(): void {
+    const toggleButton = this.query<HTMLButtonElement>('#mzj-planning-mode');
+    const sequentialCheckbox = this.query<HTMLInputElement>('#mzj-sequential-toggle');
+    const launchButton = this.query<HTMLButtonElement>('#mzj-launch-plan');
+
+    toggleButton.addEventListener('click', () => {
+      const enabled = !this.deps.planningMode.isActive;
+      this.deps.planningMode.setActive(enabled);
+      toggleButton.classList.toggle('active', enabled);
+      if (!enabled) this.deps.planningMode.clear();
+    });
+
+    sequentialCheckbox.addEventListener('change', () => {
+      this.deps.planningMode.setSequential(sequentialCheckbox.checked);
+    });
+
+    launchButton.addEventListener('click', () => {
+      this.deps.planningMode.launch();
+    });
+  }
+
   private wireAutoShow(): void {
     const button = this.query<HTMLButtonElement>('#mzj-auto-show');
     button.addEventListener('click', () => {
@@ -228,16 +251,6 @@ export class BottomDashboard {
       button.classList.toggle('active', this.autoShowEnabled);
       button.textContent = this.autoShowEnabled ? 'العرض التلقائي: يعمل' : 'العرض التلقائي: متوقف';
     });
-  }
-
-  private wirePresets(): void {
-    const buttons = Array.from(this.root.querySelectorAll<HTMLButtonElement>('.mzj-preset-btn'));
-    for (const btn of buttons) {
-      btn.addEventListener('click', () => {
-        for (const b of buttons) b.classList.toggle('active', b === btn);
-        this.deps.background.setPreset(btn.dataset.preset as BackgroundPreset);
-      });
-    }
   }
 
   private wireMedia(): void {
