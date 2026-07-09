@@ -88,7 +88,7 @@ export class BottomDashboard {
                 `<button type="button" class="mcp-burst-btn" data-type="${type}"><span class="mcp-burst-preview">${icon(type, 26)}</span><span class="mcp-burst-label">${BURST_LABELS[type]}</span></button>`,
             ).join('')}
           </div>
-          <button type="button" id="mzj-random-mode" class="mcp-primary-btn mzj-random-btn">${icon('shuffle', 16)}<span>توليد عشوائي هجين</span></button>
+          <button type="button" id="mzj-random-mode" class="mcp-primary-btn">${icon('shuffle', 16)}<span>توليد عشوائي هجين</span></button>
           <button type="button" id="mzj-ground-fountain" class="mcp-primary-btn">${icon('groundFountain', 16)}<span>نافورة أرضية</span></button>
           <button type="button" id="mzj-planning-mode" class="mcp-primary-btn">${icon('mapPin', 16)}<span>وضع التخطيط الزمني</span></button>
           <div class="mzj-toggle-row">
@@ -99,8 +99,8 @@ export class BottomDashboard {
             </label>
             <span>انطلاق متتابع</span>
           </div>
-          <button type="button" id="mzj-launch-plan" class="mcp-primary-btn mzj-random-btn">${icon('play', 16)}<span>إطلاق العرض المخطط</span></button>
-          <button type="button" id="mzj-auto-show" class="mcp-primary-btn active">العرض التلقائي: يعمل</button>
+          <button type="button" id="mzj-launch-plan" class="mcp-primary-btn">${icon('play', 16)}<span>إطلاق العرض المخطط</span></button>
+          <button type="button" id="mzj-auto-show" class="mcp-primary-btn active">${icon('fireworksMood', 16)}<span>العرض التلقائي: يعمل</span></button>
         </section>
 
         <section class="mzj-tab-content" data-panel="environment">
@@ -245,11 +245,12 @@ export class BottomDashboard {
 
   private wireAutoShow(): void {
     const button = this.query<HTMLButtonElement>('#mzj-auto-show');
+    const label = button.querySelector('span')!;
     button.addEventListener('click', () => {
       this.autoShowEnabled = !this.autoShowEnabled;
       this.deps.fireworks.setAutoLaunch(this.autoShowEnabled);
       button.classList.toggle('active', this.autoShowEnabled);
-      button.textContent = this.autoShowEnabled ? 'العرض التلقائي: يعمل' : 'العرض التلقائي: متوقف';
+      label.textContent = this.autoShowEnabled ? 'العرض التلقائي: يعمل' : 'العرض التلقائي: متوقف';
     });
   }
 

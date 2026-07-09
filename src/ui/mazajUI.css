@@ -254,12 +254,6 @@
   cursor: not-allowed;
 }
 
-.mzj-random-btn {
-  background: linear-gradient(180deg, #c084fc, #7c3aed);
-  border-color: rgba(192, 132, 252, 0.5);
-  color: #fff;
-}
-
 /* ---------- Planning Mode: All-at-once / Sequential switch ---------- */
 
 .mzj-toggle-row {
@@ -289,8 +283,8 @@
 .mzj-switch-track {
   position: absolute;
   inset: 0;
-  background: rgba(255, 255, 255, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 999px;
   cursor: pointer;
   transition: background 0.2s ease, border-color 0.2s ease;
@@ -304,22 +298,17 @@
   left: 2px;
   top: 2px;
   border-radius: 50%;
-  background: #fff;
-  transition: transform 0.2s ease;
+  background: rgba(255, 255, 255, 0.45);
+  transition: transform 0.2s ease, background 0.2s ease;
 }
 
 .mzj-switch input:checked + .mzj-switch-track {
-  background: linear-gradient(180deg, #ffcf6b, #ff9f45);
-  border-color: rgba(255, 207, 107, 0.6);
+  border-color: rgba(255, 255, 255, 0.4);
 }
 
 .mzj-switch input:checked + .mzj-switch-track::before {
   transform: translateX(20px);
-}
-
-.mzj-random-btn.active {
-  background: linear-gradient(180deg, #f0abfc, #a855f7);
-  box-shadow: 0 0 16px rgba(192, 132, 252, 0.55);
+  background: #fff;
 }
 
 .mcp-slider-row {
@@ -369,6 +358,8 @@
   font-family: inherit;
 }
 
+/* Flat, text-first action buttons: no fill, no border — only icon + label,
+   with weight/brightness (not color blocks) carrying the on/off state. */
 .mcp-primary-btn {
   width: 100%;
   display: flex;
@@ -378,23 +369,23 @@
   padding: 10px 14px;
   margin-bottom: 4px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 233, 179, 0.4);
-  background: linear-gradient(180deg, #ffcf6b, #ff9f45);
-  color: #2a1400;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
   font-family: inherit;
-  font-weight: 700;
+  font-weight: 600;
   font-size: 13px;
   cursor: pointer;
 }
 
 .mcp-primary-btn:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .mcp-primary-btn.active {
-  background: linear-gradient(180deg, #7cf5ff, #34c9dd);
-  color: #052024;
+  color: #fff;
+  font-weight: 800;
 }
 
 /* ---------- Idle sensing fade ---------- */
