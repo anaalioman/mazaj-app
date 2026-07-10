@@ -14,9 +14,7 @@ import { BottomDashboard } from '../ui/BottomDashboard';
 import { IdleFadeController } from '../ui/IdleFade';
 import { attachTactileFeedback } from '../ui/tactile';
 import { withTimeout } from '../utils/withTimeout';
-import { icon } from '../ui/icons';
 import { PlanningMode } from '../ui/PlanningMode';
-import { wireFilePickerLabel } from '../ui/filePicker';
 
 export interface FireworksMoodHandle {
   show(): void;
@@ -27,21 +25,22 @@ export interface FireworksMoodHandle {
 const ROYAL_BLACK = '#040406';
 
 /**
- * Boots the fireworks mood inside `container` (expects the #app/#setup-overlay/.hint
- * markup already in place, see index.html) and wires the "back to home" callback
- * into the header. Called once, lazily, the first time the player picks this mood
- * from the home screen; subsequent visits just call `show()`/`hide()`.
+ * Boots the fireworks mood inside `container` (expects the #app/.hint markup
+ * already in place, see index.html) and wires the "back to home" callback
+ * into the header. Called once, lazily, the first time the player picks this
+ * mood from the home screen; subsequent visits just call `show()`/`hide()`.
+ *
+ * The full control panel (patterns, environment, messages, lab) is visible
+ * the instant the mood opens — there's no separate setup gate to get past.
+ * Image/phrase/pattern selection all happen from within that panel; tap-to-
+ * fire is live immediately. "ابدأ العرض" in the header is a deliberate,
+ * one-time action that plays the opening phrase reveal and switches into
+ * the fully-immersive (UI-hidden) viewing mode.
  */
 export async function startFireworksMood(container: HTMLElement, onBackToHome: () => void): Promise<FireworksMoodHandle> {
   const appContainer = container.querySelector<HTMLDivElement>('#app')!;
-  const setupOverlay = container.querySelector<HTMLFormElement>('#setup-overlay')!;
-  const imageInput = container.querySelector<HTMLInputElement>('#image-input')!;
-  const phraseInput = container.querySelector<HTMLInputElement>('#phrase-input')!;
   const hint = container.querySelector<HTMLDivElement>('.hint')!;
-  const startShowBtn = container.querySelector<HTMLButtonElement>('#start-show-btn')!;
-  startShowBtn.insertAdjacentHTML('afterbegin', icon('play', 17));
-  const imageInputName = container.querySelector<HTMLSpanElement>('#image-input-name')!;
-  wireFilePickerLabel(imageInput, imageInputName, 'لم يتم اختيار صورة');
+  hint.classList.remove('hidden');
 
   const app = new Application();
 
@@ -63,6 +62,14 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   const background = new BackgroundLayer(app);
 
   const audio = new AudioManager(app);
+  // Fire-and-forget: unlocking must never block the panel from appearing,
+  // and it's still within the same user-initiated call chain that opened
+  // this mood (the browser's autoplay-gesture leniency covers this).
+  void audio.unlock().then(() => {
+    if (audio.hasMissingSounds()) {
+      console.info('أضف ملفات الصوت في public/audio/ لتفعيل المؤثرات الصوتية (راجع public/audio/README.md).');
+    }
+  });
   const mortarField = new MortarField(app);
   const explosionFlash = new ScreenFlash(app);
   const shockwave = new ShockwaveManager(app);
@@ -88,8 +95,6 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   const glowFrame = new GlowFrame(app);
   const recording = new RecordingManager(app.canvas as HTMLCanvasElement, audio.getRecordingStream());
 
-  let fireworksEnabled = false;
-
   /** What a tap normally does: aerial burst, or a Ground Fountain if that mode is active. */
   function fireAt(x: number, y: number): void {
     if (fireworks.isGroundFountainMode()) {
@@ -110,11 +115,11 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   });
 
   // Free Tap fires exactly where the player touches; Mortar Field snaps the
-  // launch x to whichever tube is closest, for a more "grounded" show. While
-  // Planning Mode is active, taps place/remove numbered pins instead of
-  // firing immediately — see the dedicated "launch plan" button.
+  // launch x to whichever tube is closest, for a more "grounded" show. Tap-
+  // to-fire is live the instant the mood opens — no separate "start" gate.
+  // While Planning Mode is active, taps place/remove numbered pins instead
+  // of firing immediately — see the dedicated "launch plan" button.
   app.stage.on('pointerdown', (event) => {
-    if (!fireworksEnabled) return;
     const { x, y } = event.global;
     const launchX = inputMode === 'mortar' ? mortarField.getNearestX(x) : x;
 
@@ -135,51 +140,27 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     screenShake.update(ticker.deltaMS / 1000);
   });
 
-  setupOverlay.addEventListener('submit', (event) => {
-    event.preventDefault();
-    void startShow();
-  });
+  // "ابدأ العرض" is a one-time, deliberate action (not a setup gate): it
+  // plays the opening phrase reveal using whatever text is currently in the
+  // dashboard's greeting field, then switches into full immersion. Pressing
+  // it again afterwards is a no-op — the reveal isn't designed to replay
+  // (its smoke/text sprites aren't cleared on a second call).
+  let showStarted = false;
 
-  async function startShow(): Promise<void> {
-    setupOverlay.classList.add('hidden');
-    hint.classList.remove('hidden');
+  function beginShow(): void {
+    if (showStarted) return;
+    showStarted = true;
 
-    // Every step below is best-effort: a stuck or failing API (audio, image
-    // decoding, the text-reveal animation) must never prevent the fireworks
-    // show itself from starting — that's the one thing this screen exists
-    // for, so it runs unconditionally in `finally`.
-    try {
-      await audio.unlock();
-      if (audio.hasMissingSounds()) {
-        console.info('أضف ملفات الصوت في public/audio/ لتفعيل المؤثرات الصوتية (راجع public/audio/README.md).');
-      }
+    audio.playReveal();
+    void withTimeout(textReveal.reveal(dashboard.getGreetingText()), 5000, 'TextReveal.reveal').catch((error) => {
+      console.error('تعذّر عرض عبارة الافتتاح (سيستمر العرض على أي حال):', error);
+    });
 
-      const file = imageInput.files?.[0];
-      if (file) {
-        await withTimeout(background.setImage(file), 5000, 'BackgroundLayer.setImage');
-      }
-
-      audio.playReveal();
-      await withTimeout(textReveal.reveal(phraseInput.value), 5000, 'TextReveal.reveal');
-    } catch (error) {
-      console.error('تعذّرت إحدى خطوات بدء العرض (سيبدأ العرض على أي حال):', error);
-    } finally {
-      fireworksEnabled = true;
-      // Auto-show is the dashboard's own toggle (off by default — a plain
-      // "ابدأ العرض" press should only enable manual tap-to-fire, not also
-      // kick off an unrelated endless random launch loop); starting the
-      // show must never override whatever the player already chose there.
-      // The header/dashboard only make sense once the show is actually
-      // running — showing them earlier, on top of the setup form, is what
-      // caused the two screens to visually collide.
-      header.root.classList.remove('mzj-await-start');
-      dashboard.root.classList.remove('mzj-await-start');
-      // Full-immersion: go straight to the completely-hidden state instead
-      // of leaving the UI visible for the first idle timeout. The player
-      // brings it back at any moment with the existing tap/move-to-reveal
-      // behaviour (IdleFadeController), same as it works everywhere else.
-      idleFade.hideNow();
-    }
+    // Full-immersion: go straight to the completely-hidden state instead of
+    // leaving the UI visible for the first idle timeout. The player brings
+    // it back at any moment with the existing tap/move-to-reveal behaviour
+    // (IdleFadeController), same as it works everywhere else.
+    idleFade.hideNow();
   }
 
   // --- Camera-style flash + snapshot/recording ---
@@ -251,6 +232,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     onModeChange: (mode) => {
       inputMode = mode;
     },
+    onStartShow: () => beginShow(),
     onSnapshot: () => void takeSnapshot(),
     onToggleRecording: () => void toggleRecording(),
     onBackToHome: () => {
@@ -261,10 +243,8 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
 
   const dashboard = new BottomDashboard({ fireworks, background, glowFrame, planningMode });
 
-  // Hidden until startShow() finishes setup — see the `finally` block above.
-  header.root.classList.add('mzj-await-start');
-  dashboard.root.classList.add('mzj-await-start');
-
+  // Both are fully visible the instant the mood opens — see the module
+  // doc-comment above for why there's no setup gate anymore.
   const idleFade = new IdleFadeController([header.root, dashboard.root]);
   attachTactileFeedback(header.root, audio);
   attachTactileFeedback(dashboard.root, audio);

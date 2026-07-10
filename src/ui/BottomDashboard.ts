@@ -309,4 +309,10 @@ export class BottomDashboard {
       this.deps.glowFrame.show(textInput.value, shapeSelect.value as GlowFrameShape);
     });
   }
+
+  /** Current value of the greeting field, for the opening phrase-reveal — falls back to "مبروك" when left empty. */
+  getGreetingText(): string {
+    const textInput = this.query<HTMLInputElement>('#mzj-greeting-text');
+    return textInput.value.trim() || 'مبروك';
+  }
 }

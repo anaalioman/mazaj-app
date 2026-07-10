@@ -64,6 +64,11 @@
   transition: border-color 0.15s ease, color 0.15s ease;
 }
 
+.mzj-mode-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .mzj-mode-toggle.mzj-mode-mortar {
   border-color: rgba(255, 159, 69, 0.6);
   color: #ffe9b3;
@@ -519,8 +524,7 @@
   z-index: 9999;
 }
 
-.mzj-hidden,
-.mzj-await-start {
+.mzj-hidden {
   display: none !important;
 }
 
