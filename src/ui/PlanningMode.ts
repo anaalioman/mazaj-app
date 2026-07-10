@@ -66,27 +66,40 @@ export class PlanningMode {
     }
   }
 
-  /** Fires every placed pin per the current mode, then clears the board. */
+  /**
+   * Fires every placed pin per the current mode. Each pin (and its number)
+   * stays put — a fixed reference the player can read the timing off of —
+   * right up until the instant its own shot actually fires, instead of the
+   * whole board vanishing the moment the Launch button is pressed.
+   */
   launch(): void {
     if (this.pins.length === 0) return;
     const pins = [...this.pins];
-    this.clear();
+    this.pins = [];
 
     if (this.sequential) {
       pins.forEach((pin, i) => {
-        window.setTimeout(() => this.onLaunchPin(pin.x, pin.y), i * SEQUENTIAL_DELAY_MS);
+        window.setTimeout(() => {
+          this.onLaunchPin(pin.x, pin.y);
+          this.removePinVisual(pin);
+        }, i * SEQUENTIAL_DELAY_MS);
       });
     } else {
-      for (const pin of pins) this.onLaunchPin(pin.x, pin.y);
+      for (const pin of pins) {
+        this.onLaunchPin(pin.x, pin.y);
+        this.removePinVisual(pin);
+      }
     }
   }
 
   clear(): void {
-    for (const pin of this.pins) {
-      this.layer.removeChild(pin.container);
-      pin.container.destroy({ children: true });
-    }
+    for (const pin of this.pins) this.removePinVisual(pin);
     this.pins = [];
+  }
+
+  private removePinVisual(pin: Pin): void {
+    this.layer.removeChild(pin.container);
+    pin.container.destroy({ children: true });
   }
 
   private addPin(x: number, y: number): void {
@@ -112,8 +125,7 @@ export class PlanningMode {
 
   private removePinAt(index: number): void {
     const [removed] = this.pins.splice(index, 1);
-    this.layer.removeChild(removed.container);
-    removed.container.destroy({ children: true });
+    this.removePinVisual(removed);
     // Smart renumbering: everything after the removed pin shifts down by one.
     this.pins.forEach((pin, i) => {
       pin.numberText.text = String(i + 1);
