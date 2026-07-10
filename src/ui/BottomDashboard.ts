@@ -46,7 +46,9 @@ export class BottomDashboard {
   private readonly deps: BottomDashboardDeps;
   private readonly activeBurstTypes = new Set<BurstType>(ALL_BURST_TYPES);
   private readonly uploadHint: UploadHint;
-  private autoShowEnabled = true;
+  // Off by default: "ابدأ العرض" should only arm manual tap-to-fire, not
+  // also kick off an endless random auto-launch loop the player never asked for.
+  private autoShowEnabled = false;
 
   constructor(deps: BottomDashboardDeps) {
     this.deps = deps;
@@ -101,7 +103,7 @@ export class BottomDashboard {
             <span>انطلاق متتابع</span>
           </div>
           <button type="button" id="mzj-launch-plan" class="mcp-primary-btn">${icon('play', 16)}<span>إطلاق العرض المخطط</span></button>
-          <button type="button" id="mzj-auto-show" class="mcp-primary-btn active">${icon('fireworksMood', 16)}<span>العرض التلقائي: يعمل</span></button>
+          <button type="button" id="mzj-auto-show" class="mcp-primary-btn">${icon('fireworksMood', 16)}<span>العرض التلقائي: متوقف</span></button>
         </section>
 
         <section class="mzj-tab-content" data-panel="environment">

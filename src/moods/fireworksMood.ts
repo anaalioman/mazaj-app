@@ -165,7 +165,10 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
       console.error('تعذّرت إحدى خطوات بدء العرض (سيبدأ العرض على أي حال):', error);
     } finally {
       fireworksEnabled = true;
-      fireworks.setAutoLaunch(true);
+      // Auto-show is the dashboard's own toggle (off by default — a plain
+      // "ابدأ العرض" press should only enable manual tap-to-fire, not also
+      // kick off an unrelated endless random launch loop); starting the
+      // show must never override whatever the player already chose there.
       // The header/dashboard only make sense once the show is actually
       // running — showing them earlier, on top of the setup form, is what
       // caused the two screens to visually collide.
