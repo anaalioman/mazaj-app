@@ -198,9 +198,9 @@
 /* ---------- Shared field/slider/button styles (used by the dashboard tabs) ---------- */
 
 /* Pattern cards: a horizontally-scrolling row of flat, near-invisible cards.
-   Selection is read from text/icon brightness and a thin border only — no
-   filled color blocks — so the row stays calm even with several items
-   active at once. */
+   No border and no filled color block on any card, selected or not —
+   selection is read purely from text/icon brightness and weight, so the
+   row stays calm even with several items active at once. */
 .mcp-burst-grid {
   display: flex;
   gap: 12px;
@@ -223,7 +223,7 @@
   gap: 4px;
   padding: 6px 4px;
   border-radius: 12px;
-  border: 1px solid transparent;
+  border: none;
   background: rgba(255, 255, 255, 0.04);
   color: rgba(226, 232, 240, 0.45);
   font-size: 10px;
@@ -253,13 +253,37 @@
 }
 
 .mcp-burst-btn.active {
-  border-color: rgba(255, 207, 107, 0.55);
   color: #ffe9b3;
+  font-weight: 700;
 }
 
 .mcp-burst-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+/* Groups functionally-related controls (a button + its own toggle, two
+   fields that belong together, etc.) into one horizontal row instead of
+   stacking each on its own full-width line — the main lever for cutting
+   the panel's total height. */
+.mcp-btn-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.mcp-btn-row > .mcp-primary-btn {
+  width: auto;
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.mcp-btn-row > .mcp-primary-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------- Planning Mode: All-at-once / Sequential switch ---------- */
@@ -268,17 +292,18 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  margin-bottom: 12px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.8);
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.75);
+  white-space: nowrap;
 }
 
 .mzj-switch {
   position: relative;
   display: inline-block;
-  width: 44px;
-  height: 24px;
+  width: 34px;
+  height: 19px;
   flex-shrink: 0;
 }
 
@@ -301,8 +326,8 @@
 .mzj-switch-track::before {
   content: '';
   position: absolute;
-  width: 18px;
-  height: 18px;
+  width: 13px;
+  height: 13px;
   left: 2px;
   top: 2px;
   border-radius: 50%;
@@ -315,20 +340,20 @@
 }
 
 .mzj-switch input:checked + .mzj-switch-track::before {
-  transform: translateX(20px);
+  transform: translateX(15px);
   background: #fff;
 }
 
 .mcp-slider-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 6px;
 }
 
 .mcp-slider-row label {
-  flex: 0 0 106px;
-  font-size: 12px;
+  flex: 0 0 90px;
+  font-size: 11px;
   color: rgba(255, 255, 255, 0.85);
 }
 
@@ -338,9 +363,9 @@
 }
 
 .mcp-slider-row output {
-  flex: 0 0 36px;
+  flex: 0 0 30px;
   text-align: end;
-  font-size: 12px;
+  font-size: 11px;
   color: #ffe9b3;
   font-variant-numeric: tabular-nums;
 }
@@ -348,16 +373,32 @@
 .mcp-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-bottom: 12px;
-  font-size: 12px;
+  gap: 4px;
+  margin-bottom: 6px;
+  font-size: 11px;
   color: rgba(255, 255, 255, 0.85);
+  min-width: 0;
+}
+
+.mcp-field-row {
+  display: flex;
+  gap: 8px;
+}
+
+.mcp-field-row > .mcp-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.mcp-inline-select {
+  flex: 0 0 auto;
+  width: auto;
 }
 
 .mcp-field input[type='text'],
 .mcp-field select {
-  font-size: 13px;
-  padding: 8px 10px;
+  font-size: 12px;
+  padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(255, 255, 255, 0.05);
@@ -374,13 +415,13 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 9px 10px;
+  gap: 6px;
+  padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(255, 255, 255, 0.05);
   color: rgba(255, 255, 255, 0.7);
-  font-size: 12.5px;
+  font-size: 11px;
   cursor: pointer;
 }
 
@@ -395,11 +436,11 @@
 
 .mzj-file-picker-btn {
   flex-shrink: 0;
-  padding: 5px 12px;
+  padding: 4px 10px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
-  font-size: 11.5px;
+  font-size: 10px;
   font-weight: 600;
 }
 

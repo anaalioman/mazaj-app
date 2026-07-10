@@ -91,38 +91,46 @@ export class BottomDashboard {
                 `<button type="button" class="mcp-burst-btn" data-type="${type}"><span class="mcp-burst-preview">${icon(type, 20)}</span><span class="mcp-burst-label">${BURST_LABELS[type]}</span></button>`,
             ).join('')}
           </div>
-          <button type="button" id="mzj-random-mode" class="mcp-primary-btn">${icon('shuffle', 14)}<span>توليد عشوائي هجين</span></button>
-          <button type="button" id="mzj-ground-fountain" class="mcp-primary-btn">${icon('groundFountain', 14)}<span>نافورة أرضية</span></button>
-          <button type="button" id="mzj-planning-mode" class="mcp-primary-btn">${icon('mapPin', 14)}<span>وضع التخطيط الزمني</span></button>
-          <div class="mzj-toggle-row">
-            <span>انطلاق جماعي</span>
-            <label class="mzj-switch">
-              <input type="checkbox" id="mzj-sequential-toggle" />
-              <span class="mzj-switch-track"></span>
-            </label>
-            <span>انطلاق متتابع</span>
+          <div class="mcp-btn-row">
+            <button type="button" id="mzj-random-mode" class="mcp-primary-btn">${icon('shuffle', 14)}<span>توليد عشوائي هجين</span></button>
+            <button type="button" id="mzj-ground-fountain" class="mcp-primary-btn">${icon('groundFountain', 14)}<span>نافورة أرضية</span></button>
           </div>
-          <button type="button" id="mzj-launch-plan" class="mcp-primary-btn">${icon('play', 14)}<span>إطلاق العرض المخطط</span></button>
-          <button type="button" id="mzj-auto-show" class="mcp-primary-btn">${icon('fireworksMood', 14)}<span>العرض التلقائي: متوقف</span></button>
+          <div class="mcp-btn-row">
+            <button type="button" id="mzj-planning-mode" class="mcp-primary-btn">${icon('mapPin', 14)}<span>التخطيط الزمني</span></button>
+            <div class="mzj-toggle-row">
+              <span>جماعي</span>
+              <label class="mzj-switch">
+                <input type="checkbox" id="mzj-sequential-toggle" />
+                <span class="mzj-switch-track"></span>
+              </label>
+              <span>متتابع</span>
+            </div>
+          </div>
+          <div class="mcp-btn-row">
+            <button type="button" id="mzj-launch-plan" class="mcp-primary-btn">${icon('play', 14)}<span>إطلاق العرض المخطط</span></button>
+            <button type="button" id="mzj-auto-show" class="mcp-primary-btn">${icon('fireworksMood', 14)}<span>العرض التلقائي: متوقف</span></button>
+          </div>
         </section>
 
         <section class="mzj-tab-content" data-panel="environment">
-          <label class="mcp-field">
-            <span>رفع صورة خلفية</span>
-            <span class="mzj-file-picker">
-              <span class="mzj-file-picker-name" id="mzj-bg-image-name">لم يتم اختيار صورة</span>
-              <span class="mzj-file-picker-btn">استعراض</span>
-            </span>
-            <input type="file" id="mzj-bg-image" accept="image/*" class="mzj-file-input-sr" />
-          </label>
-          <label class="mcp-field">
-            <span>رفع فيديو خلفية حي</span>
-            <span class="mzj-file-picker">
-              <span class="mzj-file-picker-name" id="mzj-bg-video-name">لم يتم اختيار فيديو</span>
-              <span class="mzj-file-picker-btn">استعراض</span>
-            </span>
-            <input type="file" id="mzj-bg-video" accept="video/*" class="mzj-file-input-sr" />
-          </label>
+          <div class="mcp-field-row">
+            <label class="mcp-field">
+              <span>رفع صورة خلفية</span>
+              <span class="mzj-file-picker">
+                <span class="mzj-file-picker-name" id="mzj-bg-image-name">لم يتم اختيار صورة</span>
+                <span class="mzj-file-picker-btn">استعراض</span>
+              </span>
+              <input type="file" id="mzj-bg-image" accept="image/*" class="mzj-file-input-sr" />
+            </label>
+            <label class="mcp-field">
+              <span>رفع فيديو خلفية حي</span>
+              <span class="mzj-file-picker">
+                <span class="mzj-file-picker-name" id="mzj-bg-video-name">لم يتم اختيار فيديو</span>
+                <span class="mzj-file-picker-btn">استعراض</span>
+              </span>
+              <input type="file" id="mzj-bg-video" accept="video/*" class="mzj-file-input-sr" />
+            </label>
+          </div>
           ${this.sliderRow(SLIDERS.dimmer)}
           ${this.sliderRow(SLIDERS.glow)}
         </section>
@@ -132,15 +140,14 @@ export class BottomDashboard {
             <span>نص التهنئة</span>
             <input type="text" id="mzj-greeting-text" placeholder="مبروك" maxlength="40" />
           </label>
-          <label class="mcp-field">
-            <span>شكل الإطار المتوهج</span>
-            <select id="mzj-frame-shape">
+          <div class="mcp-btn-row">
+            <select id="mzj-frame-shape" class="mcp-inline-select">
               <option value="heart">♥ قلب</option>
               <option value="star">★ نجمة</option>
               <option value="circle">◯ هالة</option>
             </select>
-          </label>
-          <button type="button" id="mzj-greeting-apply" class="mcp-primary-btn">${icon('sparkles', 14)}<span>أضف العبارة</span></button>
+            <button type="button" id="mzj-greeting-apply" class="mcp-primary-btn">${icon('sparkles', 14)}<span>أضف العبارة</span></button>
+          </div>
         </section>
 
         <section class="mzj-tab-content" data-panel="lab">
