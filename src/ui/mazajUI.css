@@ -347,7 +347,6 @@
 }
 
 .mcp-field input[type='text'],
-.mcp-field input[type='file'],
 .mcp-field select {
   font-size: 13px;
   padding: 8px 10px;
@@ -356,6 +355,56 @@
   background: rgba(255, 255, 255, 0.05);
   color: #fff;
   font-family: inherit;
+}
+
+/* Custom file picker: a native <input type="file">'s internal button+label
+   is drawn by the browser/WebView itself, not by our CSS, so styling the
+   host element directly renders inconsistently (even overlapping) across
+   Android WebView versions. We hide the native control and drive this plain
+   label from its `change` event instead — see src/ui/filePicker.ts. */
+.mzj-file-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.mzj-file-picker-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+}
+
+.mzj-file-picker-btn {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.mzj-file-input-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Flat, text-first action buttons: no fill, no border — only icon + label,

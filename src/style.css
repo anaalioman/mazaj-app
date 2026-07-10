@@ -76,8 +76,7 @@ body {
   font-size: 14px;
 }
 
-#setup-overlay input[type='text'],
-#setup-overlay input[type='file'] {
+#setup-overlay input[type='text'] {
   font-size: 16px;
   padding: 10px 12px;
   border-radius: 8px;

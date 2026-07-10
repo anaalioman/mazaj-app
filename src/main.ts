@@ -14,6 +14,11 @@ const homeScreenEl = document.querySelector<HTMLDivElement>('#home-screen')!;
 const fireworksContainer = document.querySelector<HTMLDivElement>('#fireworks-mood')!;
 
 let fireworksHandle: FireworksMoodHandle | null = null;
+// Tracks an in-flight load so a second tap while the first is still awaiting
+// app.init() (real, common on a touchscreen — WebGL setup isn't instant)
+// re-attaches to the same load instead of booting a second, fully-duplicate
+// mood instance (duplicate canvas, header, dashboard, submit listener, ...).
+let fireworksLoading: Promise<FireworksMoodHandle> | null = null;
 
 function goHome(): void {
   homeScreenEl.classList.remove('mzj-hidden');
@@ -27,10 +32,15 @@ async function enterFireworks(): Promise<void> {
     return;
   }
 
-  // Lazy-loaded so the home screen stays light — the fireworks bundle (and
-  // every other future mood's bundle) only downloads once actually chosen.
-  const { startFireworksMood } = await import('./moods/fireworksMood');
-  fireworksHandle = await startFireworksMood(fireworksContainer, goHome);
+  if (!fireworksLoading) {
+    // Lazy-loaded so the home screen stays light — the fireworks bundle (and
+    // every other future mood's bundle) only downloads once actually chosen.
+    fireworksLoading = import('./moods/fireworksMood').then(({ startFireworksMood }) =>
+      startFireworksMood(fireworksContainer, goHome),
+    );
+  }
+
+  fireworksHandle = await fireworksLoading;
 }
 
 new HomeScreen(homeScreenEl, {

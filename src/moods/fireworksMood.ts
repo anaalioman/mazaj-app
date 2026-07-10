@@ -16,6 +16,7 @@ import { attachTactileFeedback } from '../ui/tactile';
 import { withTimeout } from '../utils/withTimeout';
 import { icon } from '../ui/icons';
 import { PlanningMode } from '../ui/PlanningMode';
+import { wireFilePickerLabel } from '../ui/filePicker';
 
 export interface FireworksMoodHandle {
   show(): void;
@@ -39,6 +40,8 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   const hint = container.querySelector<HTMLDivElement>('.hint')!;
   const startShowBtn = container.querySelector<HTMLButtonElement>('#start-show-btn')!;
   startShowBtn.insertAdjacentHTML('afterbegin', icon('play', 17));
+  const imageInputName = container.querySelector<HTMLSpanElement>('#image-input-name')!;
+  wireFilePickerLabel(imageInput, imageInputName, 'لم يتم اختيار صورة');
 
   const app = new Application();
 

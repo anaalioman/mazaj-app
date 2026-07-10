@@ -4,6 +4,7 @@ import type { GlowFrame, GlowFrameShape } from '../effects/GlowFrame';
 import { icon } from './icons';
 import { UploadHint } from './UploadHint';
 import type { PlanningMode } from './PlanningMode';
+import { wireFilePickerLabel } from './filePicker';
 
 export interface BottomDashboardDeps {
   fireworks: FireworksSystem;
@@ -106,11 +107,19 @@ export class BottomDashboard {
         <section class="mzj-tab-content" data-panel="environment">
           <label class="mcp-field">
             <span>رفع صورة خلفية</span>
-            <input type="file" id="mzj-bg-image" accept="image/*" />
+            <span class="mzj-file-picker">
+              <span class="mzj-file-picker-name" id="mzj-bg-image-name">لم يتم اختيار صورة</span>
+              <span class="mzj-file-picker-btn">استعراض</span>
+            </span>
+            <input type="file" id="mzj-bg-image" accept="image/*" class="mzj-file-input-sr" />
           </label>
           <label class="mcp-field">
             <span>رفع فيديو خلفية حي</span>
-            <input type="file" id="mzj-bg-video" accept="video/*" />
+            <span class="mzj-file-picker">
+              <span class="mzj-file-picker-name" id="mzj-bg-video-name">لم يتم اختيار فيديو</span>
+              <span class="mzj-file-picker-btn">استعراض</span>
+            </span>
+            <input type="file" id="mzj-bg-video" accept="video/*" class="mzj-file-input-sr" />
           </label>
           ${this.sliderRow(SLIDERS.dimmer)}
           ${this.sliderRow(SLIDERS.glow)}
@@ -257,6 +266,8 @@ export class BottomDashboard {
   private wireMedia(): void {
     const imageInput = this.query<HTMLInputElement>('#mzj-bg-image');
     const videoInput = this.query<HTMLInputElement>('#mzj-bg-video');
+    wireFilePickerLabel(imageInput, this.query('#mzj-bg-image-name'), 'لم يتم اختيار صورة');
+    wireFilePickerLabel(videoInput, this.query('#mzj-bg-video-name'), 'لم يتم اختيار فيديو');
 
     imageInput.addEventListener('change', () => {
       const file = imageInput.files?.[0];
