@@ -128,11 +128,12 @@
   color: #f1f5f9;
 
   /* Flat, same as the buttons inside it: no colored fill, no border, no
-     drop shadow — just a whisper of blur behind the text for legibility
-     against a bright show, not a decorative panel. */
+     drop shadow. No backdrop-filter either — Android WebView has a known
+     bug where blurring behind child elements that get their own paint
+     layer (inline SVG icons, in this case) renders solid black instead of
+     actually blurring, which is exactly the "black box around every icon"
+     this caused. */
   background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   border: none;
   border-radius: 16px;
   box-shadow: none;
