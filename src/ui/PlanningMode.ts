@@ -1,15 +1,22 @@
 import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
 
+export interface VisibleRange {
+  /** Screen y where the reachable (dashboard-free) area begins. */
+  top: number;
+  /** Height of that reachable area. */
+  height: number;
+}
+
 export interface PlanningModeDeps {
   app: Application;
   /** Fires whatever a normal tap would have (aerial burst or Ground Fountain) at (x, y). */
   onLaunchPin: (x: number, y: number) => void;
   /**
-   * Height of whatever's currently visible above the bottom dashboard (or
-   * the full screen height once it's hidden) — the coordinate space pins
-   * are placed in while planning.
+   * Whatever's currently visible outside the dashboard (or the full screen
+   * once it's hidden) — the coordinate space pins are placed in while
+   * planning.
    */
-  getVisibleHeight: () => number;
+  getVisibleRange: () => VisibleRange;
 }
 
 const SEQUENTIAL_DELAY_MS = 800;
@@ -19,8 +26,8 @@ const PIN_HIT_RADIUS = PIN_RADIUS * 1.6;
 interface Pin {
   x: number;
   y: number;
-  /** Visible height in effect when this pin was placed — see getVisibleHeight. */
-  referenceHeight: number;
+  /** Visible range in effect when this pin was placed — see getVisibleRange. */
+  reference: VisibleRange;
   container: Container;
   numberText: Text;
 }
@@ -28,21 +35,21 @@ interface Pin {
 /**
  * Planning & Sequencing Mode: while active, tapping the stage places a
  * numbered pin instead of firing immediately. Pins are placed and rendered
- * strictly within the area still visible above the bottom dashboard — they
- * never appear on top of it or peek out from underneath. A dedicated Launch
- * call then fires every pin in tap order — either all in the same instant
- * ("All at Once") or staggered 800ms apart ("Sequential") — by replaying
- * the same onLaunchPin callback a normal tap would have used, so it stays
- * in sync with whatever burst/Ground-Fountain mode is currently configured.
- * Each pin's y is rescaled at that moment from the visible strip it was
- * placed in up to whatever's the full screen height by then, so a shape
- * planned near the bottom of that visible strip fires near the bottom of
- * the real screen once the dashboard is out of the way.
+ * strictly within whatever area is still visible outside the dashboard —
+ * they never appear on top of it or peek out from behind it. A dedicated
+ * Launch call then fires every pin in tap order — either all in the same
+ * instant ("All at Once") or staggered 800ms apart ("Sequential") — by
+ * replaying the same onLaunchPin callback a normal tap would have used, so
+ * it stays in sync with whatever burst/Ground-Fountain mode is currently
+ * configured. Each pin's y is rescaled at that moment from the reachable
+ * strip it was placed in up to whatever's the full screen height by then,
+ * so a shape planned near the edge of that strip fires near the matching
+ * edge of the real screen once the dashboard is out of the way.
  */
 export class PlanningMode {
   private readonly app: Application;
   private readonly onLaunchPin: (x: number, y: number) => void;
-  private readonly getVisibleHeight: () => number;
+  private readonly getVisibleRange: () => VisibleRange;
   private readonly layer: Container;
   private pins: Pin[] = [];
   private active = false;
@@ -51,7 +58,7 @@ export class PlanningMode {
   constructor(deps: PlanningModeDeps) {
     this.app = deps.app;
     this.onLaunchPin = deps.onLaunchPin;
-    this.getVisibleHeight = deps.getVisibleHeight;
+    this.getVisibleRange = deps.getVisibleRange;
     this.layer = new Container();
     this.layer.visible = false;
     this.app.stage.addChild(this.layer);
@@ -105,9 +112,12 @@ export class PlanningMode {
     }
   }
 
+  /** Maps a pin's y from the reachable strip it was placed in (proportionally) up to the full screen height in effect now. */
   private rescaleY(pin: Pin, fullHeight: number): number {
-    if (pin.referenceHeight <= 0) return pin.y;
-    return (pin.y / pin.referenceHeight) * fullHeight;
+    const { top, height } = pin.reference;
+    if (height <= 0) return pin.y;
+    const proportion = (pin.y - top) / height;
+    return proportion * fullHeight;
   }
 
   clear(): void {
@@ -138,7 +148,7 @@ export class PlanningMode {
     container.addChild(numberText);
 
     this.layer.addChild(container);
-    this.pins.push({ x, y, referenceHeight: this.getVisibleHeight(), container, numberText });
+    this.pins.push({ x, y, reference: this.getVisibleRange(), container, numberText });
   }
 
   private removePinAt(index: number): void {

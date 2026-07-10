@@ -112,34 +112,37 @@
   }
 }
 
-/* ---------- Bottom tabbed dashboard ---------- */
+/* ---------- Top tabbed dashboard ---------- */
 
 #mzj-dashboard {
   position: fixed;
   left: 50%;
-  bottom: 20px;
+  top: 60px;
   transform: translateX(-50%);
   z-index: 30;
   width: min(560px, 94vw);
-  max-height: 62vh;
+  max-height: 48vh;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
   color: #f1f5f9;
 
-  background: rgba(15, 23, 42, 0.45);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 20px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  /* Flat, same as the buttons inside it: no colored fill, no border, no
+     drop shadow — just a whisper of blur behind the text for legibility
+     against a bright show, not a decorative panel. */
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: none;
+  border-radius: 16px;
+  box-shadow: none;
   overflow: hidden;
 }
 
 .mzj-tabs {
   display: flex;
   flex-shrink: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .mzj-tab {
@@ -147,15 +150,15 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: 10px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(255, 255, 255, 0.55);
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
-  padding: 10px 6px;
+  padding: 7px 4px;
   cursor: pointer;
   white-space: nowrap;
   transition: color 0.15s ease, border-color 0.15s ease;
@@ -168,7 +171,7 @@
 }
 
 .mzj-tab-panels {
-  padding: 16px;
+  padding: 12px;
   overflow-y: auto;
 }
 
@@ -211,21 +214,21 @@
 .mcp-burst-btn {
   flex: 0 0 auto;
   scroll-snap-align: start;
-  width: 76px;
-  height: 88px;
+  width: 62px;
+  height: 70px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 8px 6px;
-  border-radius: 14px;
+  gap: 4px;
+  padding: 6px 4px;
+  border-radius: 12px;
   border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.04);
   color: rgba(226, 232, 240, 0.45);
-  font-size: 11.5px;
+  font-size: 10px;
   font-family: inherit;
-  line-height: 1.25;
+  line-height: 1.2;
   text-align: center;
   cursor: pointer;
   transition: border-color 0.2s ease, color 0.2s ease;
@@ -419,16 +422,16 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 10px 14px;
-  margin-bottom: 4px;
+  gap: 6px;
+  padding: 7px 12px;
+  margin-bottom: 3px;
   border-radius: 999px;
   border: none;
   background: transparent;
   color: rgba(255, 255, 255, 0.72);
   font-family: inherit;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -535,12 +538,12 @@
 
   #mzj-dashboard {
     width: 96vw;
-    bottom: 10px;
-    max-height: 56vh;
+    top: 52px;
+    max-height: 46vh;
   }
 
   .mzj-tab {
-    font-size: 11px;
-    padding: 10px 4px;
+    font-size: 9px;
+    padding: 6px 4px;
   }
 }

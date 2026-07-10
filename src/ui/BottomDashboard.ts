@@ -77,10 +77,10 @@ export class BottomDashboard {
   private template(): string {
     return `
       <nav class="mzj-tabs">
-        <button type="button" class="mzj-tab active" data-tab="patterns">${icon('shapes', 17)}<span>الأنماط</span></button>
-        <button type="button" class="mzj-tab" data-tab="environment">${icon('mountain', 17)}<span>البيئة</span></button>
-        <button type="button" class="mzj-tab" data-tab="messages">${icon('messageSquare', 17)}<span>الرسائل</span></button>
-        <button type="button" class="mzj-tab" data-tab="lab">${icon('sliders', 17)}<span>المختبر</span></button>
+        <button type="button" class="mzj-tab active" data-tab="patterns">${icon('shapes', 14)}<span>الأنماط</span></button>
+        <button type="button" class="mzj-tab" data-tab="environment">${icon('mountain', 14)}<span>البيئة</span></button>
+        <button type="button" class="mzj-tab" data-tab="messages">${icon('messageSquare', 14)}<span>الرسائل</span></button>
+        <button type="button" class="mzj-tab" data-tab="lab">${icon('sliders', 14)}<span>المختبر</span></button>
       </nav>
 
       <div class="mzj-tab-panels">
@@ -88,12 +88,12 @@ export class BottomDashboard {
           <div class="mcp-burst-grid">
             ${ALL_BURST_TYPES.map(
               (type) =>
-                `<button type="button" class="mcp-burst-btn" data-type="${type}"><span class="mcp-burst-preview">${icon(type, 26)}</span><span class="mcp-burst-label">${BURST_LABELS[type]}</span></button>`,
+                `<button type="button" class="mcp-burst-btn" data-type="${type}"><span class="mcp-burst-preview">${icon(type, 20)}</span><span class="mcp-burst-label">${BURST_LABELS[type]}</span></button>`,
             ).join('')}
           </div>
-          <button type="button" id="mzj-random-mode" class="mcp-primary-btn">${icon('shuffle', 16)}<span>توليد عشوائي هجين</span></button>
-          <button type="button" id="mzj-ground-fountain" class="mcp-primary-btn">${icon('groundFountain', 16)}<span>نافورة أرضية</span></button>
-          <button type="button" id="mzj-planning-mode" class="mcp-primary-btn">${icon('mapPin', 16)}<span>وضع التخطيط الزمني</span></button>
+          <button type="button" id="mzj-random-mode" class="mcp-primary-btn">${icon('shuffle', 14)}<span>توليد عشوائي هجين</span></button>
+          <button type="button" id="mzj-ground-fountain" class="mcp-primary-btn">${icon('groundFountain', 14)}<span>نافورة أرضية</span></button>
+          <button type="button" id="mzj-planning-mode" class="mcp-primary-btn">${icon('mapPin', 14)}<span>وضع التخطيط الزمني</span></button>
           <div class="mzj-toggle-row">
             <span>انطلاق جماعي</span>
             <label class="mzj-switch">
@@ -102,8 +102,8 @@ export class BottomDashboard {
             </label>
             <span>انطلاق متتابع</span>
           </div>
-          <button type="button" id="mzj-launch-plan" class="mcp-primary-btn">${icon('play', 16)}<span>إطلاق العرض المخطط</span></button>
-          <button type="button" id="mzj-auto-show" class="mcp-primary-btn">${icon('fireworksMood', 16)}<span>العرض التلقائي: متوقف</span></button>
+          <button type="button" id="mzj-launch-plan" class="mcp-primary-btn">${icon('play', 14)}<span>إطلاق العرض المخطط</span></button>
+          <button type="button" id="mzj-auto-show" class="mcp-primary-btn">${icon('fireworksMood', 14)}<span>العرض التلقائي: متوقف</span></button>
         </section>
 
         <section class="mzj-tab-content" data-panel="environment">
@@ -140,7 +140,7 @@ export class BottomDashboard {
               <option value="circle">◯ هالة</option>
             </select>
           </label>
-          <button type="button" id="mzj-greeting-apply" class="mcp-primary-btn">${icon('sparkles', 16)}<span>أضف العبارة</span></button>
+          <button type="button" id="mzj-greeting-apply" class="mcp-primary-btn">${icon('sparkles', 14)}<span>أضف العبارة</span></button>
         </section>
 
         <section class="mzj-tab-content" data-panel="lab">
@@ -215,7 +215,7 @@ export class BottomDashboard {
       enabled = !enabled;
       this.deps.fireworks.setRandomMode(enabled);
       button.classList.toggle('active', enabled);
-      button.innerHTML = `${icon('shuffle', 16)}<span>${enabled ? 'التوليد العشوائي: يعمل' : 'توليد عشوائي هجين'}</span>`;
+      button.innerHTML = `${icon('shuffle', 14)}<span>${enabled ? 'التوليد العشوائي: يعمل' : 'توليد عشوائي هجين'}</span>`;
       // The individual shell toggles are meaningless while the randomizer
       // is picking freely across every pattern, so grey them out.
       for (const btn of burstButtons) btn.disabled = enabled;

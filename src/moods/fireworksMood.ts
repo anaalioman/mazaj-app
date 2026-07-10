@@ -107,18 +107,20 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   }
 
   /**
-   * While the bottom dashboard is open it visually covers the lower part of
-   * the screen, so pins can only ever be placed in the strip still visible
-   * above it — that's the height "the small screen" means while planning.
-   * Falls back to the full screen height once the dashboard is hidden.
+   * While the dashboard is open it visually covers the top part of the
+   * screen, so pins can only ever be placed in the strip still visible
+   * below it — that's "the small screen" while planning. Falls back to the
+   * full screen once the dashboard is hidden.
    */
-  function getVisibleHeight(): number {
-    if (getComputedStyle(dashboard.root).display === 'none') return app.screen.height;
-    const dashboardTop = dashboard.root.getBoundingClientRect().top;
-    return dashboardTop > 0 ? dashboardTop : app.screen.height;
+  function getVisibleRange(): { top: number; height: number } {
+    if (getComputedStyle(dashboard.root).display === 'none') {
+      return { top: 0, height: app.screen.height };
+    }
+    const dashboardBottom = dashboard.root.getBoundingClientRect().bottom;
+    return { top: dashboardBottom, height: Math.max(app.screen.height - dashboardBottom, 0) };
   }
 
-  const planningMode = new PlanningMode({ app, onLaunchPin: fireAt, getVisibleHeight });
+  const planningMode = new PlanningMode({ app, onLaunchPin: fireAt, getVisibleRange });
 
   app.stage.eventMode = 'static';
   app.stage.hitArea = app.screen;
