@@ -67,28 +67,22 @@ export class PlanningMode {
   }
 
   /**
-   * Fires every placed pin per the current mode. Each pin (and its number)
-   * stays put — a fixed reference the player can read the timing off of —
-   * right up until the instant its own shot actually fires, instead of the
-   * whole board vanishing the moment the Launch button is pressed.
+   * Fires every placed pin per the current mode. Every pin (and its number)
+   * stays fixed and fully visible throughout planning — the whole board
+   * clears in one instant the moment Launch is pressed (the scene begins),
+   * then the shots themselves fire per the current mode's timing.
    */
   launch(): void {
     if (this.pins.length === 0) return;
     const pins = [...this.pins];
-    this.pins = [];
+    this.clear();
 
     if (this.sequential) {
       pins.forEach((pin, i) => {
-        window.setTimeout(() => {
-          this.onLaunchPin(pin.x, pin.y);
-          this.removePinVisual(pin);
-        }, i * SEQUENTIAL_DELAY_MS);
+        window.setTimeout(() => this.onLaunchPin(pin.x, pin.y), i * SEQUENTIAL_DELAY_MS);
       });
     } else {
-      for (const pin of pins) {
-        this.onLaunchPin(pin.x, pin.y);
-        this.removePinVisual(pin);
-      }
+      for (const pin of pins) this.onLaunchPin(pin.x, pin.y);
     }
   }
 
