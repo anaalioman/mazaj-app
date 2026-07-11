@@ -74,6 +74,7 @@ export class PlanningScreen {
         ${this.iconButton('multiRing', 'حلقات متعددة')}
         ${this.iconButton('strobe', 'وميض متلألئ')}
         ${this.iconButton('mountain', 'البيئة')}
+        ${this.iconButton('sparkles', 'العرض التلقائي')}
         <button type="button" class="mzj-planning-icon-btn"><span class="mzj-planning-text-icon">T</span><span>نص</span></button>
       </div>
     `;
