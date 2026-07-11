@@ -15,6 +15,7 @@ import { IdleFadeController } from '../ui/IdleFade';
 import { attachTactileFeedback } from '../ui/tactile';
 import { withTimeout } from '../utils/withTimeout';
 import { PlanningMode } from '../ui/PlanningMode';
+import { PlanningScreen } from '../ui/PlanningScreen';
 
 export interface FireworksMoodHandle {
   show(): void;
@@ -255,7 +256,19 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     },
   });
 
-  const dashboard = new BottomDashboard({ fireworks, background, glowFrame, planningMode });
+  // Shown after picking a launch mode from the panel; structure/display only
+  // for now — no location-picking logic wired up yet (that's the next batch).
+  const planningScreen = new PlanningScreen();
+
+  const dashboard = new BottomDashboard({
+    fireworks,
+    background,
+    glowFrame,
+    onOpenPlanningScreen: (mode) => {
+      dashboard.root.classList.add('mzj-hidden');
+      planningScreen.show(mode);
+    },
+  });
 
   // Both are fully visible the instant the mood opens — see the module
   // doc-comment above for why there's no setup gate anymore.

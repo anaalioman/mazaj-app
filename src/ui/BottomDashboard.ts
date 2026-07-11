@@ -3,14 +3,14 @@ import type { BackgroundLayer } from '../background';
 import type { GlowFrame, GlowFrameShape } from '../effects/GlowFrame';
 import { icon } from './icons';
 import { UploadHint } from './UploadHint';
-import type { PlanningMode } from './PlanningMode';
 import { wireFilePickerLabel } from './filePicker';
+import type { LaunchMode } from './PlanningScreen';
 
 export interface BottomDashboardDeps {
   fireworks: FireworksSystem;
   background: BackgroundLayer;
   glowFrame: GlowFrame;
-  planningMode: PlanningMode;
+  onOpenPlanningScreen: (mode: LaunchMode) => void;
 }
 
 interface SliderSpec {
@@ -58,7 +58,7 @@ export class BottomDashboard {
     this.wireBurstToggles();
     this.wireRandomMode();
     this.wireGroundFountainMode();
-    this.wirePlanningMode();
+    this.wireLaunchModeButtons();
     this.wireAutoShow();
     this.wireMedia();
     this.wireSliders();
@@ -81,20 +81,10 @@ export class BottomDashboard {
             <button type="button" id="mzj-ground-fountain" class="mcp-primary-btn">${icon('groundFountain', 14)}<span>نافورة أرضية</span></button>
           </div>
           <div class="mcp-btn-row">
-            <button type="button" id="mzj-planning-mode" class="mcp-primary-btn">${icon('mapPin', 14)}<span>التخطيط الزمني</span></button>
-            <div class="mzj-toggle-row">
-              <span>جماعي</span>
-              <label class="mzj-switch">
-                <input type="checkbox" id="mzj-sequential-toggle" />
-                <span class="mzj-switch-track"></span>
-              </label>
-              <span>متتابع</span>
-            </div>
+            <button type="button" id="mzj-launch-mass" class="mcp-primary-btn">${icon('mapPin', 14)}<span>إطلاق جماعي</span></button>
+            <button type="button" id="mzj-launch-sequential" class="mcp-primary-btn">${icon('mapPin', 14)}<span>إطلاق متتابع</span></button>
           </div>
-          <div class="mcp-btn-row">
-            <button type="button" id="mzj-launch-plan" class="mcp-primary-btn">${icon('play', 14)}<span>إطلاق العرض المخطط</span></button>
-            <button type="button" id="mzj-auto-show" class="mcp-primary-btn">${icon('fireworksMood', 14)}<span>العرض التلقائي: متوقف</span></button>
-          </div>
+          <button type="button" id="mzj-auto-show" class="mcp-primary-btn">${icon('fireworksMood', 14)}<span>العرض التلقائي: متوقف</span></button>
         </section>
 
         <section class="mzj-tab-content" data-panel="environment">
@@ -225,24 +215,13 @@ export class BottomDashboard {
     });
   }
 
-  private wirePlanningMode(): void {
-    const toggleButton = this.query<HTMLButtonElement>('#mzj-planning-mode');
-    const sequentialCheckbox = this.query<HTMLInputElement>('#mzj-sequential-toggle');
-    const launchButton = this.query<HTMLButtonElement>('#mzj-launch-plan');
-
-    toggleButton.addEventListener('click', () => {
-      const enabled = !this.deps.planningMode.isActive;
-      this.deps.planningMode.setActive(enabled);
-      toggleButton.classList.toggle('active', enabled);
-      if (!enabled) this.deps.planningMode.clear();
+  /** Only opens the new planning screen for now — no location-picking logic wired up yet. */
+  private wireLaunchModeButtons(): void {
+    this.query<HTMLButtonElement>('#mzj-launch-mass').addEventListener('click', () => {
+      this.deps.onOpenPlanningScreen('mass');
     });
-
-    sequentialCheckbox.addEventListener('change', () => {
-      this.deps.planningMode.setSequential(sequentialCheckbox.checked);
-    });
-
-    launchButton.addEventListener('click', () => {
-      this.deps.planningMode.launch();
+    this.query<HTMLButtonElement>('#mzj-launch-sequential').addEventListener('click', () => {
+      this.deps.onOpenPlanningScreen('sequential');
     });
   }
 
