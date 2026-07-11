@@ -255,38 +255,41 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
       handle.hide();
       onBackToHome();
     },
+    onOpenPlanningScreen: (mode) => planningScreen.show(mode),
   });
 
-  // Shown after picking a launch mode from the panel; structure/display only
-  // for now — no location-picking logic wired up yet (that's the next batch).
+  // Shown after picking a launch mode; structure/display only for now — no
+  // location-picking logic wired up yet (that's the next batch).
   const planningScreen = new PlanningScreen();
 
+  // The old tabbed panel is kept around unshown: every icon it used to
+  // surface (patterns, environment, lab, launch modes, auto-show, random
+  // mode, ground fountain) now has a placeholder in the planning screen, so
+  // its own chrome no longer needs to appear — but its sliders/media-upload
+  // wiring has no replacement UI yet, so the instance (and its functions)
+  // stay intact rather than being deleted.
   const dashboard = new BottomDashboard({
     fireworks,
     background,
-    onOpenPlanningScreen: (mode) => {
-      dashboard.root.classList.add('mzj-hidden');
-      planningScreen.show(mode);
-    },
+    onOpenPlanningScreen: (mode) => planningScreen.show(mode),
   });
+  dashboard.root.classList.add('mzj-hidden');
 
-  // Both are fully visible the instant the mood opens — see the module
-  // doc-comment above for why there's no setup gate anymore.
-  const idleFade = new IdleFadeController([header.root, dashboard.root]);
+  // The header is fully visible the instant the mood opens — see the module
+  // doc-comment above for why there's no setup gate anymore. The dashboard
+  // never appears (see comment above).
+  const idleFade = new IdleFadeController([header.root]);
   attachTactileFeedback(header.root, audio);
-  attachTactileFeedback(dashboard.root, audio);
 
   handle = {
     show(): void {
       container.classList.remove('mzj-hidden');
       header.root.classList.remove('mzj-hidden');
-      dashboard.root.classList.remove('mzj-hidden');
       app.ticker.start();
     },
     hide(): void {
       container.classList.add('mzj-hidden');
       header.root.classList.add('mzj-hidden');
-      dashboard.root.classList.add('mzj-hidden');
       app.ticker.stop();
     },
   };

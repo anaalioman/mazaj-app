@@ -1,6 +1,7 @@
 import type { Application } from 'pixi.js';
 import type { AudioManager } from '../audio/AudioManager';
 import { icon, type IconName } from './icons';
+import type { LaunchMode } from './PlanningScreen';
 
 export type InputMode = 'tap' | 'mortar';
 
@@ -12,6 +13,7 @@ export interface HeaderBarDeps {
   onSnapshot: () => void;
   onToggleRecording: () => void;
   onBackToHome: () => void;
+  onOpenPlanningScreen: (mode: LaunchMode) => void;
 }
 
 const MODE_LABELS: Record<InputMode, string> = {
@@ -44,6 +46,7 @@ export class HeaderBar {
 
     this.wireHome();
     this.wireStartShow();
+    this.wireOpenPlanning();
     this.wireModeToggle();
     this.wireMute();
     this.wireSnapshot();
@@ -63,6 +66,7 @@ export class HeaderBar {
       <div class="mzj-header-group mzj-header-right">
         <button type="button" id="mzj-home" aria-label="العودة للقائمة الرئيسية">${icon('home', 18)}</button>
         <button type="button" id="mzj-start-show" class="mzj-mode-toggle">${icon('play', 15)}<span>ابدأ العرض</span></button>
+        <button type="button" id="mzj-open-planning" aria-label="خطة الإطلاق">${icon('mapPin', 18)}</button>
       </div>
       <div class="mzj-header-group mzj-header-center">
         <button type="button" id="mzj-mode-toggle" class="mzj-mode-toggle">
@@ -94,6 +98,11 @@ export class HeaderBar {
       button.disabled = true;
       button.innerHTML = `${icon('play', 15)}<span>بدأ العرض</span>`;
     });
+  }
+
+  private wireOpenPlanning(): void {
+    const button = this.query<HTMLButtonElement>('#mzj-open-planning');
+    button.addEventListener('click', () => this.deps.onOpenPlanningScreen('mass'));
   }
 
   private wireModeToggle(): void {
