@@ -587,15 +587,6 @@
   pointer-events: none;
 }
 
-.mzj-planning-mode-row {
-  position: absolute;
-  top: 78px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(320px, 84vw);
-  pointer-events: auto;
-}
-
 .mzj-planning-hint {
   position: absolute;
   top: 42%;
@@ -635,6 +626,11 @@
   font-family: inherit;
   font-size: 10px;
   cursor: pointer;
+}
+
+.mzj-planning-icon-btn.active {
+  color: #fff;
+  font-weight: 700;
 }
 
 .mzj-planning-text-icon {

@@ -56,12 +56,10 @@ export class PlanningScreen {
 
   private template(): string {
     return `
-      <div class="mcp-btn-row mzj-planning-mode-row">
-        <button type="button" id="mzj-planning-mode-mass" class="mcp-primary-btn">${icon('mapPin', 14)}<span>إطلاق جماعي</span></button>
-        <button type="button" id="mzj-planning-mode-sequential" class="mcp-primary-btn">${icon('mapPin', 14)}<span>إطلاق متتابع</span></button>
-      </div>
       <div class="mzj-planning-hint" id="mzj-planning-hint">اختر الشكل وحدد موقعه</div>
       <div class="mzj-planning-side mzj-planning-side-right">
+        <button type="button" id="mzj-planning-mode-mass" class="mzj-planning-icon-btn">${icon('fireworksMood', 22)}<span>إطلاق جماعي</span></button>
+        <button type="button" id="mzj-planning-mode-sequential" class="mzj-planning-icon-btn">${icon('mapPin', 22)}<span>إطلاق متتابع</span></button>
         ${this.iconButton('peony', 'بيوني بقلب')}
         ${this.iconButton('rose', 'وردة')}
         ${this.iconButton('kamuro', 'كامورو ذهبي')}
