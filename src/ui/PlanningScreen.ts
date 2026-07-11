@@ -25,10 +25,15 @@ export class PlanningScreen {
     for (const type of ['pointerdown', 'click'] as const) {
       this.root.addEventListener(type, (event) => event.stopPropagation());
     }
+
+    this.root.querySelector('#mzj-planning-mode-mass')!.addEventListener('click', () => this.setMode('mass'));
+    this.root
+      .querySelector('#mzj-planning-mode-sequential')!
+      .addEventListener('click', () => this.setMode('sequential'));
   }
 
   show(mode: LaunchMode): void {
-    this.root.dataset.mode = mode;
+    this.setMode(mode);
     this.root.classList.remove('mzj-hidden');
 
     const hint = this.root.querySelector<HTMLDivElement>('#mzj-planning-hint')!;
@@ -42,8 +47,19 @@ export class PlanningScreen {
     window.clearTimeout(this.hintTimer);
   }
 
+  /** Lets the player switch modes without leaving the planning screen. */
+  private setMode(mode: LaunchMode): void {
+    this.root.dataset.mode = mode;
+    this.root.querySelector('#mzj-planning-mode-mass')!.classList.toggle('active', mode === 'mass');
+    this.root.querySelector('#mzj-planning-mode-sequential')!.classList.toggle('active', mode === 'sequential');
+  }
+
   private template(): string {
     return `
+      <div class="mcp-btn-row mzj-planning-mode-row">
+        <button type="button" id="mzj-planning-mode-mass" class="mcp-primary-btn">${icon('mapPin', 14)}<span>إطلاق جماعي</span></button>
+        <button type="button" id="mzj-planning-mode-sequential" class="mcp-primary-btn">${icon('mapPin', 14)}<span>إطلاق متتابع</span></button>
+      </div>
       <div class="mzj-planning-hint" id="mzj-planning-hint">اختر الشكل وحدد موقعه</div>
       <div class="mzj-planning-side mzj-planning-side-right">
         ${this.iconButton('peony', 'بيوني بقلب')}

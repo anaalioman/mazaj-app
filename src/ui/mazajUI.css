@@ -587,6 +587,15 @@
   pointer-events: none;
 }
 
+.mzj-planning-mode-row {
+  position: absolute;
+  top: 78px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(320px, 84vw);
+  pointer-events: auto;
+}
+
 .mzj-planning-hint {
   position: absolute;
   top: 42%;
