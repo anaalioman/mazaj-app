@@ -64,6 +64,8 @@ export class PlanningScreen {
         ${this.iconButton('rose', 'وردة')}
         ${this.iconButton('kamuro', 'كامورو ذهبي')}
         ${this.iconButton('camera', 'وثّق')}
+        ${this.iconButton('shapes', 'الأنماط')}
+        ${this.iconButton('sliders', 'المختبر')}
       </div>
       <div class="mzj-planning-side mzj-planning-side-left">
         ${this.iconButton('shuffle', 'توليد عشوائي هجين')}
@@ -71,6 +73,7 @@ export class PlanningScreen {
         ${this.iconButton('crossette', 'كروسيت نخلة')}
         ${this.iconButton('multiRing', 'حلقات متعددة')}
         ${this.iconButton('strobe', 'وميض متلألئ')}
+        ${this.iconButton('mountain', 'البيئة')}
         <button type="button" class="mzj-planning-icon-btn"><span class="mzj-planning-text-icon">T</span><span>نص</span></button>
       </div>
     `;
