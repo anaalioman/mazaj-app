@@ -2,7 +2,6 @@ import { Application } from 'pixi.js';
 import { FireworksSystem } from '../fireworks/FireworksSystem';
 import { TextReveal } from '../effects/TextReveal';
 import { MortarField } from '../effects/MortarField';
-import { GlowFrame } from '../effects/GlowFrame';
 import { ScreenFlash } from '../effects/ScreenFlash';
 import { ShockwaveManager } from '../effects/Shockwave';
 import { ScreenShakeManager } from '../effects/ScreenShake';
@@ -93,7 +92,6 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   });
 
   const textReveal = new TextReveal(app);
-  const glowFrame = new GlowFrame(app);
   const recording = new RecordingManager(app.canvas as HTMLCanvasElement, audio.getRecordingStream());
 
   /** What a tap normally does: aerial burst, or a Ground Fountain if that mode is active. */
@@ -156,10 +154,13 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   });
 
   // "ابدأ العرض" is a one-time, deliberate action (not a setup gate): it
-  // plays the opening phrase reveal using whatever text is currently in the
-  // dashboard's greeting field, then switches into full immersion. Pressing
-  // it again afterwards is a no-op — the reveal isn't designed to replay
-  // (its smoke/text sprites aren't cleared on a second call).
+  // plays the opening phrase reveal, then switches into full immersion.
+  // Pressing it again afterwards is a no-op — the reveal isn't designed to
+  // replay (its smoke/text sprites aren't cleared on a second call). The
+  // greeting text field was removed along with the "الرسائل" tab (superseded
+  // by the "T" placeholder in the new planning screen), so this is fixed
+  // for now until that text-entry flow is rebuilt.
+  const DEFAULT_GREETING = 'مبروك';
   let showStarted = false;
 
   function beginShow(): void {
@@ -167,7 +168,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     showStarted = true;
 
     audio.playReveal();
-    void withTimeout(textReveal.reveal(dashboard.getGreetingText()), 5000, 'TextReveal.reveal').catch((error) => {
+    void withTimeout(textReveal.reveal(DEFAULT_GREETING), 5000, 'TextReveal.reveal').catch((error) => {
       console.error('تعذّر عرض عبارة الافتتاح (سيستمر العرض على أي حال):', error);
     });
 
@@ -263,7 +264,6 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   const dashboard = new BottomDashboard({
     fireworks,
     background,
-    glowFrame,
     onOpenPlanningScreen: (mode) => {
       dashboard.root.classList.add('mzj-hidden');
       planningScreen.show(mode);

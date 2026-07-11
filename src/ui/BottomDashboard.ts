@@ -1,6 +1,5 @@
 import { ALL_BURST_TYPES, type BurstType, type FireworksSystem } from '../fireworks/FireworksSystem';
 import type { BackgroundLayer } from '../background';
-import type { GlowFrame, GlowFrameShape } from '../effects/GlowFrame';
 import { icon } from './icons';
 import { UploadHint } from './UploadHint';
 import { wireFilePickerLabel } from './filePicker';
@@ -9,7 +8,6 @@ import type { LaunchMode } from './PlanningScreen';
 export interface BottomDashboardDeps {
   fireworks: FireworksSystem;
   background: BackgroundLayer;
-  glowFrame: GlowFrame;
   onOpenPlanningScreen: (mode: LaunchMode) => void;
 }
 
@@ -62,7 +60,6 @@ export class BottomDashboard {
     this.wireAutoShow();
     this.wireMedia();
     this.wireSliders();
-    this.wireGreeting();
   }
 
   private template(): string {
@@ -70,7 +67,6 @@ export class BottomDashboard {
       <nav class="mzj-tabs">
         <button type="button" class="mzj-tab active" data-tab="patterns">${icon('shapes', 14)}<span>الأنماط</span></button>
         <button type="button" class="mzj-tab" data-tab="environment">${icon('mountain', 14)}<span>البيئة</span></button>
-        <button type="button" class="mzj-tab" data-tab="messages">${icon('messageSquare', 14)}<span>الرسائل</span></button>
         <button type="button" class="mzj-tab" data-tab="lab">${icon('sliders', 14)}<span>المختبر</span></button>
       </nav>
 
@@ -108,21 +104,6 @@ export class BottomDashboard {
           </div>
           ${this.sliderRow(SLIDERS.dimmer)}
           ${this.sliderRow(SLIDERS.glow)}
-        </section>
-
-        <section class="mzj-tab-content" data-panel="messages">
-          <label class="mcp-field">
-            <span>نص التهنئة</span>
-            <input type="text" id="mzj-greeting-text" placeholder="مبروك" maxlength="40" />
-          </label>
-          <div class="mcp-btn-row">
-            <select id="mzj-frame-shape" class="mcp-inline-select">
-              <option value="heart">♥ قلب</option>
-              <option value="star">★ نجمة</option>
-              <option value="circle">◯ هالة</option>
-            </select>
-            <button type="button" id="mzj-greeting-apply" class="mcp-primary-btn">${icon('sparkles', 14)}<span>أضف العبارة</span></button>
-          </div>
         </section>
 
         <section class="mzj-tab-content" data-panel="lab">
@@ -272,18 +253,4 @@ export class BottomDashboard {
     });
   }
 
-  private wireGreeting(): void {
-    const textInput = this.query<HTMLInputElement>('#mzj-greeting-text');
-    const shapeSelect = this.query<HTMLSelectElement>('#mzj-frame-shape');
-    const applyBtn = this.query<HTMLButtonElement>('#mzj-greeting-apply');
-    applyBtn.addEventListener('click', () => {
-      this.deps.glowFrame.show(textInput.value, shapeSelect.value as GlowFrameShape);
-    });
-  }
-
-  /** Current value of the greeting field, for the opening phrase-reveal — falls back to "مبروك" when left empty. */
-  getGreetingText(): string {
-    const textInput = this.query<HTMLInputElement>('#mzj-greeting-text');
-    return textInput.value.trim() || 'مبروك';
-  }
 }
