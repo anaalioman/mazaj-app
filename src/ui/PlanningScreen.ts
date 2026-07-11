@@ -66,6 +66,8 @@ export class PlanningScreen {
         ${this.iconButton('camera', 'وثّق')}
       </div>
       <div class="mzj-planning-side mzj-planning-side-left">
+        ${this.iconButton('shuffle', 'توليد عشوائي هجين')}
+        ${this.iconButton('groundFountain', 'نافورة أرضية')}
         ${this.iconButton('crossette', 'كروسيت نخلة')}
         ${this.iconButton('multiRing', 'حلقات متعددة')}
         ${this.iconButton('strobe', 'وميض متلألئ')}
