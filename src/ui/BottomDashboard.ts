@@ -31,15 +31,6 @@ const SLIDERS = {
   dimmer: { id: 'mzj-dimmer', label: 'إضاءة الخلفية', min: 0, max: 1, step: 0.01, value: 1 },
 } satisfies Record<string, SliderSpec>;
 
-const BURST_LABELS: Record<BurstType, string> = {
-  peony: 'بيوني بقلب',
-  rose: 'وردة',
-  kamuro: 'كامورو ذهبي',
-  crossette: 'كروسيت نخلة',
-  multiRing: 'حلقات متعددة',
-  strobe: 'وميض متلألئ',
-};
-
 /** Compact tabbed glass dashboard anchored at the bottom-center of the screen. */
 export class BottomDashboard {
   readonly root: HTMLDivElement;
@@ -85,12 +76,6 @@ export class BottomDashboard {
 
       <div class="mzj-tab-panels">
         <section class="mzj-tab-content active" data-panel="patterns">
-          <div class="mcp-burst-grid">
-            ${ALL_BURST_TYPES.map(
-              (type) =>
-                `<button type="button" class="mcp-burst-btn" data-type="${type}"><span class="mcp-burst-preview">${icon(type, 20)}</span><span class="mcp-burst-label">${BURST_LABELS[type]}</span></button>`,
-            ).join('')}
-          </div>
           <div class="mcp-btn-row">
             <button type="button" id="mzj-random-mode" class="mcp-primary-btn">${icon('shuffle', 14)}<span>توليد عشوائي هجين</span></button>
             <button type="button" id="mzj-ground-fountain" class="mcp-primary-btn">${icon('groundFountain', 14)}<span>نافورة أرضية</span></button>
