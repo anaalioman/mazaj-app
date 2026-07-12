@@ -27,20 +27,3 @@ body {
   height: 100%;
 }
 
-.hint {
-  position: fixed;
-  left: 50%;
-  bottom: 20px;
-  transform: translateX(-50%);
-  color: rgba(255, 255, 255, 0.55);
-  font-size: 14px;
-  letter-spacing: 0.02em;
-  pointer-events: none;
-  user-select: none;
-  text-align: center;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
-}
-
-.hidden {
-  display: none !important;
-}

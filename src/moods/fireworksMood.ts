@@ -24,7 +24,7 @@ export interface FireworksMoodHandle {
 const ROYAL_BLACK = '#040406';
 
 /**
- * Boots the fireworks mood inside `container` (expects the #app/.hint markup
+ * Boots the fireworks mood inside `container` (expects the #app markup
  * already in place, see index.html) and wires the "back to home" callback
  * into the header. Called once, lazily, the first time the player picks this
  * mood from the home screen; subsequent visits just call `show()`/`hide()`.
@@ -38,8 +38,6 @@ const ROYAL_BLACK = '#040406';
  */
 export async function startFireworksMood(container: HTMLElement, onBackToHome: () => void): Promise<FireworksMoodHandle> {
   const appContainer = container.querySelector<HTMLDivElement>('#app')!;
-  const hint = container.querySelector<HTMLDivElement>('.hint')!;
-  hint.classList.remove('hidden');
 
   const app = new Application();
 
