@@ -10,8 +10,14 @@ export interface VisibleRange {
 
 export interface PlanningModeDeps {
   app: Application;
-  /** Fires whatever a normal tap would have, but forced to a specific pattern, at (x, y). */
-  onLaunchPin: (x: number, y: number, type: BurstType) => void;
+  /**
+   * Fires whatever a normal tap would have, but forced to a specific
+   * pattern, at (x, y). `onComplete`, when given, must fire once that
+   * specific shot's explosion has genuinely finished playing (every
+   * descendant particle faded) — see FireworksSystem.launch()'s own
+   * `onComplete` param, which this should be wired straight into.
+   */
+  onLaunchPin: (x: number, y: number, type: BurstType, onComplete?: () => void) => void;
   /**
    * Whatever's currently visible outside the dashboard (or the full screen
    * once it's hidden) — the coordinate space pins are placed in while
@@ -22,7 +28,7 @@ export interface PlanningModeDeps {
   getActiveShape: () => BurstType | null;
 }
 
-export const SEQUENTIAL_DELAY_MS = 800;
+const SEQUENTIAL_DELAY_MS = 800;
 const LONG_PRESS_MS = 500;
 const MOVE_CANCEL_PX = 12;
 const PIN_RADIUS = 13;
@@ -49,7 +55,7 @@ interface Pin {
  */
 export class PlanningMode {
   private readonly app: Application;
-  private readonly onLaunchPin: (x: number, y: number, type: BurstType) => void;
+  private readonly onLaunchPin: (x: number, y: number, type: BurstType, onComplete?: () => void) => void;
   private readonly getVisibleRange: () => VisibleRange;
   private readonly getActiveShape: () => BurstType | null;
   private readonly layer: Container;
@@ -73,11 +79,6 @@ export class PlanningMode {
     this.app.stage.on('pointermove', this.handlePointerMove);
     this.app.stage.on('pointerup', this.handlePointerUp);
     this.app.stage.on('pointerupoutside', this.handlePointerUp);
-  }
-
-  /** Read before calling launch() (which clears them) — lets callers estimate how long the sequence will take to finish playing. */
-  getPinCount(): number {
-    return this.pins.length;
   }
 
   get isActive(): boolean {
@@ -133,16 +134,32 @@ export class PlanningMode {
    * instant right as this is called (the moment the scene begins), then the
    * shots themselves fire on their staggered timing, each rescaled from the
    * visible strip it was planned in up to the full screen height in effect
-   * right now. A no-op if nothing was placed.
+   * right now. `onAllComplete`, if given, fires once every fired pin's
+   * explosion has genuinely finished (not on a timer) — a no-op call
+   * (immediate `onAllComplete()`, nothing fired) if nothing was placed.
    */
-  launch(): void {
-    if (this.pins.length === 0) return;
+  launch(onAllComplete?: () => void): void {
+    if (this.pins.length === 0) {
+      onAllComplete?.();
+      return;
+    }
     const pins = [...this.pins];
     this.clear();
     const fullHeight = this.app.screen.height;
 
+    let remaining = pins.length;
+    const markOneDone = onAllComplete
+      ? () => {
+          remaining--;
+          if (remaining <= 0) onAllComplete();
+        }
+      : undefined;
+
     pins.forEach((pin, i) => {
-      window.setTimeout(() => this.onLaunchPin(pin.x, this.rescaleY(pin, fullHeight), pin.type), i * SEQUENTIAL_DELAY_MS);
+      window.setTimeout(
+        () => this.onLaunchPin(pin.x, this.rescaleY(pin, fullHeight), pin.type, markOneDone),
+        i * SEQUENTIAL_DELAY_MS,
+      );
     });
   }
 

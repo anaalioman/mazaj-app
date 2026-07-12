@@ -47,6 +47,18 @@ export interface FireworksSystemOptions {
   onExplode?: (x: number, y: number, intensity: number) => void;
 }
 
+/**
+ * Tracks one explosion's real, full visual lifetime — including every
+ * deferred child a burst spawns after the initial spread (Kamuro's falling
+ * glitter, Crossette's arm-tip splits) — so `onComplete` fires exactly once
+ * every last descendant particle has actually faded out, not on a fixed
+ * timer. See `launch()`'s `onComplete` param and `addParticle()`.
+ */
+interface BurstCompletion {
+  remaining: number;
+  onComplete: () => void;
+}
+
 /** Picks a random palette guaranteed to differ from `exclude`, for real color contrast. */
 function contrastingPalette(exclude: number[]): number[] {
   let palette = randomPalette();
@@ -73,6 +85,8 @@ export class FireworksSystem {
   // mutating `particles` while `Array.prototype.filter` is iterating it
   // would silently drop anything pushed past the loop's captured length.
   private pendingSpawns: Particle[] = [];
+  // Which particles belong to which tracked burst — see BurstCompletion.
+  private readonly particleWatchers = new Map<Particle, BurstCompletion>();
 
   private settings: BurstSettings = { ...DEFAULT_BURST_SETTINGS };
   private enabledTypes: BurstType[] = [...ALL_BURST_TYPES];
@@ -107,8 +121,15 @@ export class FireworksSystem {
     this.timeToNextAutoLaunch = this.randomLaunchDelay();
   }
 
-  /** Launches a shell toward (x, targetY). Defaults to a random apex height. `forcedType` overrides the random/enabled-types pick on burst — used by planned (mass/sequential) launches. */
-  launch(x: number, targetY?: number, forcedType?: BurstType): void {
+  /**
+   * Launches a shell toward (x, targetY). Defaults to a random apex height.
+   * `forcedType` overrides the random/enabled-types pick on burst — used by
+   * planned (mass/sequential) launches. `onComplete`, if given, fires once
+   * every particle this specific explosion spawns (including deferred
+   * children like Kamuro glitter or Crossette splits) has actually faded —
+   * not on a fixed delay.
+   */
+  launch(x: number, targetY?: number, forcedType?: BurstType, onComplete?: () => void): void {
     const { width, height } = this.app.screen;
     const apex = targetY ?? height * (0.15 + Math.random() * 0.45);
     const palette = randomPalette();
@@ -121,6 +142,7 @@ export class FireworksSystem {
       targetY: Math.max(apex, 20),
       color,
       forcedType,
+      onComplete,
     });
     this.layer.addChild(rocket.sprite);
     this.rockets.push(rocket);
@@ -139,7 +161,7 @@ export class FireworksSystem {
     this.rockets = this.rockets.filter((rocket) => {
       const reachedApex = rocket.update(delta, (x, y) => this.spawnTrailSpark(x, y, rocket.color));
       if (reachedApex) {
-        this.explode(rocket.x, rocket.y, rocket.forcedType);
+        this.explode(rocket.x, rocket.y, rocket.forcedType, rocket.onComplete);
         this.layer.removeChild(rocket.sprite);
         rocket.destroy();
         return false;
@@ -152,6 +174,7 @@ export class FireworksSystem {
       if (!alive) {
         this.layer.removeChild(particle.sprite);
         particle.destroy();
+        this.resolveWatcher(particle);
       }
       return alive;
     });
@@ -219,47 +242,66 @@ export class FireworksSystem {
     this.layer.filters = strength > 0.05 ? [this.glowFilter] : [];
   }
 
-  private addParticle(particle: Particle): void {
+  private addParticle(particle: Particle, batch?: BurstCompletion): void {
     this.layer.addChild(particle.sprite);
     this.pendingSpawns.push(particle);
+    if (batch) {
+      batch.remaining++;
+      this.particleWatchers.set(particle, batch);
+    }
   }
 
-  private explode(x: number, y: number, forcedType?: BurstType): void {
+  private resolveWatcher(particle: Particle): void {
+    const watcher = this.particleWatchers.get(particle);
+    if (!watcher) return;
+    this.particleWatchers.delete(particle);
+    watcher.remaining--;
+    if (watcher.remaining <= 0) watcher.onComplete();
+  }
+
+  private explode(x: number, y: number, forcedType?: BurstType, onComplete?: () => void): void {
     const spawnedBefore = this.pendingSpawns.length;
+    // Tracks this explosion's full lineage — including deferred children a
+    // burst spawns later (Kamuro glitter, Crossette splits) — so onComplete
+    // fires only once every last one of them has actually faded away.
+    const batch: BurstCompletion | undefined = onComplete ? { remaining: 0, onComplete } : undefined;
 
     if (forcedType) {
-      this.burstByType(forcedType, x, y);
+      this.burstByType(forcedType, x, y, batch);
     } else if (this.randomModeEnabled) {
       this.burstRandomHybrid(x, y);
     } else {
       const type = this.enabledTypes[Math.floor(Math.random() * this.enabledTypes.length)];
-      this.burstByType(type, x, y);
+      this.burstByType(type, x, y, batch);
     }
+
+    // Defensive: if somehow nothing was spawned, don't leave onComplete hanging forever.
+    if (batch && batch.remaining === 0) batch.onComplete();
 
     const spawnedCount = this.pendingSpawns.length - spawnedBefore;
     const intensity = spawnedCount / BURST_INTENSITY_REFERENCE_COUNT;
     this.onExplode?.(x, y, intensity);
   }
 
-  private burstByType(type: BurstType, x: number, y: number): void {
+  private burstByType(type: BurstType, x: number, y: number, batch?: BurstCompletion): void {
     switch (type) {
       case 'rose':
-        this.burstRose(x, y);
+        this.burstRose(x, y, batch);
         break;
       case 'kamuro':
-        this.burstKamuro(x, y);
+        this.burstKamuro(x, y, batch);
         break;
       case 'crossette':
-        this.burstPalmCrossette(x, y);
+        this.burstPalmCrossette(x, y, batch);
         break;
       case 'multiRing':
-        this.burstMultiRing(x, y);
+        this.burstMultiRing(x, y, batch);
         break;
       case 'strobe':
-        this.burstStrobe(x, y);
+        this.burstStrobe(x, y, batch);
         break;
       default:
-        this.burstPeony(x, y);
+        this.burstPeony(x, y, batch);
         break;
     }
   }
@@ -309,7 +351,7 @@ export class FireworksSystem {
    * smaller, slower inner sphere in a contrasting color exploding at the
    * same instant — the classic two-tone "flower with a center" look.
    */
-  private burstPeony(x: number, y: number): void {
+  private burstPeony(x: number, y: number, batch?: BurstCompletion): void {
     const texture = getParticleTexture(this.app);
     const outerPalette = randomPalette();
     const primaryColor = randomColor(outerPalette);
@@ -335,6 +377,7 @@ export class FireworksSystem {
           drag: 0.982,
           twinkle: Math.random() < 0.25,
         }),
+        batch,
       );
     }
 
@@ -358,6 +401,7 @@ export class FireworksSystem {
           drag: 0.978,
           twinkle: Math.random() < 0.3,
         }),
+        batch,
       );
     }
   }
@@ -368,7 +412,7 @@ export class FireworksSystem {
    * k-petaled rose curve (negative r flips through the origin, which is
    * exactly how the classic rose curve handles it).
    */
-  private burstRose(x: number, y: number): void {
+  private burstRose(x: number, y: number, batch?: BurstCompletion): void {
     const burstColors = pickBurstColors(3 + Math.floor(Math.random() * 3));
     const texture = getParticleTexture(this.app);
     const k = 2 + Math.floor(Math.random() * 5);
@@ -394,6 +438,7 @@ export class FireworksSystem {
           drag: 0.978,
           twinkle: Math.random() < 0.25,
         }),
+        batch,
       );
     }
   }
@@ -403,7 +448,7 @@ export class FireworksSystem {
    * stars that barely feel gravity and keep emitting glitter continuously,
    * so they hang and drift down together like an umbrella of falling gold.
    */
-  private burstKamuro(x: number, y: number): void {
+  private burstKamuro(x: number, y: number, batch?: BurstCompletion): void {
     const texture = getParticleTexture(this.app);
     const count = Math.max(20, Math.round((85 + Math.random() * 35) * this.densityRatio()));
     const baseSpeed = (1.8 + Math.random() * 1.0) * this.settings.explosionScale;
@@ -425,13 +470,14 @@ export class FireworksSystem {
           gravity: 0.045 * this.settings.gravityScale, // light weight: barely falls
           drag: 0.994, // low air resistance: keeps drifting outward
           sparkleInterval: 3 + Math.random() * 2, // frequent glitter -> continuous trail
-          onSparkle: (sx, sy) => this.spawnKamuroSparkle(sx, sy),
+          onSparkle: (sx, sy) => this.spawnKamuroSparkle(sx, sy, batch),
         }),
+        batch,
       );
     }
   }
 
-  private spawnKamuroSparkle(x: number, y: number): void {
+  private spawnKamuroSparkle(x: number, y: number, batch?: BurstCompletion): void {
     const texture = getParticleTexture(this.app);
     const color = GOLD_HUES[Math.floor(Math.random() * GOLD_HUES.length)];
 
@@ -448,6 +494,7 @@ export class FireworksSystem {
         drag: 0.975,
         twinkle: true,
       }),
+      batch,
     );
   }
 
@@ -457,7 +504,7 @@ export class FireworksSystem {
    * two sparks fired opposite each other (perpendicular to the arm) instead
    * of continuing straight.
    */
-  private burstPalmCrossette(x: number, y: number): void {
+  private burstPalmCrossette(x: number, y: number, batch?: BurstCompletion): void {
     const burstColors = pickBurstColors(3);
     const texture = getParticleTexture(this.app);
     const armCount = 5 + Math.floor(Math.random() * 3); // 5, 6, or 7
@@ -481,15 +528,16 @@ export class FireworksSystem {
           gravity: 0.09 * this.settings.gravityScale,
           drag: 0.99,
           sparkleInterval: 2 + Math.random() * 2,
-          onSparkle: (sx, sy) => this.spawnPalmArmTrail(sx, sy, color),
+          onSparkle: (sx, sy) => this.spawnPalmArmTrail(sx, sy, color, batch),
           splitAt: life * 0.94, // right at the tip of the arm's life
-          onSplit: (sx, sy, svx, svy) => this.spawnPalmSplit(sx, sy, svx, svy, color),
+          onSplit: (sx, sy, svx, svy) => this.spawnPalmSplit(sx, sy, svx, svy, color, batch),
         }),
+        batch,
       );
     }
   }
 
-  private spawnPalmArmTrail(x: number, y: number, color: number): void {
+  private spawnPalmArmTrail(x: number, y: number, color: number, batch?: BurstCompletion): void {
     this.addParticle(
       new Particle(getParticleTexture(this.app), {
         x: x + (Math.random() - 0.5) * 3,
@@ -502,10 +550,11 @@ export class FireworksSystem {
         gravity: 0.03 * this.settings.gravityScale,
         drag: 0.97,
       }),
+      batch,
     );
   }
 
-  private spawnPalmSplit(x: number, y: number, vx: number, vy: number, color: number): void {
+  private spawnPalmSplit(x: number, y: number, vx: number, vy: number, color: number, batch?: BurstCompletion): void {
     const texture = getParticleTexture(this.app);
     const baseAngle = Math.atan2(vy, vx);
     const speed = Math.max(Math.hypot(vx, vy) * 0.7, 1.6);
@@ -527,6 +576,7 @@ export class FireworksSystem {
           drag: 0.98,
           twinkle: true,
         }),
+        batch,
       );
     }
   }
@@ -537,7 +587,7 @@ export class FireworksSystem {
    * squashed horizontally ("vertical" ring) — crossing each other to read
    * as two intersecting rings, entirely with 2D coordinates (x, y only).
    */
-  private burstMultiRing(x: number, y: number): void {
+  private burstMultiRing(x: number, y: number, batch?: BurstCompletion): void {
     const texture = getParticleTexture(this.app);
     const paletteA = randomPalette();
     const colorA = randomColor(paletteA);
@@ -561,6 +611,7 @@ export class FireworksSystem {
           drag: 0.99,
           twinkle: Math.random() < 0.2,
         }),
+        batch,
       );
     }
 
@@ -579,6 +630,7 @@ export class FireworksSystem {
           drag: 0.99,
           twinkle: Math.random() < 0.2,
         }),
+        batch,
       );
     }
   }
@@ -588,7 +640,7 @@ export class FireworksSystem {
    * smooth twinkle) at varying speeds as they fall, like sparkling diamond
    * fragments, before finally extinguishing.
    */
-  private burstStrobe(x: number, y: number): void {
+  private burstStrobe(x: number, y: number, batch?: BurstCompletion): void {
     const burstColors = pickBurstColors(4 + Math.floor(Math.random() * 2));
     const texture = getParticleTexture(this.app);
     const count = Math.max(10, Math.round((60 + Math.random() * 50) * this.densityRatio()));
@@ -612,6 +664,7 @@ export class FireworksSystem {
           drag: 0.988,
           strobe: true,
         }),
+        batch,
       );
     }
   }

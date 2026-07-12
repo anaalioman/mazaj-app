@@ -8,6 +8,8 @@ export interface RocketOptions {
   color: number;
   /** Forces a specific pattern on burst, bypassing the random/enabled-types pick — used by planned launches. */
   forcedType?: BurstType;
+  /** Fires once this shell's explosion has fully finished playing (every descendant particle faded) — see FireworksSystem.launch(). */
+  onComplete?: () => void;
 }
 
 /**
@@ -18,6 +20,7 @@ export class Rocket {
   readonly sprite: Sprite;
   readonly color: number;
   readonly forcedType?: BurstType;
+  readonly onComplete?: () => void;
 
   private vy: number;
   private readonly gravity = 0.16;
@@ -25,9 +28,10 @@ export class Rocket {
   private trailAccumulator = 0;
 
   constructor(texture: Texture, options: RocketOptions) {
-    const { x, startY, targetY, color, forcedType } = options;
+    const { x, startY, targetY, color, forcedType, onComplete } = options;
     this.color = color;
     this.forcedType = forcedType;
+    this.onComplete = onComplete;
     this.targetY = targetY;
 
     // Initial speed derived from distance so shells launched at very

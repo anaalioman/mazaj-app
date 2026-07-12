@@ -12,7 +12,7 @@ import { HeaderBar, type InputMode } from '../ui/HeaderBar';
 import { IdleFadeController } from '../ui/IdleFade';
 import { attachTactileFeedback } from '../ui/tactile';
 import { withTimeout } from '../utils/withTimeout';
-import { PlanningMode, SEQUENTIAL_DELAY_MS } from '../ui/PlanningMode';
+import { PlanningMode } from '../ui/PlanningMode';
 import { PlanningScreen } from '../ui/PlanningScreen';
 
 export interface FireworksMoodHandle {
@@ -111,10 +111,13 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // Sequential-mode's placement engine: armed only while the planning
   // screen's mode is 'sequential' (see the onModeChange wiring below), and
   // owns its own stage pointer listeners directly (long-press-to-cancel
-  // needs pointerdown/move/up, not just a single tap callback).
+  // needs pointerdown/move/up, not just a single tap callback). onComplete
+  // is threaded straight through to FireworksSystem.launch()'s own
+  // onComplete, which fires only once that shot's explosion has genuinely
+  // finished (every descendant particle faded) — see launchPlannedShow().
   const planningMode = new PlanningMode({
     app,
-    onLaunchPin: (x, y, type) => fireworks.launch(x, y, type),
+    onLaunchPin: (x, y, type, onComplete) => fireworks.launch(x, y, type, onComplete),
     getVisibleRange,
     getActiveShape: () => planningScreen.getActiveSequentialShape(),
   });
@@ -156,45 +159,56 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   const DEFAULT_GREETING = 'مبروك';
   let showStarted = false;
 
-  // A single rocket's full visible life (ascent + explosion + particle
-  // decay) once it's launched — used to estimate when a planned show is
-  // actually done playing, for توثيق مباشر's auto-stop (see beginShow()).
-  const BURST_TAIL_MS = 3000;
-
   // Neither mode icon in the planning screen fires anything itself — this is
   // the one and only trigger, per the confirmed spec: mass launches every
   // selected shape together, superimposed at one shared point (there's no
   // location step for 'mass'); sequential fires PlanningMode's placed pins,
   // each 800ms apart in the order they were placed. Whichever mode wasn't
   // active when the player pressed the button is simply ignored, even if it
-  // has leftover selections from earlier experimentation. Returns an
-  // estimate (ms) of how long the fired plan takes to finish playing.
-  function launchPlannedShow(): number {
+  // has leftover selections from earlier experimentation. `onAllComplete`,
+  // if given, fires once every fired shot's explosion has genuinely finished
+  // playing (every descendant particle faded) — not on any fixed delay —
+  // used to auto-stop توثيق مباشر's recording exactly when the show ends.
+  function launchPlannedShow(onAllComplete?: () => void): void {
     if (planningScreen.getMode() === 'mass') {
+      const types = planningScreen.getMassSelection();
+      if (types.length === 0) {
+        onAllComplete?.();
+        return;
+      }
+
+      let remaining = types.length;
+      const markOneDone = onAllComplete
+        ? () => {
+            remaining--;
+            if (remaining <= 0) onAllComplete();
+          }
+        : undefined;
+
       const centerX = app.screen.width / 2;
       const centerY = app.screen.height * 0.35;
-      for (const type of planningScreen.getMassSelection()) fireworks.launch(centerX, centerY, type);
-      return BURST_TAIL_MS;
+      for (const type of types) fireworks.launch(centerX, centerY, type, markOneDone);
+      return;
     }
 
-    const pinCount = planningMode.getPinCount();
-    planningMode.launch();
-    return pinCount === 0 ? 0 : (pinCount - 1) * SEQUENTIAL_DELAY_MS + BURST_TAIL_MS;
+    planningMode.launch(onAllComplete);
   }
 
   function beginShow(): void {
     if (showStarted) return;
     showStarted = true;
 
-    const plannedDurationMs = launchPlannedShow();
-
-    // توثيق مباشر (live camera) arms auto-recording around exactly the
-    // planned show's runtime, regardless of which mode fired it — nothing
-    // else about recording changes if it wasn't chosen (the header's manual
-    // record button keeps working exactly as before).
+    // توثيق مباشر (live camera) auto-records for exactly the planned show's
+    // real runtime — recording starts now and stops the instant every fired
+    // shot's explosion has actually finished (see launchPlannedShow()'s
+    // onAllComplete), never on a guessed delay. Nothing else about recording
+    // changes if it wasn't chosen — the header's manual record button keeps
+    // working exactly as before.
     if (planningScreen.isLiveDocumentationArmed()) {
       void startRecording();
-      window.setTimeout(() => void stopRecording(), Math.max(plannedDurationMs, BURST_TAIL_MS));
+      launchPlannedShow(() => void stopRecording());
+    } else {
+      launchPlannedShow();
     }
 
     // The planning screen must never still be up once the show begins,
