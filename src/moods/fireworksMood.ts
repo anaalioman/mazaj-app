@@ -259,7 +259,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // control that has a real, already-built function behind it is wired
   // directly here to `fireworks`/`background` — see PlanningScreen's own
   // doc-comment for exactly which icons are still inert and why.
-  const planningScreen = new PlanningScreen({ fireworks, background, onSnapshot: () => void takeSnapshot() });
+  const planningScreen = new PlanningScreen({ fireworks, background });
 
   // The header is fully visible the instant the mood opens — see the module
   // doc-comment above for why there's no setup gate anymore.

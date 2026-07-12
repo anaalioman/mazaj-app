@@ -41,6 +41,8 @@ const PATHS = {
   groundFountain:
     '<path d="M12 20c0-4.5-2.2-6.5-2.2-11.5M12 20c0-5.5 0-8 0-13M12 20c0-4.5 2.2-6.5 2.2-11.5"/><path d="M6 20h12"/>',
   mapPin: '<path d="M12 21S5 14.5 5 9a7 7 0 1 1 14 0c0 5.5-7 12-7 12Z"/><circle cx="12" cy="9" r="2.4"/>',
+  image:
+    '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.6" fill="currentColor" stroke="none"/><path d="M3 16.5 8 11l3.5 3.5 3-3L21 17"/>',
   // Small schematic previews of each firework burst pattern, used on the
   // pattern-picker cards so the eye has a shape to read, not just text.
   peony:

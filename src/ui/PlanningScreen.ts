@@ -2,14 +2,12 @@ import { ALL_BURST_TYPES, type BurstType, type FireworksSystem } from '../firewo
 import type { BackgroundLayer } from '../background';
 import { icon } from './icons';
 import { UploadHint } from './UploadHint';
-import { wireFilePickerLabel } from './filePicker';
 
 export type LaunchMode = 'mass' | 'sequential';
 
 export interface PlanningScreenDeps {
   fireworks: FireworksSystem;
   background: BackgroundLayer;
-  onSnapshot: () => void;
 }
 
 interface SliderSpec {
@@ -35,9 +33,12 @@ const HINT_VISIBLE_MS = 2600;
 /**
  * Full-screen planning layout shown after the player picks "إطلاق جماعي" or
  * "إطلاق متتابع". Every icon that has a real, already-built function behind
- * it (shape toggles, random/ground-fountain mode, auto-show, snapshot,
- * environment/lab controls) is wired here directly to FireworksSystem /
- * BackgroundLayer — this is now the only place that functionality lives.
+ * it (shape toggles, random/ground-fountain mode, auto-show, background
+ * image/video, dimmer/glow, lab sliders) is wired here directly to
+ * FireworksSystem / BackgroundLayer — this is now the only place that
+ * functionality lives. There is deliberately no standalone "البيئة" icon
+ * anymore: each control it used to group behind one tap now has its own
+ * dedicated icon instead.
  *
  * Two icons remain deliberately inert (see `.mzj-planning-icon-btn-disabled`
  * in the template): "الأنماط" has no distinct destination left now that the
@@ -76,7 +77,6 @@ export class PlanningScreen {
     this.wireRandomMode();
     this.wireGroundFountainMode();
     this.wireAutoShow();
-    this.wireCamera();
     this.wireSubpanels();
     this.wireMedia();
     this.wireSliders();
@@ -95,7 +95,7 @@ export class PlanningScreen {
   hide(): void {
     this.root.classList.add('mzj-hidden');
     window.clearTimeout(this.hintTimer);
-    for (const el of this.root.querySelectorAll('.mzj-planning-subpanel.open, .mzj-planning-icon-btn.active[id^="mzj-planning-open-"]')) {
+    for (const el of this.root.querySelectorAll('.mzj-planning-subpanel.open, [id^="mzj-planning-open-"].active')) {
       el.classList.remove('open', 'active');
     }
   }
@@ -169,14 +169,11 @@ export class PlanningScreen {
     });
   }
 
-  private wireCamera(): void {
-    this.query<HTMLButtonElement>('#mzj-planning-camera').addEventListener('click', () => this.deps.onSnapshot());
-  }
-
-  /** The two subpanels share the same on-screen spot, so opening one must close the other. */
+  /** All subpanels/pickers share the same on-screen spot, so opening one must close the rest. */
   private wireSubpanels(): void {
     const entries = [
-      { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-env'), panel: this.query<HTMLDivElement>('#mzj-planning-env-panel') },
+      { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-dimmer'), panel: this.query<HTMLDivElement>('#mzj-planning-dimmer-panel') },
+      { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-glow'), panel: this.query<HTMLDivElement>('#mzj-planning-glow-panel') },
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-lab'), panel: this.query<HTMLDivElement>('#mzj-planning-lab-panel') },
     ];
 
@@ -191,20 +188,35 @@ export class PlanningScreen {
     }
   }
 
+  /**
+   * Image and live-video backgrounds each get their own icon that opens the
+   * native file picker directly (no intermediate row/label) — توثيق is now
+   * the live-video trigger, not a snapshot (the header has its own
+   * independent snapshot button already).
+   */
   private wireMedia(): void {
+    const imageButton = this.query<HTMLButtonElement>('#mzj-planning-bg-image');
     const imageInput = this.query<HTMLInputElement>('#mzj-bg-image');
-    const videoInput = this.query<HTMLInputElement>('#mzj-bg-video');
-    wireFilePickerLabel(imageInput, this.query('#mzj-bg-image-name'), 'لم يتم اختيار صورة');
-    wireFilePickerLabel(videoInput, this.query('#mzj-bg-video-name'), 'لم يتم اختيار فيديو');
-
+    imageButton.addEventListener('click', () => imageInput.click());
     imageInput.addEventListener('change', () => {
       const file = imageInput.files?.[0];
-      if (file) void this.deps.background.setImage(file).then(() => this.uploadHint.show('image'));
+      if (!file) return;
+      void this.deps.background.setImage(file).then(() => {
+        this.uploadHint.show('image');
+        imageButton.classList.add('active');
+      });
     });
 
+    const videoButton = this.query<HTMLButtonElement>('#mzj-planning-camera');
+    const videoInput = this.query<HTMLInputElement>('#mzj-bg-video');
+    videoButton.addEventListener('click', () => videoInput.click());
     videoInput.addEventListener('change', () => {
       const file = videoInput.files?.[0];
-      if (file) void this.deps.background.setVideo(file).then(() => this.uploadHint.show('video'));
+      if (!file) return;
+      void this.deps.background.setVideo(file).then(() => {
+        this.uploadHint.show('video');
+        videoButton.classList.add('active');
+      });
     });
   }
 
@@ -246,9 +258,10 @@ export class PlanningScreen {
         ${this.shapeIconButton('peony', 'بيوني بقلب')}
         ${this.shapeIconButton('rose', 'وردة')}
         ${this.shapeIconButton('kamuro', 'كامورو ذهبي')}
-        <button type="button" id="mzj-planning-camera" class="mzj-planning-icon-btn">${icon('camera', 22)}<span>وثّق</span></button>
+        <button type="button" id="mzj-planning-camera" class="mzj-planning-icon-btn">${icon('camera', 22)}<span>فيديو خلفية حي</span></button>
+        <button type="button" id="mzj-planning-bg-image" class="mzj-planning-icon-btn">${icon('image', 22)}<span>صورة خلفية</span></button>
         <button type="button" class="mzj-planning-icon-btn mzj-planning-icon-btn-disabled" disabled title="لا وظيفة مستقلة بعد">${icon('shapes', 22)}<span>الأنماط</span></button>
-        <button type="button" id="mzj-planning-open-lab" class="mzj-planning-icon-btn">${icon('sliders', 22)}<span>المختبر</span></button>
+        <button type="button" id="mzj-planning-open-glow" class="mzj-planning-icon-btn">${icon('gem', 22)}<span>توهج الألعاب النارية</span></button>
       </div>
       <div class="mzj-planning-side mzj-planning-side-left">
         <button type="button" id="mzj-planning-random-mode" class="mzj-planning-icon-btn">${icon('shuffle', 22)}<span>توليد عشوائي هجين</span></button>
@@ -256,33 +269,22 @@ export class PlanningScreen {
         ${this.shapeIconButton('crossette', 'كروسيت نخلة')}
         ${this.shapeIconButton('multiRing', 'حلقات متعددة')}
         ${this.shapeIconButton('strobe', 'وميض متلألئ')}
-        <button type="button" id="mzj-planning-open-env" class="mzj-planning-icon-btn">${icon('mountain', 22)}<span>البيئة</span></button>
+        <button type="button" id="mzj-planning-open-dimmer" class="mzj-planning-icon-btn">${icon('palette', 22)}<span>إضاءة الخلفية</span></button>
         <button type="button" id="mzj-planning-auto-show" class="mzj-planning-icon-btn">${icon('sparkles', 22)}<span>العرض التلقائي</span></button>
+        <button type="button" id="mzj-planning-open-lab" class="mzj-planning-icon-btn">${icon('sliders', 22)}<span>المختبر</span></button>
         <button type="button" class="mzj-planning-icon-btn mzj-planning-icon-btn-disabled" disabled title="غير مبني بعد — دفعة مستقبلية">
           <span class="mzj-planning-text-icon">T</span><span>نص</span>
         </button>
       </div>
 
-      <div class="mzj-planning-subpanel" id="mzj-planning-env-panel">
-        <div class="mcp-field-row">
-          <label class="mcp-field">
-            <span>رفع صورة خلفية</span>
-            <span class="mzj-file-picker">
-              <span class="mzj-file-picker-name" id="mzj-bg-image-name">لم يتم اختيار صورة</span>
-              <span class="mzj-file-picker-btn">استعراض</span>
-            </span>
-            <input type="file" id="mzj-bg-image" accept="image/*" class="mzj-file-input-sr" />
-          </label>
-          <label class="mcp-field">
-            <span>رفع فيديو خلفية حي</span>
-            <span class="mzj-file-picker">
-              <span class="mzj-file-picker-name" id="mzj-bg-video-name">لم يتم اختيار فيديو</span>
-              <span class="mzj-file-picker-btn">استعراض</span>
-            </span>
-            <input type="file" id="mzj-bg-video" accept="video/*" class="mzj-file-input-sr" />
-          </label>
-        </div>
+      <input type="file" id="mzj-bg-image" accept="image/*" class="mzj-file-input-sr" />
+      <input type="file" id="mzj-bg-video" accept="video/*" class="mzj-file-input-sr" />
+
+      <div class="mzj-planning-subpanel" id="mzj-planning-dimmer-panel">
         ${this.sliderRow(SLIDERS.dimmer)}
+      </div>
+
+      <div class="mzj-planning-subpanel" id="mzj-planning-glow-panel">
         ${this.sliderRow(SLIDERS.glow)}
       </div>
 
