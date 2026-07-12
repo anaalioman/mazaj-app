@@ -513,72 +513,16 @@
   font-weight: 700;
 }
 
+/* Purely a layout/position reference for the real PixiJS preview rendered
+   on the canvas at this exact screen slot (see TextComposer's preview
+   cycle) — no content, no animation of its own, and no background strong
+   enough to visibly dim the real particles behind it. */
 .mzj-text-effect-preview {
-  position: relative;
+  display: block;
   width: 100%;
   height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.mzj-text-effect-preview-word {
-  position: relative;
-  z-index: 1;
-  font-size: 11px;
-  font-weight: 700;
-  color: #ffe9b3;
-}
-
-.mzj-text-effect-preview-smoke .mzj-text-effect-preview-word,
-.mzj-text-effect-preview-flame .mzj-text-effect-preview-word {
-  animation: mzj-text-word-reveal 2.6s ease-in-out infinite;
-}
-
-.mzj-text-effect-preview-smoke::after,
-.mzj-text-effect-preview-flame::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  animation: mzj-text-cloud-clear 2.6s ease-in-out infinite;
-}
-
-.mzj-text-effect-preview-smoke::after {
-  background: radial-gradient(circle, rgba(200, 200, 200, 0.95), rgba(200, 200, 200, 0) 70%);
-}
-
-.mzj-text-effect-preview-flame::after {
-  background: radial-gradient(circle, rgba(255, 122, 60, 0.95), rgba(255, 90, 60, 0) 70%);
-}
-
-@keyframes mzj-text-word-reveal {
-  0%, 8% {
-    opacity: 0;
-  }
-  38%, 78% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-
-@keyframes mzj-text-cloud-clear {
-  0%, 8% {
-    opacity: 1;
-    transform: scale(0.75);
-  }
-  45% {
-    opacity: 0.1;
-    transform: scale(1.6);
-  }
-  92%, 100% {
-    opacity: 1;
-    transform: scale(0.75);
-  }
+  background: rgba(255, 255, 255, 0.03);
 }
 
 /* Draggable + pinch-resizable control box: a transparent full-screen

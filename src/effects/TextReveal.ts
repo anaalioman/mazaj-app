@@ -59,6 +59,8 @@ export class TextReveal {
     const trimmed = phrase.trim();
     if (!trimmed) return Promise.resolve();
 
+    this.clear();
+
     const { width, height } = this.app.screen;
     const effect = options.effect ?? 'smoke';
     const x = options.x ?? width / 2;
@@ -95,6 +97,22 @@ export class TextReveal {
     return new Promise((resolve) => {
       this.resolveFn = resolve;
     });
+  }
+
+  /** Removes whatever text/smoke this instance currently has, so it can safely reveal() again — used by looping demo previews (see TextComposer). */
+  clear(): void {
+    if (this.textSprite) {
+      this.container.removeChild(this.textSprite);
+      this.textSprite.destroy();
+      this.textSprite = null;
+    }
+    for (const particle of this.smoke) {
+      this.container.removeChild(particle.sprite);
+      particle.destroy();
+    }
+    this.smoke = [];
+    this.active = false;
+    this.resolveFn = null;
   }
 
   update(delta: number): void {

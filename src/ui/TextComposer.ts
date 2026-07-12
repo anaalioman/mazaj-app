@@ -1,7 +1,8 @@
 import { Application, Text, TextStyle } from 'pixi.js';
 import { icon } from './icons';
+import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
 
-export type TextRevealEffect = 'smoke' | 'flame' | 'none';
+export type { TextRevealEffect };
 
 export interface TextRevealConfig {
   text: string;
@@ -20,6 +21,8 @@ export interface TextComposerDeps {
 const SAMPLE_PHRASE = 'مبروك';
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 3;
+const PREVIEW_ORDER: TextRevealEffect[] = ['smoke', 'flame', 'none'];
+const PREVIEW_HOLD_MS = 700;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -39,6 +42,12 @@ function clamp(value: number, min: number, max: number): number {
  * time: `root` (top input + effects bar) while composing text, and
  * `controlBoxRoot` (a full-screen backdrop containing the drag/pinch box)
  * once the back arrow closes that — they can't be nested inside each other.
+ *
+ * The effects bar's demo previews reuse the exact same TextReveal engine as
+ * the real final reveal (same particle physics, no CSS/static-image
+ * stand-in) via a dedicated instance, cycling through smoke/flame/none one
+ * at a time (never more than one running at once) for as long as the input
+ * row is open.
  */
 export class TextComposer {
   readonly root: HTMLDivElement;
@@ -46,6 +55,7 @@ export class TextComposer {
   private readonly deps: TextComposerDeps;
   private readonly previewText: Text;
   private readonly baseFontSize: number;
+  private readonly previewReveal: TextReveal;
 
   private text = SAMPLE_PHRASE;
   private effect: TextRevealEffect = 'none';
@@ -59,6 +69,11 @@ export class TextComposer {
   private pinchStartDist: number | null = null;
   private pinchStartScale = 1;
 
+  private previewCycleActive = false;
+  private previewGeneration = 0;
+  private previewIndex = 0;
+  private previewCycleTimer: number | undefined;
+
   constructor(deps: TextComposerDeps) {
     this.deps = deps;
 
@@ -66,6 +81,9 @@ export class TextComposer {
     this.posX = width / 2;
     this.posY = height / 2;
     this.baseFontSize = Math.max(36, Math.min(width, height) * 0.09);
+
+    this.previewReveal = new TextReveal(deps.app);
+    deps.app.ticker.add((ticker) => this.previewReveal.update(ticker.deltaTime));
 
     this.previewText = new Text({ text: this.text, style: this.textStyle() });
     this.previewText.anchor.set(0.5);
@@ -112,6 +130,7 @@ export class TextComposer {
     this.root.classList.remove('mzj-hidden');
     this.deps.onComposingChange(true);
     window.setTimeout(() => this.query<HTMLInputElement>('#mzj-text-composer-input').focus(), 50);
+    this.startPreviewCycle();
   }
 
   /**
@@ -124,6 +143,7 @@ export class TextComposer {
   consumeForReveal(): TextRevealConfig | null {
     // Defensive: the show can start (via the header's always-available
     // "ابدأ العرض") while the composer or control box is still open.
+    this.stopPreviewCycle();
     this.root.classList.add('mzj-hidden');
     this.closeControlBox();
     this.previewText.visible = false;
@@ -173,6 +193,7 @@ export class TextComposer {
 
   private wireBack(): void {
     this.query<HTMLButtonElement>('#mzj-text-composer-back').addEventListener('click', () => {
+      this.stopPreviewCycle();
       this.root.classList.add('mzj-hidden');
       this.text = this.text.trim() ? this.text : SAMPLE_PHRASE;
       this.previewText.text = this.text;
@@ -180,6 +201,44 @@ export class TextComposer {
       this.syncPreviewTransform();
       this.openControlBox();
     });
+  }
+
+  /** Runs smoke -> flame -> none -> smoke -> ... forever, one at a time, using the exact same TextReveal engine as the real final reveal — only ever one preview actually animating. Independent of tapping an icon to select it. */
+  private startPreviewCycle(): void {
+    if (this.previewCycleActive) return;
+    this.previewCycleActive = true;
+    this.previewGeneration++;
+    void this.runPreviewStep(this.previewGeneration);
+  }
+
+  private stopPreviewCycle(): void {
+    this.previewCycleActive = false;
+    this.previewGeneration++;
+    window.clearTimeout(this.previewCycleTimer);
+    this.previewReveal.clear();
+  }
+
+  private async runPreviewStep(generation: number): Promise<void> {
+    if (!this.previewCycleActive || generation !== this.previewGeneration) return;
+
+    const effect = PREVIEW_ORDER[this.previewIndex];
+    const slot = this.root.querySelector<HTMLElement>(`.mzj-text-effect-preview[data-effect="${effect}"]`)!;
+    const rect = slot.getBoundingClientRect();
+    const fontScale = (rect.height * 0.55) / this.baseFontSize;
+
+    await this.previewReveal.reveal(SAMPLE_PHRASE, {
+      effect,
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+      fontScale,
+    });
+    if (!this.previewCycleActive || generation !== this.previewGeneration) return;
+
+    this.previewCycleTimer = window.setTimeout(() => {
+      if (!this.previewCycleActive || generation !== this.previewGeneration) return;
+      this.previewIndex = (this.previewIndex + 1) % PREVIEW_ORDER.length;
+      void this.runPreviewStep(generation);
+    }, PREVIEW_HOLD_MS);
   }
 
   private openControlBox(): void {
@@ -290,9 +349,7 @@ export class TextComposer {
   private effectButton(effect: TextRevealEffect, label: string): string {
     return `
       <button type="button" class="mzj-text-effect-btn" data-effect="${effect}">
-        <span class="mzj-text-effect-preview mzj-text-effect-preview-${effect}">
-          <span class="mzj-text-effect-preview-word">${SAMPLE_PHRASE}</span>
-        </span>
+        <span class="mzj-text-effect-preview" data-effect="${effect}"></span>
         <span>${label}</span>
       </button>
     `;
