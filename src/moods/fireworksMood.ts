@@ -152,11 +152,8 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // "ابدأ العرض" is a one-time, deliberate action (not a setup gate): it
   // plays the opening phrase reveal, then switches into full immersion.
   // Pressing it again afterwards is a no-op — the reveal isn't designed to
-  // replay (its smoke/text sprites aren't cleared on a second call). The
-  // greeting text field was removed along with the "الرسائل" tab (superseded
-  // by the "T" placeholder in the new planning screen), so this is fixed
-  // for now until that text-entry flow is rebuilt.
-  const DEFAULT_GREETING = 'مبروك';
+  // replay (its smoke/text sprites aren't cleared on a second call).
+  const FALLBACK_GREETING = 'مبروك';
   let showStarted = false;
 
   // Neither mode icon in the planning screen fires anything itself — this is
@@ -215,8 +212,18 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     // whether or not the player closed it themselves first.
     planningScreen.hide();
 
+    // Uses whatever the player set up via the "T" icon (text, effect,
+    // position, scale); falls back to the plain default only if they never
+    // touched it at all this session — see TextComposer.consumeForReveal().
+    const textConfig = planningScreen.consumeTextRevealConfig();
     audio.playReveal();
-    void withTimeout(textReveal.reveal(DEFAULT_GREETING), 5000, 'TextReveal.reveal').catch((error) => {
+    void withTimeout(
+      textConfig
+        ? textReveal.reveal(textConfig.text, textConfig)
+        : textReveal.reveal(FALLBACK_GREETING),
+      5000,
+      'TextReveal.reveal',
+    ).catch((error) => {
       console.error('تعذّر عرض عبارة الافتتاح (سيستمر العرض على أي حال):', error);
     });
 
@@ -317,6 +324,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // directly here to `fireworks`/`background` — see PlanningScreen's own
   // doc-comment for exactly which icons are still inert and why.
   const planningScreen = new PlanningScreen({
+    app,
     fireworks,
     background,
     onModeChange: (mode) => planningMode.setActive(mode === 'sequential'),

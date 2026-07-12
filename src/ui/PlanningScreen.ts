@@ -1,11 +1,14 @@
+import type { Application } from 'pixi.js';
 import { type BurstType, type FireworksSystem } from '../fireworks/FireworksSystem';
 import type { BackgroundLayer } from '../background';
 import { icon } from './icons';
 import { UploadHint } from './UploadHint';
+import { TextComposer, type TextRevealConfig } from './TextComposer';
 
 export type LaunchMode = 'mass' | 'sequential';
 
 export interface PlanningScreenDeps {
+  app: Application;
   fireworks: FireworksSystem;
   background: BackgroundLayer;
   /** Lets PlanningMode arm/disarm itself in sync — active only during 'sequential'. */
@@ -56,16 +59,17 @@ const HINT_VISIBLE_MS = 2600;
  * anymore: each control it used to group behind one tap now has its own
  * dedicated icon instead.
  *
- * Two icons remain deliberately inert (see `.mzj-planning-icon-btn-disabled`
- * in the template): "الأنماط" has no distinct destination left now that the
- * patterns-tab content it used to reveal is already individually represented
- * elsewhere on this screen, and "نص" (T) is the still-unbuilt text-entry
- * placeholder.
+ * "الأنماط" stays deliberately inert (see `.mzj-planning-icon-btn-disabled`
+ * in the template) — it has no distinct destination left now that the
+ * patterns-tab content it used to reveal is already individually
+ * represented elsewhere on this screen. "نص" (T) opens the full text-
+ * composing flow — see TextComposer.
  */
 export class PlanningScreen {
   readonly root: HTMLDivElement;
   private readonly deps: PlanningScreenDeps;
   private readonly uploadHint: UploadHint;
+  private readonly textComposer: TextComposer;
   private mode: LaunchMode = 'mass';
   private readonly massSelection = new Set<BurstType>();
   private activeSequentialShape: BurstType | null = null;
@@ -82,6 +86,14 @@ export class PlanningScreen {
     document.body.appendChild(this.root);
     this.uploadHint = new UploadHint(this.root);
 
+    // While composing text (input+effects bar, or the position/scale
+    // control box), this screen's own icon columns step aside so the
+    // composer stays the sole focus — restored once the text is committed.
+    this.textComposer = new TextComposer({
+      app: deps.app,
+      onComposingChange: (composing) => this.root.classList.toggle('mzj-planning-composing', composing),
+    });
+
     for (const type of ['pointerdown', 'click', 'input', 'change'] as const) {
       this.root.addEventListener(type, (event) => event.stopPropagation());
     }
@@ -90,6 +102,7 @@ export class PlanningScreen {
     this.root
       .querySelector('#mzj-planning-mode-sequential')!
       .addEventListener('click', () => this.setMode('sequential'));
+    this.root.querySelector('#mzj-planning-open-text')!.addEventListener('click', () => this.textComposer.open());
 
     this.wireShapeToggles();
     this.wireRandomMode();
@@ -135,6 +148,11 @@ export class PlanningScreen {
   /** True once "توثيق مباشر" was chosen from the camera icon's picker — tells beginShow() to auto record/stop. */
   isLiveDocumentationArmed(): boolean {
     return this.liveDocumentationArmed;
+  }
+
+  /** The greeting to reveal at "ابدأ العرض" — null if the player never touched the T icon at all this session, in which case the caller should fall back to its own default. */
+  consumeTextRevealConfig(): TextRevealConfig | null {
+    return this.textComposer.consumeForReveal();
   }
 
   /** Lets the player switch modes without leaving the planning screen. */
@@ -350,7 +368,7 @@ export class PlanningScreen {
         <button type="button" id="mzj-planning-open-dimmer" class="mzj-planning-icon-btn">${icon('palette', 22)}<span>إضاءة الخلفية</span></button>
         <button type="button" id="mzj-planning-auto-show" class="mzj-planning-icon-btn">${icon('sparkles', 22)}<span>العرض التلقائي</span></button>
         <button type="button" id="mzj-planning-open-lab" class="mzj-planning-icon-btn">${icon('sliders', 22)}<span>المختبر</span></button>
-        <button type="button" class="mzj-planning-icon-btn mzj-planning-icon-btn-disabled" disabled title="غير مبني بعد — دفعة مستقبلية">
+        <button type="button" id="mzj-planning-open-text" class="mzj-planning-icon-btn">
           <span class="mzj-planning-text-icon">T</span><span>نص</span>
         </button>
       </div>

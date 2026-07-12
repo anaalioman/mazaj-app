@@ -43,6 +43,7 @@ const PATHS = {
   mapPin: '<path d="M12 21S5 14.5 5 9a7 7 0 1 1 14 0c0 5.5-7 12-7 12Z"/><circle cx="12" cy="9" r="2.4"/>',
   image:
     '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.6" fill="currentColor" stroke="none"/><path d="M3 16.5 8 11l3.5 3.5 3-3L21 17"/>',
+  arrowBack: '<path d="M11 5 4 12l7 7"/><path d="M4 12h16"/>',
   // Small schematic previews of each firework burst pattern, used on the
   // pattern-picker cards so the eye has a shape to read, not just text.
   peony:
