@@ -18,12 +18,12 @@ export class UploadHint {
   private readonly glowRow: Element | null;
   private hideTimer: number | null = null;
 
-  constructor(dashboardRoot: HTMLElement) {
+  constructor(root: HTMLElement) {
     this.toast = document.createElement('div');
     this.toast.id = 'mzj-upload-hint';
     this.toast.className = 'mzj-upload-hint';
     document.body.appendChild(this.toast);
-    this.glowRow = dashboardRoot.querySelector('#mzj-glow')?.closest('.mcp-slider-row') ?? null;
+    this.glowRow = root.querySelector('#mzj-glow')?.closest('.mcp-slider-row') ?? null;
   }
 
   show(kind: keyof typeof MESSAGES): void {

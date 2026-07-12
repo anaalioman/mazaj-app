@@ -9,7 +9,6 @@ import { AudioManager } from '../audio/AudioManager';
 import { RecordingManager, downloadBlob } from '../recording/RecordingManager';
 import { BackgroundLayer } from '../background';
 import { HeaderBar, type InputMode } from '../ui/HeaderBar';
-import { BottomDashboard } from '../ui/BottomDashboard';
 import { IdleFadeController } from '../ui/IdleFade';
 import { attachTactileFeedback } from '../ui/tactile';
 import { withTimeout } from '../utils/withTimeout';
@@ -105,18 +104,12 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     fireworks.launch(x, y);
   }
 
-  /**
-   * While the dashboard is open it visually covers the top part of the
-   * screen, so pins can only ever be placed in the strip still visible
-   * below it — that's "the small screen" while planning. Falls back to the
-   * full screen once the dashboard is hidden.
-   */
+  // Nothing covers the stage anymore (the old tabbed dashboard is gone), so
+  // the reachable planning area is always the full screen. PlanningMode
+  // itself is currently dormant (see its own doc-comment) pending its
+  // rewrite on top of the planning screen.
   function getVisibleRange(): { top: number; height: number } {
-    if (getComputedStyle(dashboard.root).display === 'none') {
-      return { top: 0, height: app.screen.height };
-    }
-    const dashboardBottom = dashboard.root.getBoundingClientRect().bottom;
-    return { top: dashboardBottom, height: Math.max(app.screen.height - dashboardBottom, 0) };
+    return { top: 0, height: app.screen.height };
   }
 
   const planningMode = new PlanningMode({ app, onLaunchPin: fireAt, getVisibleRange });
@@ -166,6 +159,10 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   function beginShow(): void {
     if (showStarted) return;
     showStarted = true;
+
+    // The planning screen must never still be up once the show begins,
+    // whether or not the player closed it themselves first.
+    planningScreen.hide();
 
     audio.playReveal();
     void withTimeout(textReveal.reveal(DEFAULT_GREETING), 5000, 'TextReveal.reveal').catch((error) => {
@@ -258,28 +255,17 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     onOpenPlanningScreen: (mode) => planningScreen.show(mode),
   });
 
-  // Shown after picking a launch mode; structure/display only for now — no
-  // location-picking logic wired up yet (that's the next batch).
-  const planningScreen = new PlanningScreen();
-
-  // The old tabbed panel is kept around unshown: every icon it used to
-  // surface (patterns, environment, lab, launch modes, auto-show, random
-  // mode, ground fountain) now has a placeholder in the planning screen, so
-  // its own chrome no longer needs to appear — but its sliders/media-upload
-  // wiring has no replacement UI yet, so the instance (and its functions)
-  // stay intact rather than being deleted.
-  const dashboard = new BottomDashboard({
-    fireworks,
-    background,
-    onOpenPlanningScreen: (mode) => planningScreen.show(mode),
-  });
-  dashboard.root.classList.add('mzj-hidden');
+  // Shown after picking a launch mode (or the header's plan button). Every
+  // control that has a real, already-built function behind it is wired
+  // directly here to `fireworks`/`background` — see PlanningScreen's own
+  // doc-comment for exactly which icons are still inert and why.
+  const planningScreen = new PlanningScreen({ fireworks, background, onSnapshot: () => void takeSnapshot() });
 
   // The header is fully visible the instant the mood opens — see the module
-  // doc-comment above for why there's no setup gate anymore. The dashboard
-  // never appears (see comment above).
+  // doc-comment above for why there's no setup gate anymore.
   const idleFade = new IdleFadeController([header.root]);
   attachTactileFeedback(header.root, audio);
+  attachTactileFeedback(planningScreen.root, audio);
 
   handle = {
     show(): void {

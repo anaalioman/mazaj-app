@@ -112,238 +112,7 @@
   }
 }
 
-/* ---------- Top tabbed dashboard ---------- */
-
-#mzj-dashboard {
-  position: fixed;
-  left: 50%;
-  top: 60px;
-  transform: translateX(-50%);
-  z-index: 30;
-  width: min(560px, 94vw);
-  max-height: 48vh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-  color: #f1f5f9;
-
-  /* Flat, same as the buttons inside it: no colored fill, no border, no
-     drop shadow. No backdrop-filter either — Android WebView has a known
-     bug where blurring behind child elements that get their own paint
-     layer (inline SVG icons, in this case) renders solid black instead of
-     actually blurring, which is exactly the "black box around every icon"
-     this caused. */
-  background: rgba(255, 255, 255, 0.03);
-  border: none;
-  border-radius: 16px;
-  box-shadow: none;
-  overflow: hidden;
-}
-
-.mzj-tabs {
-  display: flex;
-  flex-shrink: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.mzj-tab {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  font-family: inherit;
-  font-size: 10px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.55);
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  padding: 7px 4px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color 0.15s ease, border-color 0.15s ease;
-}
-
-.mzj-tab.active {
-  color: #ffe9b3;
-  font-weight: 700;
-  border-bottom-color: #ff9f45;
-}
-
-.mzj-tab-panels {
-  padding: 12px;
-  overflow-y: auto;
-}
-
-.mzj-tab-content {
-  display: none;
-}
-
-.mzj-tab-content.active {
-  display: block;
-  animation: mzj-tab-fade 0.22s ease;
-}
-
-@keyframes mzj-tab-fade {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* ---------- Shared field/slider/button styles (used by the dashboard tabs) ---------- */
-
-/* Pattern cards: a horizontally-scrolling row of flat, near-invisible cards.
-   No border and no filled color block on any card, selected or not —
-   selection is read purely from text/icon brightness and weight, so the
-   row stays calm even with several items active at once. */
-.mcp-burst-grid {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 12px;
-  padding: 2px 2px 10px;
-  overflow-x: auto;
-  scroll-snap-type: x proximity;
-  -webkit-overflow-scrolling: touch;
-}
-
-.mcp-burst-btn {
-  flex: 0 0 auto;
-  scroll-snap-align: start;
-  width: 62px;
-  height: 70px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 6px 4px;
-  border-radius: 12px;
-  border: none;
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(226, 232, 240, 0.45);
-  font-size: 10px;
-  font-family: inherit;
-  line-height: 1.2;
-  text-align: center;
-  cursor: pointer;
-  transition: border-color 0.2s ease, color 0.2s ease;
-}
-
-.mcp-burst-preview {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: inherit;
-}
-
-.mcp-burst-label {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.mcp-burst-btn:hover {
-  color: rgba(226, 232, 240, 0.7);
-}
-
-.mcp-burst-btn.active {
-  color: #ffe9b3;
-  font-weight: 700;
-}
-
-.mcp-burst-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-/* Groups functionally-related controls (a button + its own toggle, two
-   fields that belong together, etc.) into one horizontal row instead of
-   stacking each on its own full-width line — the main lever for cutting
-   the panel's total height. */
-.mcp-btn-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 3px;
-}
-
-.mcp-btn-row > .mcp-primary-btn {
-  width: auto;
-  flex: 1;
-  min-width: 0;
-  margin-bottom: 0;
-}
-
-.mcp-btn-row > .mcp-primary-btn span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ---------- Planning Mode: All-at-once / Sequential switch ---------- */
-
-.mzj-toggle-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  flex-shrink: 0;
-  font-size: 10.5px;
-  color: rgba(255, 255, 255, 0.75);
-  white-space: nowrap;
-}
-
-.mzj-switch {
-  position: relative;
-  display: inline-block;
-  width: 34px;
-  height: 19px;
-  flex-shrink: 0;
-}
-
-.mzj-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.mzj-switch-track {
-  position: absolute;
-  inset: 0;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 999px;
-  cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease;
-}
-
-.mzj-switch-track::before {
-  content: '';
-  position: absolute;
-  width: 13px;
-  height: 13px;
-  left: 2px;
-  top: 2px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.45);
-  transition: transform 0.2s ease, background 0.2s ease;
-}
-
-.mzj-switch input:checked + .mzj-switch-track {
-  border-color: rgba(255, 255, 255, 0.4);
-}
-
-.mzj-switch input:checked + .mzj-switch-track::before {
-  transform: translateX(15px);
-  background: #fff;
-}
+/* ---------- Shared field/slider/button styles (used by the planning screen's environment/lab subpanels) ---------- */
 
 .mcp-slider-row {
   display: flex;
@@ -389,11 +158,6 @@
 .mcp-field-row > .mcp-field {
   flex: 1;
   min-width: 0;
-}
-
-.mcp-inline-select {
-  flex: 0 0 auto;
-  width: auto;
 }
 
 .mcp-field input[type='text'],
@@ -457,36 +221,6 @@
   border: 0;
 }
 
-/* Flat, text-first action buttons: no fill, no border — only icon + label,
-   with weight/brightness (not color blocks) carrying the on/off state. */
-.mcp-primary-btn {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 7px 12px;
-  margin-bottom: 3px;
-  border-radius: 999px;
-  border: none;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.72);
-  font-family: inherit;
-  font-weight: 600;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.mcp-primary-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.mcp-primary-btn.active {
-  color: #fff;
-  font-weight: 800;
-}
-
 /* ---------- Idle sensing fade ---------- */
 
 .mzj-fade-target {
@@ -504,7 +238,7 @@
 
 .mzj-tactile-target,
 #mzj-header button,
-#mzj-dashboard button {
+#mzj-planning-screen button {
   transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
@@ -573,7 +307,7 @@
   display: none !important;
 }
 
-/* ---------- Planning screen (structure/display only for now) ---------- */
+/* ---------- Planning screen ---------- */
 
 #mzj-planning-screen {
   position: fixed;
@@ -644,19 +378,42 @@
   line-height: 1;
 }
 
+/* Icons with no working destination yet (see PlanningScreen.ts doc-comment) —
+   dimmed and inert rather than looking clickable-but-broken. */
+.mzj-planning-icon-btn-disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Environment/lab controls: a flat bottom sheet that slides up over the
+   reserved empty middle area only while open, so it stays free the rest
+   of the time for the future tap-to-place interaction. */
+.mzj-planning-subpanel {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translate(-50%, 100%);
+  width: min(420px, 86vw);
+  max-height: 40vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border-radius: 16px 16px 0 0;
+  background: rgba(255, 255, 255, 0.04);
+  pointer-events: auto;
+  opacity: 0;
+  visibility: hidden;
+  transition: transform 0.22s ease, opacity 0.22s ease;
+}
+
+.mzj-planning-subpanel.open {
+  transform: translate(-50%, 0);
+  opacity: 1;
+  visibility: visible;
+}
+
 @media (max-width: 640px) {
   #mzj-header {
     padding: 8px 10px;
-  }
-
-  #mzj-dashboard {
-    width: 96vw;
-    top: 52px;
-    max-height: 46vh;
-  }
-
-  .mzj-tab {
-    font-size: 9px;
-    padding: 6px 4px;
   }
 }
