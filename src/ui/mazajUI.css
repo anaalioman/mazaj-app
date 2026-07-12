@@ -489,16 +489,16 @@
 
 .mzj-text-composer-effects {
   display: flex;
-  gap: 8px;
+  justify-content: center;
+  gap: 14px;
   margin-top: 10px;
 }
 
 .mzj-text-effect-btn {
-  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   background: transparent;
   border: none;
   padding: 0;
@@ -513,16 +513,21 @@
   font-weight: 700;
 }
 
-/* Purely a layout/position reference for the real PixiJS preview rendered
-   on the canvas at this exact screen slot (see TextComposer's preview
-   cycle) — no content, no animation of its own, and no background strong
-   enough to visibly dim the real particles behind it. */
+.mzj-text-effect-btn.active .mzj-text-effect-preview {
+  border-color: rgba(255, 233, 179, 0.7);
+}
+
+/* A clear, self-contained little frame — a layout/position reference the
+   real PixiJS preview (see TextComposer's preview cycle) renders into,
+   clipped to exactly these bounds via a Pixi mask so nothing ever spills
+   past this box's edges. */
 .mzj-text-effect-preview {
   display: block;
-  width: 100%;
-  height: 36px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  width: 78px;
+  height: 44px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  background: rgba(8, 9, 16, 0.55);
 }
 
 /* Draggable + pinch-resizable control box: a transparent full-screen

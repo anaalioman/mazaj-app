@@ -1,4 +1,4 @@
-import { Application, Text, TextStyle } from 'pixi.js';
+import { Application, Graphics, Text, TextStyle } from 'pixi.js';
 import { icon } from './icons';
 import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
 
@@ -22,7 +22,11 @@ const SAMPLE_PHRASE = 'مبروك';
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 3;
 const PREVIEW_ORDER: TextRevealEffect[] = ['smoke', 'flame', 'none'];
-const PREVIEW_HOLD_MS = 700;
+/** Fixed demo word for every effects-bar preview — unrelated to the player's own text/the input's pre-filled default. */
+const PREVIEW_PHRASE = 'مرحبا';
+const PREVIEW_HOLD_BEFORE_MS = 600;
+const PREVIEW_HOLD_AFTER_MS = 600;
+const PREVIEW_NONE_HOLD_MS = 2000;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -56,6 +60,8 @@ export class TextComposer {
   private readonly previewText: Text;
   private readonly baseFontSize: number;
   private readonly previewReveal: TextReveal;
+  /** Clips the preview reveal's text+particles to the current icon slot's rectangle — nothing may render outside it, however the particles naturally move. */
+  private readonly previewMask: Graphics;
 
   private text = SAMPLE_PHRASE;
   private effect: TextRevealEffect = 'none';
@@ -84,6 +90,11 @@ export class TextComposer {
 
     this.previewReveal = new TextReveal(deps.app);
     deps.app.ticker.add((ticker) => this.previewReveal.update(ticker.deltaTime));
+
+    // Not added to the stage — Graphics used purely as a mask don't need to
+    // be part of the render tree, only assigned via `.mask`.
+    this.previewMask = new Graphics();
+    this.previewReveal.container.mask = this.previewMask;
 
     this.previewText = new Text({ text: this.text, style: this.textStyle() });
     this.previewText.anchor.set(0.5);
@@ -218,27 +229,50 @@ export class TextComposer {
     this.previewReveal.clear();
   }
 
+  /**
+   * Per icon: show "مرحبا" plainly and statically first, hold briefly so
+   * it's clearly read, then (for smoke/flame) run the real dissolve over
+   * it — the exact same TextReveal engine as the final reveal, clipped to
+   * this icon's own slot rectangle so nothing ever escapes it. 'none' just
+   * holds the static word for a comparable beat, since it has no effect to
+   * demonstrate. Advances to the next icon once done, looping forever.
+   */
   private async runPreviewStep(generation: number): Promise<void> {
     if (!this.previewCycleActive || generation !== this.previewGeneration) return;
 
     const effect = PREVIEW_ORDER[this.previewIndex];
     const slot = this.root.querySelector<HTMLElement>(`.mzj-text-effect-preview[data-effect="${effect}"]`)!;
     const rect = slot.getBoundingClientRect();
-    const fontScale = (rect.height * 0.55) / this.baseFontSize;
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const fontScale = (rect.height * 0.4) / this.baseFontSize;
 
-    await this.previewReveal.reveal(SAMPLE_PHRASE, {
-      effect,
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
-      fontScale,
-    });
+    this.previewMask.clear().rect(rect.left, rect.top, rect.width, rect.height).fill(0xffffff);
+
+    // Static, clearly-readable "مرحبا" first — no effect yet.
+    await this.previewReveal.reveal(PREVIEW_PHRASE, { effect: 'none', x, y, fontScale });
     if (!this.previewCycleActive || generation !== this.previewGeneration) return;
 
-    this.previewCycleTimer = window.setTimeout(() => {
+    if (effect === 'none') {
+      await this.previewWait(PREVIEW_NONE_HOLD_MS);
+    } else {
+      await this.previewWait(PREVIEW_HOLD_BEFORE_MS);
       if (!this.previewCycleActive || generation !== this.previewGeneration) return;
-      this.previewIndex = (this.previewIndex + 1) % PREVIEW_ORDER.length;
-      void this.runPreviewStep(generation);
-    }, PREVIEW_HOLD_MS);
+      // Now the real dissolve passes over the already-visible word.
+      await this.previewReveal.reveal(PREVIEW_PHRASE, { effect, x, y, fontScale });
+      if (!this.previewCycleActive || generation !== this.previewGeneration) return;
+      await this.previewWait(PREVIEW_HOLD_AFTER_MS);
+    }
+    if (!this.previewCycleActive || generation !== this.previewGeneration) return;
+
+    this.previewIndex = (this.previewIndex + 1) % PREVIEW_ORDER.length;
+    void this.runPreviewStep(generation);
+  }
+
+  private previewWait(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      this.previewCycleTimer = window.setTimeout(resolve, ms);
+    });
   }
 
   private openControlBox(): void {
