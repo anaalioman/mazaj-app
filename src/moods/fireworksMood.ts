@@ -29,12 +29,12 @@ const ROYAL_BLACK = '#040406';
  * into the header. Called once, lazily, the first time the player picks this
  * mood from the home screen; subsequent visits just call `show()`/`hide()`.
  *
- * The full control panel (patterns, environment, messages, lab) is visible
- * the instant the mood opens — there's no separate setup gate to get past.
- * Image/phrase/pattern selection all happen from within that panel; tap-to-
- * fire is live immediately. "ابدأ العرض" in the header is a deliberate,
- * one-time action that plays the opening phrase reveal and switches into
- * the fully-immersive (UI-hidden) viewing mode.
+ * Tap-to-fire is live the instant the mood opens — there's no setup gate.
+ * The header's pin-icon button opens the full-screen planning layout (see
+ * PlanningScreen) for the mass/sequential planned-launch flow. "ابدأ العرض"
+ * is a deliberate, one-time action: it fires whatever plan is active (see
+ * `launchPlannedShow()`), plays the opening phrase reveal, and switches into
+ * the fully-immersive (UI-hidden) viewing mode, all in one call.
  */
 export async function startFireworksMood(container: HTMLElement, onBackToHome: () => void): Promise<FireworksMoodHandle> {
   const appContainer = container.querySelector<HTMLDivElement>('#app')!;
@@ -105,14 +105,21 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   }
 
   // Nothing covers the stage anymore (the old tabbed dashboard is gone), so
-  // the reachable planning area is always the full screen. PlanningMode
-  // itself is currently dormant (see its own doc-comment) pending its
-  // rewrite on top of the planning screen.
+  // the reachable planning area is always the full screen.
   function getVisibleRange(): { top: number; height: number } {
     return { top: 0, height: app.screen.height };
   }
 
-  const planningMode = new PlanningMode({ app, onLaunchPin: fireAt, getVisibleRange });
+  // Sequential-mode's placement engine: armed only while the planning
+  // screen's mode is 'sequential' (see the onModeChange wiring below), and
+  // owns its own stage pointer listeners directly (long-press-to-cancel
+  // needs pointerdown/move/up, not just a single tap callback).
+  const planningMode = new PlanningMode({
+    app,
+    onLaunchPin: (x, y, type) => fireworks.launch(x, y, type),
+    getVisibleRange,
+    getActiveShape: () => planningScreen.getActiveSequentialShape(),
+  });
 
   app.stage.eventMode = 'static';
   app.stage.hitArea = app.screen;
@@ -123,17 +130,12 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // Free Tap fires exactly where the player touches; Mortar Field snaps the
   // launch x to whichever tube is closest, for a more "grounded" show. Tap-
   // to-fire is live the instant the mood opens — no separate "start" gate.
-  // While Planning Mode is active, taps place/remove numbered pins instead
-  // of firing immediately — see the dedicated "launch plan" button.
+  // While sequential planning is active, PlanningMode's own listeners (see
+  // above) handle every tap instead — this handler steps aside entirely.
   app.stage.on('pointerdown', (event) => {
+    if (planningMode.isActive) return;
     const { x, y } = event.global;
     const launchX = inputMode === 'mortar' ? mortarField.getNearestX(x) : x;
-
-    if (planningMode.isActive) {
-      planningMode.handleTap(launchX, y);
-      return;
-    }
-
     fireAt(launchX, y);
   });
 
@@ -156,9 +158,28 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   const DEFAULT_GREETING = 'مبروك';
   let showStarted = false;
 
+  // Neither mode icon in the planning screen fires anything itself — this is
+  // the one and only trigger, per the confirmed spec: mass launches every
+  // selected shape together, superimposed at one shared point (there's no
+  // location step for 'mass'); sequential fires PlanningMode's placed pins,
+  // each 800ms apart in the order they were placed. Whichever mode wasn't
+  // active when the player pressed the button is simply ignored, even if it
+  // has leftover selections from earlier experimentation.
+  function launchPlannedShow(): void {
+    if (planningScreen.getMode() === 'mass') {
+      const centerX = app.screen.width / 2;
+      const centerY = app.screen.height * 0.35;
+      for (const type of planningScreen.getMassSelection()) fireworks.launch(centerX, centerY, type);
+    } else {
+      planningMode.launch();
+    }
+  }
+
   function beginShow(): void {
     if (showStarted) return;
     showStarted = true;
+
+    launchPlannedShow();
 
     // The planning screen must never still be up once the show begins,
     // whether or not the player closed it themselves first.
@@ -259,7 +280,11 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // control that has a real, already-built function behind it is wired
   // directly here to `fireworks`/`background` — see PlanningScreen's own
   // doc-comment for exactly which icons are still inert and why.
-  const planningScreen = new PlanningScreen({ fireworks, background });
+  const planningScreen = new PlanningScreen({
+    fireworks,
+    background,
+    onModeChange: (mode) => planningMode.setActive(mode === 'sequential'),
+  });
 
   // The header is fully visible the instant the mood opens — see the module
   // doc-comment above for why there's no setup gate anymore.

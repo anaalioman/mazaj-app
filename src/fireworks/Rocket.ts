@@ -1,10 +1,13 @@
 import { Sprite, Texture } from 'pixi.js';
+import type { BurstType } from './FireworksSystem';
 
 export interface RocketOptions {
   x: number;
   startY: number;
   targetY: number;
   color: number;
+  /** Forces a specific pattern on burst, bypassing the random/enabled-types pick — used by planned launches. */
+  forcedType?: BurstType;
 }
 
 /**
@@ -14,6 +17,7 @@ export interface RocketOptions {
 export class Rocket {
   readonly sprite: Sprite;
   readonly color: number;
+  readonly forcedType?: BurstType;
 
   private vy: number;
   private readonly gravity = 0.16;
@@ -21,8 +25,9 @@ export class Rocket {
   private trailAccumulator = 0;
 
   constructor(texture: Texture, options: RocketOptions) {
-    const { x, startY, targetY, color } = options;
+    const { x, startY, targetY, color, forcedType } = options;
     this.color = color;
+    this.forcedType = forcedType;
     this.targetY = targetY;
 
     // Initial speed derived from distance so shells launched at very

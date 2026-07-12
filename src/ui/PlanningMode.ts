@@ -1,4 +1,5 @@
-import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
+import { Application, Container, Graphics, Text, TextStyle, type FederatedPointerEvent } from 'pixi.js';
+import type { BurstType } from '../fireworks/FireworksSystem';
 
 export interface VisibleRange {
   /** Screen y where the reachable (dashboard-free) area begins. */
@@ -9,23 +10,28 @@ export interface VisibleRange {
 
 export interface PlanningModeDeps {
   app: Application;
-  /** Fires whatever a normal tap would have (aerial burst or Ground Fountain) at (x, y). */
-  onLaunchPin: (x: number, y: number) => void;
+  /** Fires whatever a normal tap would have, but forced to a specific pattern, at (x, y). */
+  onLaunchPin: (x: number, y: number, type: BurstType) => void;
   /**
    * Whatever's currently visible outside the dashboard (or the full screen
    * once it's hidden) — the coordinate space pins are placed in while
    * planning.
    */
   getVisibleRange: () => VisibleRange;
+  /** The shape a new pin should be stamped with; a tap places nothing if none is selected yet. */
+  getActiveShape: () => BurstType | null;
 }
 
 const SEQUENTIAL_DELAY_MS = 800;
+const LONG_PRESS_MS = 500;
+const MOVE_CANCEL_PX = 12;
 const PIN_RADIUS = 13;
 const PIN_HIT_RADIUS = PIN_RADIUS * 1.6;
 
 interface Pin {
   x: number;
   y: number;
+  type: BurstType;
   /** Visible range in effect when this pin was placed — see getVisibleRange. */
   reference: VisibleRange;
   container: Container;
@@ -33,35 +39,40 @@ interface Pin {
 }
 
 /**
- * Planning & Sequencing Mode: while active, tapping the stage places a
- * numbered pin instead of firing immediately. Pins are placed and rendered
- * strictly within whatever area is still visible outside the dashboard —
- * they never appear on top of it or peek out from behind it. A dedicated
- * Launch call then fires every pin in tap order — either all in the same
- * instant ("All at Once") or staggered 800ms apart ("Sequential") — by
- * replaying the same onLaunchPin callback a normal tap would have used, so
- * it stays in sync with whatever burst/Ground-Fountain mode is currently
- * configured. Each pin's y is rescaled at that moment from the reachable
- * strip it was placed in up to whatever's the full screen height by then,
- * so a shape planned near the edge of that strip fires near the matching
- * edge of the real screen once the dashboard is out of the way.
+ * Sequential-launch placement: while active, tapping empty space places a
+ * numbered pin stamped with whatever shape is currently selected in the
+ * planning screen; tapping an existing pin does nothing on a quick tap —
+ * only a 500ms press-and-hold removes it (and renumbers the rest). Pins
+ * stay fixed and fully visible throughout planning; "ابدأ العرض" (not a
+ * button in here) is what actually fires them, each 800ms apart in the
+ * order they were placed, then clears the board in the same instant.
  */
 export class PlanningMode {
   private readonly app: Application;
-  private readonly onLaunchPin: (x: number, y: number) => void;
+  private readonly onLaunchPin: (x: number, y: number, type: BurstType) => void;
   private readonly getVisibleRange: () => VisibleRange;
+  private readonly getActiveShape: () => BurstType | null;
   private readonly layer: Container;
   private pins: Pin[] = [];
   private active = false;
-  private sequential = false;
+
+  private pressTimer: number | undefined;
+  private pressTargetIndex: number | null = null;
+  private pressStart: { x: number; y: number } | null = null;
 
   constructor(deps: PlanningModeDeps) {
     this.app = deps.app;
     this.onLaunchPin = deps.onLaunchPin;
     this.getVisibleRange = deps.getVisibleRange;
+    this.getActiveShape = deps.getActiveShape;
     this.layer = new Container();
     this.layer.visible = false;
     this.app.stage.addChild(this.layer);
+
+    this.app.stage.on('pointerdown', this.handlePointerDown);
+    this.app.stage.on('pointermove', this.handlePointerMove);
+    this.app.stage.on('pointerup', this.handlePointerUp);
+    this.app.stage.on('pointerupoutside', this.handlePointerUp);
   }
 
   get isActive(): boolean {
@@ -71,31 +82,53 @@ export class PlanningMode {
   setActive(enabled: boolean): void {
     this.active = enabled;
     this.layer.visible = enabled;
+    if (!enabled) this.cancelPress();
   }
 
-  /** Toggles instantly: existing pins stay put, only their numbers show/hide. */
-  setSequential(enabled: boolean): void {
-    this.sequential = enabled;
-    for (const pin of this.pins) pin.numberText.visible = this.sequential;
-  }
+  private handlePointerDown = (event: FederatedPointerEvent): void => {
+    if (!this.active) return;
+    const { x, y } = event.global;
 
-  /** Places a new pin at (x, y); tapping an existing one removes it and renumbers the rest. */
-  handleTap(x: number, y: number): void {
     const hitIndex = this.pins.findIndex((pin) => Math.hypot(pin.x - x, pin.y - y) <= PIN_HIT_RADIUS);
     if (hitIndex >= 0) {
-      this.removePinAt(hitIndex);
-    } else {
-      this.addPin(x, y);
+      this.pressTargetIndex = hitIndex;
+      this.pressStart = { x, y };
+      this.pressTimer = window.setTimeout(() => {
+        if (this.pressTargetIndex !== null) this.removePinAt(this.pressTargetIndex);
+        this.cancelPress();
+      }, LONG_PRESS_MS);
+      return;
     }
+
+    const type = this.getActiveShape();
+    if (type) this.addPin(x, y, type);
+  };
+
+  private handlePointerMove = (event: FederatedPointerEvent): void => {
+    if (!this.active || !this.pressStart) return;
+    const { x, y } = event.global;
+    if (Math.hypot(x - this.pressStart.x, y - this.pressStart.y) > MOVE_CANCEL_PX) this.cancelPress();
+  };
+
+  private handlePointerUp = (): void => {
+    this.cancelPress();
+  };
+
+  private cancelPress(): void {
+    window.clearTimeout(this.pressTimer);
+    this.pressTimer = undefined;
+    this.pressTargetIndex = null;
+    this.pressStart = null;
   }
 
   /**
-   * Fires every placed pin per the current mode. Every pin (and its number)
-   * stays fixed and fully visible throughout planning — the whole board
-   * clears in one instant the moment Launch is pressed (the scene begins),
-   * then the shots themselves fire per the current mode's timing, each
-   * rescaled from the visible strip it was planned in up to the full
-   * screen height in effect right now.
+   * Fires every placed pin, 800ms apart in placement order, each forced to
+   * the shape it was stamped with. Every pin (and its number) stays fixed
+   * and fully visible throughout planning — the whole board clears in one
+   * instant right as this is called (the moment the scene begins), then the
+   * shots themselves fire on their staggered timing, each rescaled from the
+   * visible strip it was planned in up to the full screen height in effect
+   * right now. A no-op if nothing was placed.
    */
   launch(): void {
     if (this.pins.length === 0) return;
@@ -103,13 +136,9 @@ export class PlanningMode {
     this.clear();
     const fullHeight = this.app.screen.height;
 
-    if (this.sequential) {
-      pins.forEach((pin, i) => {
-        window.setTimeout(() => this.onLaunchPin(pin.x, this.rescaleY(pin, fullHeight)), i * SEQUENTIAL_DELAY_MS);
-      });
-    } else {
-      for (const pin of pins) this.onLaunchPin(pin.x, this.rescaleY(pin, fullHeight));
-    }
+    pins.forEach((pin, i) => {
+      window.setTimeout(() => this.onLaunchPin(pin.x, this.rescaleY(pin, fullHeight), pin.type), i * SEQUENTIAL_DELAY_MS);
+    });
   }
 
   /** Maps a pin's y from the reachable strip it was placed in (proportionally) up to the full screen height in effect now. */
@@ -130,7 +159,7 @@ export class PlanningMode {
     pin.container.destroy({ children: true });
   }
 
-  private addPin(x: number, y: number): void {
+  private addPin(x: number, y: number, type: BurstType): void {
     const container = new Container();
     container.position.set(x, y);
 
@@ -144,11 +173,10 @@ export class PlanningMode {
       style: new TextStyle({ fontFamily: 'Tajawal, system-ui, sans-serif', fontWeight: '800', fontSize: 14, fill: 0x2a1400 }),
     });
     numberText.anchor.set(0.5);
-    numberText.visible = this.sequential;
     container.addChild(numberText);
 
     this.layer.addChild(container);
-    this.pins.push({ x, y, reference: this.getVisibleRange(), container, numberText });
+    this.pins.push({ x, y, type, reference: this.getVisibleRange(), container, numberText });
   }
 
   private removePinAt(index: number): void {

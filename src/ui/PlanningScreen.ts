@@ -1,4 +1,4 @@
-import { ALL_BURST_TYPES, type BurstType, type FireworksSystem } from '../fireworks/FireworksSystem';
+import { type BurstType, type FireworksSystem } from '../fireworks/FireworksSystem';
 import type { BackgroundLayer } from '../background';
 import { icon } from './icons';
 import { UploadHint } from './UploadHint';
@@ -8,6 +8,8 @@ export type LaunchMode = 'mass' | 'sequential';
 export interface PlanningScreenDeps {
   fireworks: FireworksSystem;
   background: BackgroundLayer;
+  /** Lets PlanningMode arm/disarm itself in sync — active only during 'sequential'. */
+  onModeChange: (mode: LaunchMode) => void;
 }
 
 interface SliderSpec {
@@ -32,11 +34,25 @@ const HINT_VISIBLE_MS = 2600;
 
 /**
  * Full-screen planning layout shown after the player picks "إطلاق جماعي" or
- * "إطلاق متتابع". Every icon that has a real, already-built function behind
- * it (shape toggles, random/ground-fountain mode, auto-show, background
- * image/video, dimmer/glow, lab sliders) is wired here directly to
- * FireworksSystem / BackgroundLayer — this is now the only place that
- * functionality lives. There is deliberately no standalone "البيئة" icon
+ * "إطلاق متتابع". Neither mode icon is a "fire" button — they only set what
+ * a subsequent shape-icon tap *means*:
+ *   - 'mass': tapping a shape toggles its membership in a set that will all
+ *     launch together, superimposed at one shared point, with no location
+ *     step at all.
+ *   - 'sequential': tapping a shape makes it "the shape currently being
+ *     placed" — every following tap on the (still mostly empty) middle area
+ *     drops a numbered marker of that shape there; tapping a different
+ *     shape icon switches what gets placed next; a 500ms press-and-hold on
+ *     an existing marker removes it (see PlanningMode).
+ * There is no separate launch/confirm button anywhere in here — the
+ * header's existing "ابدأ العرض" is the single trigger for both firing
+ * whichever plan is active and collapsing into full immersion; see
+ * `beginShow()` in fireworksMood.ts.
+ *
+ * Every other icon that has a real, already-built function behind it
+ * (random/ground-fountain mode, auto-show, background image/video,
+ * dimmer/glow, lab sliders) is wired here directly to FireworksSystem /
+ * BackgroundLayer. There is deliberately no standalone "البيئة" icon
  * anymore: each control it used to group behind one tap now has its own
  * dedicated icon instead.
  *
@@ -44,14 +60,15 @@ const HINT_VISIBLE_MS = 2600;
  * in the template): "الأنماط" has no distinct destination left now that the
  * patterns-tab content it used to reveal is already individually represented
  * elsewhere on this screen, and "نص" (T) is the still-unbuilt text-entry
- * placeholder. The empty middle area is reserved for the future tap-to-place
- * interaction (Group 3) and stays untouched by anything built here.
+ * placeholder.
  */
 export class PlanningScreen {
   readonly root: HTMLDivElement;
   private readonly deps: PlanningScreenDeps;
   private readonly uploadHint: UploadHint;
-  private readonly enabledBurstTypes = new Set<BurstType>(ALL_BURST_TYPES);
+  private mode: LaunchMode = 'mass';
+  private readonly massSelection = new Set<BurstType>();
+  private activeSequentialShape: BurstType | null = null;
   private hintTimer: number | undefined;
 
   constructor(deps: PlanningScreenDeps) {
@@ -100,43 +117,65 @@ export class PlanningScreen {
     }
   }
 
+  /** What "ابدأ العرض" should fire, per the currently active mode — see fireworksMood.ts's beginShow(). */
+  getMode(): LaunchMode {
+    return this.mode;
+  }
+
+  /** The shapes selected for a 'mass' launch (empty if none, or if the active mode is 'sequential'). */
+  getMassSelection(): BurstType[] {
+    return Array.from(this.massSelection);
+  }
+
   /** Lets the player switch modes without leaving the planning screen. */
   private setMode(mode: LaunchMode): void {
+    this.mode = mode;
     this.root.dataset.mode = mode;
     this.root.querySelector('#mzj-planning-mode-mass')!.classList.toggle('active', mode === 'mass');
     this.root.querySelector('#mzj-planning-mode-sequential')!.classList.toggle('active', mode === 'sequential');
+    this.syncShapeVisuals();
+    this.deps.onModeChange(mode);
   }
 
   private query<T extends HTMLElement>(selector: string): T {
     return this.root.querySelector<T>(selector)!;
   }
 
-  /** Each shape icon enables/disables that burst type for random/tap-fired shows — the same toggle BottomDashboard's old per-shape buttons drove. */
+  /**
+   * A shape-icon tap means something different per mode: in 'mass' it
+   * toggles that shape's membership in the launch-together set; in
+   * 'sequential' it selects the one shape new markers get stamped with
+   * (see PlanningMode.getActiveShape). Neither ever fires anything itself.
+   */
   private wireShapeToggles(): void {
     const buttons = Array.from(this.root.querySelectorAll<HTMLButtonElement>('[data-burst-type]'));
-
-    const sync = () => {
-      for (const btn of buttons) {
-        const type = btn.dataset.burstType as BurstType;
-        btn.classList.toggle('active', this.enabledBurstTypes.has(type));
-      }
-      this.deps.fireworks.setEnabledTypes(Array.from(this.enabledBurstTypes));
-    };
 
     for (const btn of buttons) {
       btn.addEventListener('click', () => {
         const type = btn.dataset.burstType as BurstType;
-        if (this.enabledBurstTypes.has(type)) {
-          // Always keep at least one shape selectable.
-          if (this.enabledBurstTypes.size > 1) this.enabledBurstTypes.delete(type);
+        if (this.mode === 'mass') {
+          if (this.massSelection.has(type)) this.massSelection.delete(type);
+          else this.massSelection.add(type);
         } else {
-          this.enabledBurstTypes.add(type);
+          this.activeSequentialShape = type;
         }
-        sync();
+        this.syncShapeVisuals();
       });
     }
+  }
 
-    sync();
+  /** getActiveShape dep PlanningMode calls on every stage tap while sequential mode is active. */
+  getActiveSequentialShape(): BurstType | null {
+    return this.activeSequentialShape;
+  }
+
+  private syncShapeVisuals(): void {
+    const buttons = Array.from(this.root.querySelectorAll<HTMLButtonElement>('[data-burst-type]'));
+    for (const btn of buttons) {
+      const type = btn.dataset.burstType as BurstType;
+      const active = this.mode === 'mass' ? this.massSelection.has(type) : type === this.activeSequentialShape;
+      btn.classList.toggle('active', active);
+    }
   }
 
   private wireRandomMode(): void {

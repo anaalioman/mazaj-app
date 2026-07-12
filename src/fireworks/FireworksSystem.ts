@@ -107,8 +107,8 @@ export class FireworksSystem {
     this.timeToNextAutoLaunch = this.randomLaunchDelay();
   }
 
-  /** Launches a shell toward (x, targetY). Defaults to a random apex height. */
-  launch(x: number, targetY?: number): void {
+  /** Launches a shell toward (x, targetY). Defaults to a random apex height. `forcedType` overrides the random/enabled-types pick on burst — used by planned (mass/sequential) launches. */
+  launch(x: number, targetY?: number, forcedType?: BurstType): void {
     const { width, height } = this.app.screen;
     const apex = targetY ?? height * (0.15 + Math.random() * 0.45);
     const palette = randomPalette();
@@ -120,6 +120,7 @@ export class FireworksSystem {
       startY: height + 10,
       targetY: Math.max(apex, 20),
       color,
+      forcedType,
     });
     this.layer.addChild(rocket.sprite);
     this.rockets.push(rocket);
@@ -138,7 +139,7 @@ export class FireworksSystem {
     this.rockets = this.rockets.filter((rocket) => {
       const reachedApex = rocket.update(delta, (x, y) => this.spawnTrailSpark(x, y, rocket.color));
       if (reachedApex) {
-        this.explode(rocket.x, rocket.y);
+        this.explode(rocket.x, rocket.y, rocket.forcedType);
         this.layer.removeChild(rocket.sprite);
         rocket.destroy();
         return false;
@@ -223,38 +224,44 @@ export class FireworksSystem {
     this.pendingSpawns.push(particle);
   }
 
-  private explode(x: number, y: number): void {
+  private explode(x: number, y: number, forcedType?: BurstType): void {
     const spawnedBefore = this.pendingSpawns.length;
 
-    if (this.randomModeEnabled) {
+    if (forcedType) {
+      this.burstByType(forcedType, x, y);
+    } else if (this.randomModeEnabled) {
       this.burstRandomHybrid(x, y);
     } else {
       const type = this.enabledTypes[Math.floor(Math.random() * this.enabledTypes.length)];
-      switch (type) {
-        case 'rose':
-          this.burstRose(x, y);
-          break;
-        case 'kamuro':
-          this.burstKamuro(x, y);
-          break;
-        case 'crossette':
-          this.burstPalmCrossette(x, y);
-          break;
-        case 'multiRing':
-          this.burstMultiRing(x, y);
-          break;
-        case 'strobe':
-          this.burstStrobe(x, y);
-          break;
-        default:
-          this.burstPeony(x, y);
-          break;
-      }
+      this.burstByType(type, x, y);
     }
 
     const spawnedCount = this.pendingSpawns.length - spawnedBefore;
     const intensity = spawnedCount / BURST_INTENSITY_REFERENCE_COUNT;
     this.onExplode?.(x, y, intensity);
+  }
+
+  private burstByType(type: BurstType, x: number, y: number): void {
+    switch (type) {
+      case 'rose':
+        this.burstRose(x, y);
+        break;
+      case 'kamuro':
+        this.burstKamuro(x, y);
+        break;
+      case 'crossette':
+        this.burstPalmCrossette(x, y);
+        break;
+      case 'multiRing':
+        this.burstMultiRing(x, y);
+        break;
+      case 'strobe':
+        this.burstStrobe(x, y);
+        break;
+      default:
+        this.burstPeony(x, y);
+        break;
+    }
   }
 
   /**
