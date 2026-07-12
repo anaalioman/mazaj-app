@@ -44,6 +44,8 @@ export class BackgroundLayer {
   private current: Container;
   private currentSprite: Sprite | null = null;
   private videoEl: HTMLVideoElement | null = null;
+  /** Only set when the current video is a live getUserMedia feed (توثيق مباشر) — its tracks must be stopped explicitly to actually release the camera. */
+  private videoStream: MediaStream | null = null;
   private dimmer = 1;
 
   private stars: TwinkleStar[] = [];
@@ -107,6 +109,35 @@ export class BackgroundLayer {
     this.currentSprite = sprite;
     // objectUrl is intentionally not revoked here — the <video> element keeps
     // streaming from it for as long as this backdrop is active.
+  }
+
+  /** Turns on the device's rear camera as a live backdrop (توثيق مباشر) — fireworks render on top of it exactly like any other video background. */
+  async setLiveCamera(): Promise<void> {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment' },
+      audio: false,
+    });
+
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    video.muted = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    await video.play().catch(() => undefined);
+
+    this.stopVideo();
+    this.stars = []; // the old preset's stars are about to be destroyed by replace()
+    const oldGradients = this.takeTrackedGradients();
+    this.videoEl = video;
+    this.videoStream = stream;
+
+    const sprite = new Sprite(Texture.from(video));
+    sprite.anchor.set(0.5);
+    coverFit(sprite, this.app.screen.width, this.app.screen.height);
+    sprite.tint = grayscaleTint(this.dimmer);
+
+    this.replace(sprite, oldGradients);
+    this.currentSprite = sprite;
   }
 
   /** 0 = fully black night sky, 1 = full brightness of the current backdrop. */
@@ -232,6 +263,10 @@ export class BackgroundLayer {
   }
 
   private stopVideo(): void {
+    if (this.videoStream) {
+      for (const track of this.videoStream.getTracks()) track.stop();
+      this.videoStream = null;
+    }
     if (this.videoEl) {
       this.videoEl.pause();
       this.videoEl.removeAttribute('src');

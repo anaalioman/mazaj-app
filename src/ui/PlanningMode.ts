@@ -22,7 +22,7 @@ export interface PlanningModeDeps {
   getActiveShape: () => BurstType | null;
 }
 
-const SEQUENTIAL_DELAY_MS = 800;
+export const SEQUENTIAL_DELAY_MS = 800;
 const LONG_PRESS_MS = 500;
 const MOVE_CANCEL_PX = 12;
 const PIN_RADIUS = 13;
@@ -73,6 +73,11 @@ export class PlanningMode {
     this.app.stage.on('pointermove', this.handlePointerMove);
     this.app.stage.on('pointerup', this.handlePointerUp);
     this.app.stage.on('pointerupoutside', this.handlePointerUp);
+  }
+
+  /** Read before calling launch() (which clears them) — lets callers estimate how long the sequence will take to finish playing. */
+  getPinCount(): number {
+    return this.pins.length;
   }
 
   get isActive(): boolean {

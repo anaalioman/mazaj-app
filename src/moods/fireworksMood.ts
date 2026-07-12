@@ -12,7 +12,7 @@ import { HeaderBar, type InputMode } from '../ui/HeaderBar';
 import { IdleFadeController } from '../ui/IdleFade';
 import { attachTactileFeedback } from '../ui/tactile';
 import { withTimeout } from '../utils/withTimeout';
-import { PlanningMode } from '../ui/PlanningMode';
+import { PlanningMode, SEQUENTIAL_DELAY_MS } from '../ui/PlanningMode';
 import { PlanningScreen } from '../ui/PlanningScreen';
 
 export interface FireworksMoodHandle {
@@ -156,28 +156,46 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   const DEFAULT_GREETING = 'مبروك';
   let showStarted = false;
 
+  // A single rocket's full visible life (ascent + explosion + particle
+  // decay) once it's launched — used to estimate when a planned show is
+  // actually done playing, for توثيق مباشر's auto-stop (see beginShow()).
+  const BURST_TAIL_MS = 3000;
+
   // Neither mode icon in the planning screen fires anything itself — this is
   // the one and only trigger, per the confirmed spec: mass launches every
   // selected shape together, superimposed at one shared point (there's no
   // location step for 'mass'); sequential fires PlanningMode's placed pins,
   // each 800ms apart in the order they were placed. Whichever mode wasn't
   // active when the player pressed the button is simply ignored, even if it
-  // has leftover selections from earlier experimentation.
-  function launchPlannedShow(): void {
+  // has leftover selections from earlier experimentation. Returns an
+  // estimate (ms) of how long the fired plan takes to finish playing.
+  function launchPlannedShow(): number {
     if (planningScreen.getMode() === 'mass') {
       const centerX = app.screen.width / 2;
       const centerY = app.screen.height * 0.35;
       for (const type of planningScreen.getMassSelection()) fireworks.launch(centerX, centerY, type);
-    } else {
-      planningMode.launch();
+      return BURST_TAIL_MS;
     }
+
+    const pinCount = planningMode.getPinCount();
+    planningMode.launch();
+    return pinCount === 0 ? 0 : (pinCount - 1) * SEQUENTIAL_DELAY_MS + BURST_TAIL_MS;
   }
 
   function beginShow(): void {
     if (showStarted) return;
     showStarted = true;
 
-    launchPlannedShow();
+    const plannedDurationMs = launchPlannedShow();
+
+    // توثيق مباشر (live camera) arms auto-recording around exactly the
+    // planned show's runtime, regardless of which mode fired it — nothing
+    // else about recording changes if it wasn't chosen (the header's manual
+    // record button keeps working exactly as before).
+    if (planningScreen.isLiveDocumentationArmed()) {
+      void startRecording();
+      window.setTimeout(() => void stopRecording(), Math.max(plannedDurationMs, BURST_TAIL_MS));
+    }
 
     // The planning screen must never still be up once the show begins,
     // whether or not the player closed it themselves first.
@@ -233,25 +251,31 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     }
   }
 
-  async function toggleRecording(): Promise<void> {
-    if (recording.isRecording) {
-      try {
-        const blob = await recording.stop();
-        downloadBlob(blob, `mazaj-fireworks-${Date.now()}.webm`);
-      } catch (error) {
-        console.error('تعذّر إنهاء التسجيل:', error);
-      } finally {
-        header.setRecordingState(false);
-      }
-      return;
-    }
-
+  async function startRecording(): Promise<void> {
+    if (recording.isRecording) return;
     try {
       recording.start();
       header.setRecordingState(true);
     } catch (error) {
       console.error('تعذّر بدء التسجيل:', error);
     }
+  }
+
+  async function stopRecording(): Promise<void> {
+    if (!recording.isRecording) return;
+    try {
+      const blob = await recording.stop();
+      downloadBlob(blob, `mazaj-fireworks-${Date.now()}.webm`);
+    } catch (error) {
+      console.error('تعذّر إنهاء التسجيل:', error);
+    } finally {
+      header.setRecordingState(false);
+    }
+  }
+
+  async function toggleRecording(): Promise<void> {
+    if (recording.isRecording) await stopRecording();
+    else await startRecording();
   }
 
   // Assigned below; referenced here only inside a callback that can't run

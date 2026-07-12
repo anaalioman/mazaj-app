@@ -69,6 +69,7 @@ export class PlanningScreen {
   private mode: LaunchMode = 'mass';
   private readonly massSelection = new Set<BurstType>();
   private activeSequentialShape: BurstType | null = null;
+  private liveDocumentationArmed = false;
   private hintTimer: number | undefined;
 
   constructor(deps: PlanningScreenDeps) {
@@ -112,8 +113,12 @@ export class PlanningScreen {
   hide(): void {
     this.root.classList.add('mzj-hidden');
     window.clearTimeout(this.hintTimer);
-    for (const el of this.root.querySelectorAll('.mzj-planning-subpanel.open, [id^="mzj-planning-open-"].active')) {
-      el.classList.remove('open', 'active');
+    for (const el of this.root.querySelectorAll('.mzj-planning-subpanel.open')) el.classList.remove('open');
+    // The camera trigger's `.active` means "a video background is set", not
+    // "its panel is open" — it must survive closing/reopening the screen,
+    // so it's excluded from this generic reset (see wireSubpanels).
+    for (const el of this.root.querySelectorAll('[id^="mzj-planning-open-"].active:not(#mzj-planning-open-camera)')) {
+      el.classList.remove('active');
     }
   }
 
@@ -125,6 +130,11 @@ export class PlanningScreen {
   /** The shapes selected for a 'mass' launch (empty if none, or if the active mode is 'sequential'). */
   getMassSelection(): BurstType[] {
     return Array.from(this.massSelection);
+  }
+
+  /** True once "توثيق مباشر" was chosen from the camera icon's picker — tells beginShow() to auto record/stop. */
+  isLiveDocumentationArmed(): boolean {
+    return this.liveDocumentationArmed;
   }
 
   /** Lets the player switch modes without leaving the planning screen. */
@@ -208,9 +218,16 @@ export class PlanningScreen {
     });
   }
 
-  /** All subpanels/pickers share the same on-screen spot, so opening one must close the rest. */
+  /**
+   * All subpanels/pickers share the same on-screen spot, so opening one must
+   * close the rest. The camera trigger's own `.active` class is deliberately
+   * left alone here — for it, "active" means "a video background is
+   * currently set" (see wireMedia), not "this panel happens to be open".
+   */
   private wireSubpanels(): void {
+    const cameraTrigger = this.query<HTMLButtonElement>('#mzj-planning-open-camera');
     const entries = [
+      { trigger: cameraTrigger, panel: this.query<HTMLDivElement>('#mzj-planning-camera-panel') },
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-dimmer'), panel: this.query<HTMLDivElement>('#mzj-planning-dimmer-panel') },
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-glow'), panel: this.query<HTMLDivElement>('#mzj-planning-glow-panel') },
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-lab'), panel: this.query<HTMLDivElement>('#mzj-planning-lab-panel') },
@@ -221,17 +238,21 @@ export class PlanningScreen {
         const willOpen = !entry.panel.classList.contains('open');
         for (const other of entries) {
           other.panel.classList.toggle('open', other === entry && willOpen);
-          other.trigger.classList.toggle('active', other === entry && willOpen);
+          if (other.trigger !== cameraTrigger) other.trigger.classList.toggle('active', other === entry && willOpen);
         }
       });
     }
   }
 
+  private closeCameraPanel(): void {
+    this.query<HTMLDivElement>('#mzj-planning-camera-panel').classList.remove('open');
+  }
+
   /**
-   * Image and live-video backgrounds each get their own icon that opens the
-   * native file picker directly (no intermediate row/label) — توثيق is now
-   * the live-video trigger, not a snapshot (the header has its own
-   * independent snapshot button already).
+   * The camera icon is the single entry point for both background-video
+   * paths: tapping it opens a small picker with "رفع فيديو" (existing file
+   * upload) and "توثيق مباشر" (new — live device camera as the backdrop,
+   * armed here so beginShow() auto-starts/stops recording around it).
    */
   private wireMedia(): void {
     const imageButton = this.query<HTMLButtonElement>('#mzj-planning-bg-image');
@@ -246,16 +267,34 @@ export class PlanningScreen {
       });
     });
 
-    const videoButton = this.query<HTMLButtonElement>('#mzj-planning-camera');
+    const cameraButton = this.query<HTMLButtonElement>('#mzj-planning-open-camera');
     const videoInput = this.query<HTMLInputElement>('#mzj-bg-video');
-    videoButton.addEventListener('click', () => videoInput.click());
+
+    this.query<HTMLButtonElement>('#mzj-planning-camera-upload').addEventListener('click', () => {
+      this.closeCameraPanel();
+      videoInput.click();
+    });
     videoInput.addEventListener('change', () => {
       const file = videoInput.files?.[0];
       if (!file) return;
       void this.deps.background.setVideo(file).then(() => {
+        this.liveDocumentationArmed = false;
         this.uploadHint.show('video');
-        videoButton.classList.add('active');
+        cameraButton.classList.add('active');
       });
+    });
+
+    this.query<HTMLButtonElement>('#mzj-planning-camera-live').addEventListener('click', () => {
+      this.closeCameraPanel();
+      void this.deps.background
+        .setLiveCamera()
+        .then(() => {
+          this.liveDocumentationArmed = true;
+          cameraButton.classList.add('active');
+        })
+        .catch((error) => {
+          console.error('تعذّر تشغيل الكاميرا الحية (تحقّق من إذن الوصول للكاميرا):', error);
+        });
     });
   }
 
@@ -297,7 +336,7 @@ export class PlanningScreen {
         ${this.shapeIconButton('peony', 'بيوني بقلب')}
         ${this.shapeIconButton('rose', 'وردة')}
         ${this.shapeIconButton('kamuro', 'كامورو ذهبي')}
-        <button type="button" id="mzj-planning-camera" class="mzj-planning-icon-btn">${icon('camera', 22)}<span>فيديو خلفية حي</span></button>
+        <button type="button" id="mzj-planning-open-camera" class="mzj-planning-icon-btn">${icon('camera', 22)}<span>فيديو خلفية حي</span></button>
         <button type="button" id="mzj-planning-bg-image" class="mzj-planning-icon-btn">${icon('image', 22)}<span>صورة خلفية</span></button>
         <button type="button" class="mzj-planning-icon-btn mzj-planning-icon-btn-disabled" disabled title="لا وظيفة مستقلة بعد">${icon('shapes', 22)}<span>الأنماط</span></button>
         <button type="button" id="mzj-planning-open-glow" class="mzj-planning-icon-btn">${icon('gem', 22)}<span>توهج الألعاب النارية</span></button>
@@ -318,6 +357,11 @@ export class PlanningScreen {
 
       <input type="file" id="mzj-bg-image" accept="image/*" class="mzj-file-input-sr" />
       <input type="file" id="mzj-bg-video" accept="video/*" class="mzj-file-input-sr" />
+
+      <div class="mzj-planning-subpanel mzj-planning-camera-panel" id="mzj-planning-camera-panel">
+        <button type="button" id="mzj-planning-camera-upload" class="mzj-planning-choice-btn">رفع فيديو</button>
+        <button type="button" id="mzj-planning-camera-live" class="mzj-planning-choice-btn">توثيق مباشر</button>
+      </div>
 
       <div class="mzj-planning-subpanel" id="mzj-planning-dimmer-panel">
         ${this.sliderRow(SLIDERS.dimmer)}

@@ -412,6 +412,26 @@
   visibility: visible;
 }
 
+.mzj-planning-camera-panel {
+  display: flex;
+  gap: 8px;
+}
+
+/* Flat, borderless choice buttons — same design language as everywhere
+   else, just two side-by-side options instead of an icon+label stack. */
+.mzj-planning-choice-btn {
+  flex: 1;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.85);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 @media (max-width: 640px) {
   #mzj-header {
     padding: 8px 10px;
