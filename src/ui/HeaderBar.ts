@@ -11,7 +11,6 @@ export interface HeaderBarDeps {
   onModeChange: (mode: InputMode) => void;
   onStartShow: () => void;
   onSnapshot: () => void;
-  onToggleRecording: () => void;
   onBackToHome: () => void;
   onOpenPlanningScreen: (mode: LaunchMode) => void;
 }
@@ -50,15 +49,7 @@ export class HeaderBar {
     this.wireModeToggle();
     this.wireMute();
     this.wireSnapshot();
-    this.wireRecording();
     this.wireFps();
-  }
-
-  /** Called by main.ts once a recording actually starts/stops, to sync the icon. */
-  setRecordingState(isRecording: boolean): void {
-    const button = this.query<HTMLButtonElement>('#mzj-record');
-    button.classList.toggle('mzj-recording', isRecording);
-    button.innerHTML = icon(isRecording ? 'squareStop' : 'recordDot', 18);
   }
 
   private template(): string {
@@ -77,7 +68,6 @@ export class HeaderBar {
         <span id="mzj-fps" class="mzj-fps">60</span>
         <button type="button" id="mzj-mute" aria-label="كتم الصوت">${icon('volume2', 18)}</button>
         <button type="button" id="mzj-snapshot" aria-label="لقطة عالية الدقة">${icon('camera', 18)}</button>
-        <button type="button" id="mzj-record" aria-label="تسجيل فيديو">${icon('recordDot', 18)}</button>
       </div>
     `;
   }
@@ -126,17 +116,6 @@ export class HeaderBar {
   private wireSnapshot(): void {
     const button = this.query<HTMLButtonElement>('#mzj-snapshot');
     button.addEventListener('click', () => this.deps.onSnapshot());
-  }
-
-  private wireRecording(): void {
-    const button = this.query<HTMLButtonElement>('#mzj-record');
-    const canRecord = typeof MediaRecorder !== 'undefined' && typeof this.deps.app.canvas.captureStream === 'function';
-    if (!canRecord) {
-      button.disabled = true;
-      button.title = 'تسجيل الفيديو غير مدعوم في هذا المتصفح';
-      return;
-    }
-    button.addEventListener('click', () => this.deps.onToggleRecording());
   }
 
   private wireFps(): void {

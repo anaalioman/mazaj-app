@@ -15,6 +15,8 @@ export interface PlanningScreenDeps {
   background: BackgroundLayer;
   /** Lets PlanningMode arm/disarm itself in sync — active only during 'sequential'. */
   onModeChange: (mode: LaunchMode) => void;
+  /** "تسجيل فيديو": starts/stops recording the show's output (distinct from "فيديو خلفية حي" right above it, which picks the *input* background media, not the output). */
+  onToggleRecording: () => void;
 }
 
 interface SliderSpec {
@@ -136,9 +138,17 @@ export class PlanningScreen {
     this.wireAutoShow();
     this.wireSubpanels();
     this.wireMedia();
+    this.wireRecording();
     this.wireSliders();
     this.wireColorPicker();
     this.wireShapesTrigger();
+  }
+
+  /** Called by fireworksMood.ts once a recording actually starts/stops, to sync the icon. */
+  setRecordingState(isRecording: boolean): void {
+    const button = this.query<HTMLButtonElement>('#mzj-planning-record');
+    button.classList.toggle('mzj-recording', isRecording);
+    button.innerHTML = `${icon(isRecording ? 'squareStop' : 'recordDot', 22)}<span>${isRecording ? 'إيقاف التسجيل' : 'تسجيل فيديو'}</span>`;
   }
 
   show(mode: LaunchMode): void {
@@ -375,6 +385,23 @@ export class PlanningScreen {
     });
   }
 
+  /**
+   * "تسجيل فيديو": starts/stops recording the show's actual output (a
+   * distinct concern from "فيديو خلفية حي" right above it, which only picks
+   * the *input* background media) — stays usable at any time, including
+   * mid-show and during plain free-tap play with no plan ever set up.
+   */
+  private wireRecording(): void {
+    const button = this.query<HTMLButtonElement>('#mzj-planning-record');
+    const canRecord = typeof MediaRecorder !== 'undefined' && typeof this.deps.app.canvas.captureStream === 'function';
+    if (!canRecord) {
+      button.disabled = true;
+      button.title = 'تسجيل الفيديو غير مدعوم في هذا المتصفح';
+      return;
+    }
+    button.addEventListener('click', () => this.deps.onToggleRecording());
+  }
+
   private wireSliders(): void {
     this.bindSlider(SLIDERS.density.id, (v) => this.deps.fireworks.updateSettings({ particleDensity: v }));
     this.bindSlider(SLIDERS.gravity.id, (v) => this.deps.fireworks.updateSettings({ gravityScale: v }));
@@ -419,6 +446,7 @@ export class PlanningScreen {
         <button type="button" id="mzj-planning-mode-sequential" class="mzj-planning-icon-btn">${icon('mapPin', 22)}<span>إطلاق متتابع</span></button>
         <button type="button" id="mzj-planning-open-shapes" class="mzj-planning-icon-btn">${icon('shapes', 22)}<span>الأشكال</span></button>
         <button type="button" id="mzj-planning-open-camera" class="mzj-planning-icon-btn">${icon('camera', 22)}<span>فيديو خلفية حي</span></button>
+        <button type="button" id="mzj-planning-record" class="mzj-planning-icon-btn">${icon('recordDot', 22)}<span>تسجيل فيديو</span></button>
         <button type="button" id="mzj-planning-bg-image" class="mzj-planning-icon-btn">${icon('image', 22)}<span>صورة خلفية</span></button>
         <button type="button" id="mzj-planning-open-glow" class="mzj-planning-icon-btn">${icon('gem', 22)}<span>توهج الألعاب النارية</span></button>
         <button type="button" id="mzj-planning-open-color" class="mzj-planning-icon-btn">${icon('droplet', 22)}<span>لون المقذوفة</span></button>

@@ -276,7 +276,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     if (recording.isRecording) return;
     try {
       recording.start();
-      header.setRecordingState(true);
+      planningScreen.setRecordingState(true);
     } catch (error) {
       console.error('تعذّر بدء التسجيل:', error);
     }
@@ -290,7 +290,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     } catch (error) {
       console.error('تعذّر إنهاء التسجيل:', error);
     } finally {
-      header.setRecordingState(false);
+      planningScreen.setRecordingState(false);
     }
   }
 
@@ -311,7 +311,6 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     },
     onStartShow: () => beginShow(),
     onSnapshot: () => void takeSnapshot(),
-    onToggleRecording: () => void toggleRecording(),
     onBackToHome: () => {
       handle.hide();
       onBackToHome();
@@ -328,6 +327,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     fireworks,
     background,
     onModeChange: (mode) => planningMode.setActive(mode === 'sequential'),
+    onToggleRecording: () => void toggleRecording(),
   });
 
   // The header is fully visible the instant the mood opens — see the module

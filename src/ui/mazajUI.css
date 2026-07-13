@@ -96,8 +96,7 @@
   cursor: not-allowed;
 }
 
-#mzj-record.mzj-recording {
-  border-color: #ff2d3d;
+#mzj-planning-record.mzj-recording {
   color: #ff5a63;
   animation: mzj-rec-pulse 1s ease-in-out infinite;
 }
