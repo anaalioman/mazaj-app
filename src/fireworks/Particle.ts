@@ -1,11 +1,13 @@
-import { Sprite, Texture } from 'pixi.js';
+import { Container, Sprite, Texture } from 'pixi.js';
 
-// Thermal Color Decay: every particle ignites white-hot, cools into its
-// assigned shell color, then dies as dim ember ash. Boundaries are fractions
-// of the particle's own lifespan, so short sparks and long willow trails both
-// run the full curve at their own pace.
-const FLASH_STAGE_END = 0.15;
-const STABLE_STAGE_END = 0.75;
+// Thermal Color Decay: the trail cools from a brief white flash into its
+// assigned shell color almost immediately, then ages into dim ember ash near
+// the end of its life. Boundaries are fractions of the particle's own
+// lifespan, so short sparks and long willow trails both run the full curve
+// at their own pace. The trail alone no longer has to sell the "white-hot"
+// look — a separate `core` sprite (see below) does that continuously.
+const TRAIL_FLASH_STAGE_END = 0.05;
+const TRAIL_STABLE_STAGE_END = 0.75;
 const IGNITION_COLOR = 0xffffff;
 const COOLING_ASH_COLOR = 0xcc5500; // alternate embers-gone-cold tone: 0x882200
 
@@ -16,8 +18,18 @@ const COOLING_ASH_COLOR = 0xcc5500; // alternate embers-gone-cold tone: 0x882200
 const TRAIL_STRETCH_FACTOR = 2.2;
 const TRAIL_MAX_STRETCH_RATIO = 3; // tail length caps at 3x the particle's own thickness
 
+// Realistic two-tone spark: a small, always-near-white "core" rides at the
+// particle's leading point the whole time (like a real flame's hottest
+// point), while the stretched `trail` sprite behind it carries the shell's
+// actual color — so a single spark reads as white-hot core + colored tail
+// instead of one flat-colored dot. `CORE_COLOR_MIX` lets a sliver of the
+// shell color bleed into the core so different-colored shells don't all
+// share one identical grey-white point.
+const CORE_COLOR_MIX = 0.22;
+const CORE_SIZE_RATIO = 0.4;
+
 /** Per-channel lerp via bit-shifting — no allocations, no texture/sprite work. */
-function lerpColor(from: number, to: number, t: number): number {
+export function lerpColor(from: number, to: number, t: number): number {
   const ratio = t < 0 ? 0 : t > 1 ? 1 : t;
   const r = ((from >> 16) & 0xff) + (((to >> 16) & 0xff) - ((from >> 16) & 0xff)) * ratio;
   const g = ((from >> 8) & 0xff) + (((to >> 8) & 0xff) - ((from >> 8) & 0xff)) * ratio;
@@ -50,7 +62,12 @@ export interface ParticleOptions {
 // falling glitter trail. Moves under gravity + drag and fades out over its
 // lifetime; can optionally emit sparkle children or split mid-flight.
 export class Particle {
-  readonly sprite: Sprite;
+  /** A small Container wrapping the colored `trail` + white-hot `core` sprites — add/remove this as a single unit. */
+  readonly sprite: Container;
+
+  private readonly trail: Sprite;
+  private readonly core: Sprite;
+  private readonly coreTint: number;
 
   private vx: number;
   private vy: number;
@@ -107,14 +124,26 @@ export class Particle {
     this.onSplit = onSplit;
     this.strobe = strobe;
     this.strobeTimer = 3 + Math.random() * 10;
+    this.coreTint = lerpColor(IGNITION_COLOR, color, CORE_COLOR_MIX);
 
-    this.sprite = new Sprite(texture);
-    this.sprite.anchor.set(0.5);
-    this.sprite.blendMode = 'add';
-    this.sprite.tint = IGNITION_COLOR; // stage 1 starts white-hot; update() takes over next tick
-    this.sprite.width = size;
-    this.sprite.height = size;
+    this.sprite = new Container();
     this.sprite.position.set(x, y);
+
+    this.trail = new Sprite(texture);
+    this.trail.anchor.set(0.5);
+    this.trail.blendMode = 'add';
+    this.trail.tint = IGNITION_COLOR; // stage 1 starts white-hot; update() takes over next tick
+    this.trail.width = size;
+    this.trail.height = size;
+    this.sprite.addChild(this.trail);
+
+    this.core = new Sprite(texture);
+    this.core.anchor.set(0.5);
+    this.core.blendMode = 'add';
+    this.core.tint = this.coreTint;
+    this.core.width = size * CORE_SIZE_RATIO;
+    this.core.height = size * CORE_SIZE_RATIO;
+    this.sprite.addChild(this.core);
   }
 
   /** Advances the particle. Returns false once it has expired or split. */
@@ -143,6 +172,7 @@ export class Particle {
       }
       alpha *= this.strobeOn ? 1 : 0.04;
     }
+    // Set once on the container: cascades to both the trail and core children.
     this.sprite.alpha = Math.max(0, alpha);
 
     const scale = 0.4 + 0.6 * fade;
@@ -151,24 +181,38 @@ export class Particle {
     const stretch = Math.min(speed * TRAIL_STRETCH_FACTOR, thickness * TRAIL_MAX_STRETCH_RATIO);
     const totalLength = thickness + stretch;
 
-    this.sprite.height = thickness;
-    this.sprite.width = totalLength;
+    this.trail.height = thickness;
+    this.trail.width = totalLength;
     // Anchor slides from centered (stationary particle, looks like a plain
     // dot) toward the tail end (fast particle, position sits at the head)
     // as stretch grows, so there's never a visible jump between the two.
-    this.sprite.anchor.set(0.5 + 0.5 * (stretch / totalLength), 0.5);
-    this.sprite.rotation = Math.atan2(this.vy, this.vx);
+    this.trail.anchor.set(0.5 + 0.5 * (stretch / totalLength), 0.5);
+    this.trail.rotation = Math.atan2(this.vy, this.vx);
 
-    // Thermal Color Decay: white ignition -> shell color -> cooling ash,
+    // The core always sits at the container's local origin — i.e. exactly at
+    // the leading point the trail's sliding anchor tracks — so it reads as
+    // the trail's hot tip, not a separate floating dot.
+    this.core.width = thickness * CORE_SIZE_RATIO;
+    this.core.height = thickness * CORE_SIZE_RATIO;
+
+    // Thermal Color Decay: brief white flash -> shell color -> cooling ash,
     // purely as a per-frame tint reassignment (no redraw, no new textures).
-    if (lifeRatio < FLASH_STAGE_END) {
-      this.sprite.tint = IGNITION_COLOR;
-    } else if (lifeRatio < STABLE_STAGE_END) {
-      const t = (lifeRatio - FLASH_STAGE_END) / (STABLE_STAGE_END - FLASH_STAGE_END);
-      this.sprite.tint = lerpColor(IGNITION_COLOR, this.baseColor, t);
+    if (lifeRatio < TRAIL_FLASH_STAGE_END) {
+      this.trail.tint = IGNITION_COLOR;
+    } else if (lifeRatio < TRAIL_STABLE_STAGE_END) {
+      const t = (lifeRatio - TRAIL_FLASH_STAGE_END) / (TRAIL_STABLE_STAGE_END - TRAIL_FLASH_STAGE_END);
+      this.trail.tint = lerpColor(IGNITION_COLOR, this.baseColor, t);
     } else {
-      const t = (lifeRatio - STABLE_STAGE_END) / (1 - STABLE_STAGE_END);
-      this.sprite.tint = lerpColor(this.baseColor, COOLING_ASH_COLOR, t);
+      const t = (lifeRatio - TRAIL_STABLE_STAGE_END) / (1 - TRAIL_STABLE_STAGE_END);
+      this.trail.tint = lerpColor(this.baseColor, COOLING_ASH_COLOR, t);
+    }
+
+    // The core stays near-white/hot for most of the particle's life, then
+    // cools down to match the trail's ember tone right at the very end so it
+    // doesn't read as a stray white dot on an otherwise dead spark.
+    if (lifeRatio > TRAIL_STABLE_STAGE_END) {
+      const t = (lifeRatio - TRAIL_STABLE_STAGE_END) / (1 - TRAIL_STABLE_STAGE_END);
+      this.core.tint = lerpColor(this.coreTint, COOLING_ASH_COLOR, t);
     }
 
     if (this.sparkleInterval && this.onSparkle) {
@@ -189,6 +233,6 @@ export class Particle {
   }
 
   destroy(): void {
-    this.sprite.destroy();
+    this.sprite.destroy({ children: true });
   }
 }

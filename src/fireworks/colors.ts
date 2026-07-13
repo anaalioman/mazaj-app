@@ -8,6 +8,7 @@ export const PALETTES: number[][] = [
   [0xffd23f, 0xffffff, 0xff5e5e], // gold
   [0xb388ff, 0x8c9eff, 0xffffff], // violet
   [0xff9f45, 0xffffff, 0xffe066], // amber
+  [0x1e6bff, 0x3a86ff, 0x0f3d91], // cobalt blue
 ];
 
 export function randomPalette(): number[] {

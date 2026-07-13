@@ -1,5 +1,12 @@
 import { Sprite, Texture } from 'pixi.js';
 import type { BurstType } from './FireworksSystem';
+import { lerpColor } from './Particle';
+
+// The ascending shell reads as a white-hot flare with just a hint of its
+// eventual burst color, matching a real rocket's burning propellant —
+// the full shell color shows up properly once it explodes (and in the
+// colored trail sparks left behind it, see spawnTrailSpark).
+const FLARE_COLOR_MIX = 0.3;
 
 export interface RocketOptions {
   x: number;
@@ -42,7 +49,7 @@ export class Rocket {
     this.sprite = new Sprite(texture);
     this.sprite.anchor.set(0.5);
     this.sprite.blendMode = 'add';
-    this.sprite.tint = color;
+    this.sprite.tint = lerpColor(0xffffff, color, FLARE_COLOR_MIX);
     this.sprite.width = 10;
     this.sprite.height = 10;
     this.sprite.position.set(x, startY);
