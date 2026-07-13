@@ -484,7 +484,7 @@ export class TextComposer {
    * tilted to match via a plain CSS `rotate()` around its own center
    * (the default transform-origin for an absolutely-positioned element),
    * which also carries every child handle — including the rotate handle —
-   * around with it, exactly like Canva/Instagram's own box.
+   * around with it, matching how Konva.js's own Transformer box works.
    */
   private syncControlBoxTransform(): void {
     const box = this.controlBoxRoot.querySelector<HTMLDivElement>('#mzj-text-control-box')!;
