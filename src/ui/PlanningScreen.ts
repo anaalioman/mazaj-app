@@ -9,6 +9,9 @@ import { ShapesPanel } from './ShapesPanel';
 
 export type LaunchMode = 'mass' | 'sequential';
 
+/** Where a launch actually originates from: exactly where tapped ("حر"), or snapped to the nearest mortar tube ("مدفع") — see the "مدفع" entry in ShapesPanel. */
+export type InputMode = 'tap' | 'mortar';
+
 export interface PlanningScreenDeps {
   app: Application;
   fireworks: FireworksSystem;
@@ -19,6 +22,8 @@ export interface PlanningScreenDeps {
   onToggleRecording: () => void;
   /** "لقطة": captures a single high-resolution still of the current frame. */
   onSnapshot: () => void;
+  /** "مدفع" (inside ShapesPanel now, moved from the header): fires with the new mode every time the player toggles it. */
+  onInputModeChange: (mode: InputMode) => void;
 }
 
 interface SliderSpec {
@@ -86,6 +91,7 @@ export class PlanningScreen {
   private readonly massSelection = new Set<BurstType>();
   private activeSequentialShape: BurstType | null = null;
   private groundFountainEnabled = false;
+  private mortarModeEnabled = false;
   private liveDocumentationArmed = false;
   private hintTimer: number | undefined;
 
@@ -116,6 +122,7 @@ export class PlanningScreen {
       (open) => this.query<HTMLButtonElement>('#mzj-planning-open-shapes').classList.toggle('active', open),
       (type) => this.handlePickShape(type),
       () => this.handleToggleGroundFountain(),
+      () => this.handleToggleMortarMode(),
     );
 
     // While composing text (input+effects bar, or the position/scale
@@ -234,13 +241,21 @@ export class PlanningScreen {
     this.shapesPanel.setActive(this.computeActiveShapeIds());
   }
 
-  /** Ground fountain is an independent on/off toggle (not tied to mode), so it's always unioned in on top of whichever shape(s) the current mode has active. */
+  /** "مدفع": also snaps sequential pin placement to the nearest mortar tube (see PlanningMode's resolveX dep in fireworksMood.ts), not just ordinary free-tap firing. */
+  private handleToggleMortarMode(): void {
+    this.mortarModeEnabled = !this.mortarModeEnabled;
+    this.deps.onInputModeChange(this.mortarModeEnabled ? 'mortar' : 'tap');
+    this.shapesPanel.setActive(this.computeActiveShapeIds());
+  }
+
+  /** Ground fountain and مدفع are independent on/off toggles (not tied to mode), so they're always unioned in on top of whichever shape(s) the current mode has active. */
   private computeActiveShapeIds(): Set<string> {
     const ids: Set<string> =
       this.mode === 'mass'
         ? new Set(this.massSelection)
         : new Set(this.activeSequentialShape ? [this.activeSequentialShape] : []);
     if (this.groundFountainEnabled) ids.add('groundFountain');
+    if (this.mortarModeEnabled) ids.add('mortar');
     return ids;
   }
 

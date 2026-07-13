@@ -1,34 +1,20 @@
 import type { Application } from 'pixi.js';
 import type { AudioManager } from '../audio/AudioManager';
-import { icon, type IconName } from './icons';
+import { icon } from './icons';
 import type { LaunchMode } from './PlanningScreen';
-
-export type InputMode = 'tap' | 'mortar';
 
 export interface HeaderBarDeps {
   app: Application;
   audio: AudioManager;
-  onModeChange: (mode: InputMode) => void;
   onStartShow: () => void;
   onBackToHome: () => void;
   onOpenPlanningScreen: (mode: LaunchMode) => void;
 }
 
-const MODE_LABELS: Record<InputMode, string> = {
-  tap: 'حر',
-  mortar: 'مدفع',
-};
-
-const MODE_ICONS: Record<InputMode, IconName> = {
-  tap: 'target',
-  mortar: 'rocket',
-};
-
-/** Transparent horizontal bar: home (right), input-mode switch (center), media dock (left). */
+/** Transparent horizontal bar: home + start-show + plan (right), FPS + mute (left). */
 export class HeaderBar {
   readonly root: HTMLDivElement;
   private readonly deps: HeaderBarDeps;
-  private mode: InputMode = 'tap';
 
   constructor(deps: HeaderBarDeps) {
     this.deps = deps;
@@ -45,7 +31,6 @@ export class HeaderBar {
     this.wireHome();
     this.wireStartShow();
     this.wireOpenPlanning();
-    this.wireModeToggle();
     this.wireMute();
     this.wireFps();
   }
@@ -56,11 +41,6 @@ export class HeaderBar {
         <button type="button" id="mzj-home" aria-label="العودة للقائمة الرئيسية">${icon('home', 18)}</button>
         <button type="button" id="mzj-start-show" class="mzj-mode-toggle">${icon('play', 15)}<span>ابدأ العرض</span></button>
         <button type="button" id="mzj-open-planning" aria-label="خطة الإطلاق">${icon('mapPin', 18)}</button>
-      </div>
-      <div class="mzj-header-group mzj-header-center">
-        <button type="button" id="mzj-mode-toggle" class="mzj-mode-toggle">
-          ${icon(MODE_ICONS.tap, 16)}<span>${MODE_LABELS.tap}</span>
-        </button>
       </div>
       <div class="mzj-header-group mzj-header-left">
         <span id="mzj-fps" class="mzj-fps">60</span>
@@ -90,16 +70,6 @@ export class HeaderBar {
   private wireOpenPlanning(): void {
     const button = this.query<HTMLButtonElement>('#mzj-open-planning');
     button.addEventListener('click', () => this.deps.onOpenPlanningScreen('mass'));
-  }
-
-  private wireModeToggle(): void {
-    const button = this.query<HTMLButtonElement>('#mzj-mode-toggle');
-    button.addEventListener('click', () => {
-      this.mode = this.mode === 'tap' ? 'mortar' : 'tap';
-      button.innerHTML = `${icon(MODE_ICONS[this.mode], 16)}<span>${MODE_LABELS[this.mode]}</span>`;
-      button.classList.toggle('mzj-mode-mortar', this.mode === 'mortar');
-      this.deps.onModeChange(this.mode);
-    });
   }
 
   private wireMute(): void {

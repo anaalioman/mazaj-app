@@ -14,6 +14,7 @@ interface ShapeEntry {
   label: string;
   burstType?: BurstType;
   isGroundFountain?: boolean;
+  isMortarToggle?: boolean;
 }
 
 const SHAPES: ShapeEntry[] = [
@@ -24,6 +25,11 @@ const SHAPES: ShapeEntry[] = [
   { id: 'crossette', icon: 'crossette', label: 'كروسيت نخلة', burstType: 'crossette' },
   { id: 'multiRing', icon: 'multiRing', label: 'حلقات متعددة', burstType: 'multiRing' },
   { id: 'strobe', icon: 'strobe', label: 'وميض متلألئ', burstType: 'strobe' },
+  // Targeting mode, not a shape — but the player's own reasoning for putting
+  // it here holds: this whole panel is already "where does a shape launch
+  // from" (see sequential pin placement), and مدفع/حر decides that same
+  // thing for every entry above it, so it belongs in the same plan.
+  { id: 'mortar', icon: 'rocket', label: 'مدفع', isMortarToggle: true },
 ];
 
 interface Row {
@@ -35,15 +41,19 @@ interface Row {
  * "الأشكال": a fully canvas-drawn (no HTML/CSS) panel — see SideDockPanel
  * for the shared dock/slide/bloom/title mechanics — listing the original 7
  * shape/pattern icons (rasterized from the exact same SVG artwork `icon()`
- * uses elsewhere, see svgIconTexture.ts) in one vertical column beside the
- * right icon column, matching ColorPickerPanel's style exactly. Tapping a
- * shape fires the same callback wireShapeToggles() used to call directly;
- * tapping "نافورة أرضية" fires the ground-fountain-mode toggle. Either way
- * the panel auto-closes immediately — a confirmed pick, not a hover.
+ * uses elsewhere, see svgIconTexture.ts), plus "مدفع" (the tap-targeting
+ * mode toggle, moved in from the header — it decides where every shape
+ * above it actually launches from, so it lives in the same plan), all in
+ * one vertical column beside the right icon column, matching
+ * ColorPickerPanel's style exactly. Tapping a shape fires the same callback
+ * wireShapeToggles() used to call directly; tapping "نافورة أرضية" or
+ * "مدفع" fires their own mode toggles. Either way the panel auto-closes
+ * immediately — a confirmed pick, not a hover.
  */
 export class ShapesPanel extends SideDockPanel {
   private readonly onPickShape: (type: BurstType) => void;
   private readonly onToggleGroundFountain: () => void;
+  private readonly onToggleMortar: () => void;
   private readonly rows: Row[] = [];
   private activeIds = new Set<string>();
 
@@ -53,10 +63,12 @@ export class ShapesPanel extends SideDockPanel {
     onOpenChange: ((open: boolean) => void) | undefined,
     onPickShape: (type: BurstType) => void,
     onToggleGroundFountain: () => void,
+    onToggleMortar: () => void,
   ) {
     super(app, 'حدد الشكل', PANEL_WIDTH, getLeftBoundary, onOpenChange);
     this.onPickShape = onPickShape;
     this.onToggleGroundFountain = onToggleGroundFountain;
+    this.onToggleMortar = onToggleMortar;
 
     let y = this.contentTop + ROW_HEIGHT / 2;
     for (const entry of SHAPES) {
@@ -120,6 +132,7 @@ export class ShapesPanel extends SideDockPanel {
 
   private pick(entry: ShapeEntry): void {
     if (entry.isGroundFountain) this.onToggleGroundFountain();
+    else if (entry.isMortarToggle) this.onToggleMortar();
     else if (entry.burstType) this.onPickShape(entry.burstType);
     // A confirmed pick — collapse back to a clean planning view immediately.
     this.setOpen(false);

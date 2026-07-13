@@ -8,12 +8,12 @@ import { ScreenShakeManager } from '../effects/ScreenShake';
 import { AudioManager } from '../audio/AudioManager';
 import { RecordingManager, downloadBlob } from '../recording/RecordingManager';
 import { BackgroundLayer } from '../background';
-import { HeaderBar, type InputMode } from '../ui/HeaderBar';
+import { HeaderBar } from '../ui/HeaderBar';
 import { IdleFadeController } from '../ui/IdleFade';
 import { attachTactileFeedback } from '../ui/tactile';
 import { withTimeout } from '../utils/withTimeout';
 import { PlanningMode } from '../ui/PlanningMode';
-import { PlanningScreen } from '../ui/PlanningScreen';
+import { PlanningScreen, type InputMode } from '../ui/PlanningScreen';
 
 export interface FireworksMoodHandle {
   show(): void;
@@ -120,6 +120,9 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     onLaunchPin: (x, y, type, onComplete) => fireworks.launch(x, y, type, onComplete),
     getVisibleRange,
     getActiveShape: () => planningScreen.getActiveSequentialShape(),
+    // Same مدفع/حر targeting mode as ordinary free-tap firing below — a
+    // sequential pin lands wherever a normal shot would from the same tap.
+    resolveX: (x) => (inputMode === 'mortar' ? mortarField.getNearestX(x) : x),
   });
 
   app.stage.eventMode = 'static';
@@ -306,9 +309,6 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   const header = new HeaderBar({
     app,
     audio,
-    onModeChange: (mode) => {
-      inputMode = mode;
-    },
     onStartShow: () => beginShow(),
     onBackToHome: () => {
       handle.hide();
@@ -328,6 +328,10 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     onModeChange: (mode) => planningMode.setActive(mode === 'sequential'),
     onToggleRecording: () => void toggleRecording(),
     onSnapshot: () => void takeSnapshot(),
+    // "مدفع" moved from the header into ShapesPanel — see its own doc-comment.
+    onInputModeChange: (mode) => {
+      inputMode = mode;
+    },
   });
 
   // The header is fully visible the instant the mood opens — see the module

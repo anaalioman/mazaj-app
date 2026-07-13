@@ -69,11 +69,6 @@
   cursor: not-allowed;
 }
 
-.mzj-mode-toggle.mzj-mode-mortar {
-  border-color: rgba(255, 159, 69, 0.6);
-  color: #ffe9b3;
-}
-
 #mzj-header .mzj-header-left button,
 #mzj-home {
   flex-shrink: 0;

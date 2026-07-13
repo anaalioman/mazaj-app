@@ -26,6 +26,8 @@ export interface PlanningModeDeps {
   getVisibleRange: () => VisibleRange;
   /** The shape a new pin should be stamped with; a tap places nothing if none is selected yet. */
   getActiveShape: () => BurstType | null;
+  /** Maps a tapped x to where a new pin should actually land — identity in "حر" input mode, snapped to the nearest mortar tube in "مدفع", so pin placement follows the same targeting mode as ordinary free-tap firing. */
+  resolveX: (x: number) => number;
 }
 
 const SEQUENTIAL_DELAY_MS = 800;
@@ -58,6 +60,7 @@ export class PlanningMode {
   private readonly onLaunchPin: (x: number, y: number, type: BurstType, onComplete?: () => void) => void;
   private readonly getVisibleRange: () => VisibleRange;
   private readonly getActiveShape: () => BurstType | null;
+  private readonly resolveX: (x: number) => number;
   private readonly layer: Container;
   private pins: Pin[] = [];
   private active = false;
@@ -71,6 +74,7 @@ export class PlanningMode {
     this.onLaunchPin = deps.onLaunchPin;
     this.getVisibleRange = deps.getVisibleRange;
     this.getActiveShape = deps.getActiveShape;
+    this.resolveX = deps.resolveX;
     this.layer = new Container();
     this.layer.visible = false;
     this.app.stage.addChild(this.layer);
@@ -107,7 +111,7 @@ export class PlanningMode {
     }
 
     const type = this.getActiveShape();
-    if (type) this.addPin(x, y, type);
+    if (type) this.addPin(this.resolveX(x), y, type);
   };
 
   private handlePointerMove = (event: FederatedPointerEvent): void => {
