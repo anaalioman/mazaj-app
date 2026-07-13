@@ -12,6 +12,8 @@ export interface RevealOptions {
   y?: number;
   /** Multiplies the auto-computed base font size — matches whatever scale the player picked in the text composer's control box. Default 1. */
   fontScale?: number;
+  /** Radians — matches whatever tilt the player set via the control box's rotate handle. Default 0 (upright). */
+  rotation?: number;
 }
 
 /**
@@ -60,6 +62,7 @@ export class TextReveal {
     const text = new Text({ text: trimmed, style });
     text.anchor.set(0.5);
     text.position.set(x, y);
+    text.rotation = options.rotation ?? 0;
     this.container.addChild(text);
     this.textSprite = text;
 

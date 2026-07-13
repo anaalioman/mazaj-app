@@ -539,29 +539,45 @@
   cursor: grab;
 }
 
-/* Corner resize handles — same visual language as Canva/Instagram Stories:
-   solid filled circles sitting on the border, each with a generous invisible
-   touch target (the visible dot is smaller than the 44px-ish hit area a
-   finger actually needs). */
-.mzj-text-control-handle {
+/* Corner resize handles + the rotate handle above the box — same visual
+   language as Canva/Instagram Stories: a small "glossy knob" (radial
+   gradient + inner highlight + soft elevation shadow, not a flat dot)
+   sitting on a generous invisible touch target (the visible circle is
+   smaller than the ~44px hit area a finger actually needs), with a brief
+   scale-up while actively held for tactile feedback. */
+.mzj-text-control-handle,
+.mzj-text-rotate-handle {
   position: absolute;
-  width: 28px;
-  height: 28px;
-  margin: -14px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
   touch-action: none;
 }
 
-.mzj-text-control-handle::after {
+.mzj-text-control-handle::after,
+.mzj-text-rotate-handle::after {
   content: '';
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  background: rgba(255, 233, 179, 0.95);
-  border: 2px solid rgba(42, 20, 0, 0.9);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  background: radial-gradient(circle at 35% 30%, #fff6df 0%, #ffe9b3 40%, #e2a94a 75%, #c98f34 100%);
+  border: 1.5px solid rgba(42, 20, 0, 0.55);
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.65),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(0, 0, 0, 0.12);
+  transition: transform 0.12s ease;
+}
+
+.mzj-text-control-handle.mzj-handle-active::after,
+.mzj-text-rotate-handle.mzj-handle-active::after {
+  transform: scale(1.15);
+}
+
+.mzj-text-control-handle {
+  margin: -16px;
 }
 
 .mzj-text-control-handle[data-handle='nw'] {
@@ -586,6 +602,28 @@
   bottom: 0;
   right: 0;
   cursor: nwse-resize;
+}
+
+/* Rotate handle: sits above the box, joined to it by a thin line — both are
+   children of the box itself, so the box's own `rotate()` transform (see
+   TextComposer.syncControlBoxTransform) carries them both around the
+   center automatically as the player turns the text. */
+.mzj-text-rotate-line {
+  position: absolute;
+  left: 50%;
+  top: -34px;
+  width: 2px;
+  height: 34px;
+  background: rgba(255, 233, 179, 0.6);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.mzj-text-rotate-handle {
+  left: 50%;
+  top: -34px;
+  transform: translate(-50%, -50%);
+  cursor: grab;
 }
 
 @media (max-width: 640px) {

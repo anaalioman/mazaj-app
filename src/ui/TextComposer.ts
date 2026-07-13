@@ -11,6 +11,8 @@ export interface TextRevealConfig {
   x: number;
   y: number;
   fontScale: number;
+  /** Radians, same convention as Pixi's own `rotation` (0 = upright, clockwise-positive). */
+  rotation: number;
 }
 
 export interface TextComposerDeps {
@@ -70,6 +72,8 @@ export class TextComposer {
   private posX: number;
   private posY: number;
   private scale = 1;
+  /** Radians — see TextRevealConfig's doc comment for the convention. */
+  private rotation = 0;
   private hasCommittedOnce = false;
 
   private readonly activePointers = new Map<number, { x: number; y: number }>();
@@ -81,6 +85,10 @@ export class TextComposer {
   private activeHandlePointerId: number | null = null;
   private handleStartDist = 0;
   private handleStartScale = 1;
+
+  /** Single-finger rotation via the dedicated handle above the box — stores the angle offset at drag-start so the handle tracks the finger exactly regardless of the box's current tilt. */
+  private activeRotatePointerId: number | null = null;
+  private rotateStartAngleOffset = 0;
 
   private previewCycleActive = false;
   private previewGeneration = 0;
@@ -130,6 +138,8 @@ export class TextComposer {
         <div class="mzj-text-control-handle" data-handle="ne"></div>
         <div class="mzj-text-control-handle" data-handle="sw"></div>
         <div class="mzj-text-control-handle" data-handle="se"></div>
+        <div class="mzj-text-rotate-line"></div>
+        <div class="mzj-text-rotate-handle"></div>
       </div>
     `;
     document.body.appendChild(this.controlBoxRoot);
@@ -173,7 +183,7 @@ export class TextComposer {
     this.closeControlBox();
     this.previewText.visible = false;
     if (!this.hasCommittedOnce) return null;
-    return { text: this.text, effect: this.effect, x: this.posX, y: this.posY, fontScale: this.scale };
+    return { text: this.text, effect: this.effect, x: this.posX, y: this.posY, fontScale: this.scale, rotation: this.rotation };
   }
 
   private textStyle(): TextStyle {
@@ -301,6 +311,7 @@ export class TextComposer {
     this.dragStart = null;
     this.pinchStartDist = null;
     this.activeHandlePointerId = null;
+    this.activeRotatePointerId = null;
   }
 
   /** Tapping the backdrop outside the box commits it: chrome disappears, bare text stays at its last position/scale. */
@@ -361,6 +372,7 @@ export class TextComposer {
     box.addEventListener('pointercancel', endPointer);
 
     this.wireResizeHandles(box);
+    this.wireRotateHandle(box);
 
     // Tapping the backdrop (anywhere in controlBoxRoot outside the box itself) commits.
     this.controlBoxRoot.addEventListener('pointerdown', (event) => {
@@ -388,6 +400,7 @@ export class TextComposer {
         this.activeHandlePointerId = event.pointerId;
         this.handleStartDist = Math.max(1, Math.hypot(event.clientX - this.posX, event.clientY - this.posY));
         this.handleStartScale = this.scale;
+        handle.classList.add('mzj-handle-active');
       });
 
       handle.addEventListener('pointermove', (event) => {
@@ -403,25 +416,86 @@ export class TextComposer {
         if (event.pointerId !== this.activeHandlePointerId) return;
         event.stopPropagation();
         this.activeHandlePointerId = null;
+        handle.classList.remove('mzj-handle-active');
       };
       handle.addEventListener('pointerup', endHandle);
       handle.addEventListener('pointercancel', endHandle);
     }
   }
 
+  /**
+   * The rotate handle sits above the box and is a child of it, so Pixi's
+   * own `box.style.transform: rotate()` already carries it around the
+   * center as the player turns the text — the handle never needs its own
+   * position math for that part. What this wires is purely "finger angle
+   * around the center -> new rotation": on grab it records the offset
+   * between the pointer's current angle (relative to `posX/posY`, in
+   * screen space, independent of the box's own CSS tilt) and the current
+   * rotation, then every move just re-applies that same offset to
+   * wherever the finger now is — so the handle tracks the finger exactly,
+   * a full 360° free turn, same technique the pinch/corner handles use for
+   * distance instead of angle.
+   */
+  private wireRotateHandle(box: HTMLDivElement): void {
+    const handle = box.querySelector<HTMLDivElement>('.mzj-text-rotate-handle')!;
+
+    handle.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
+      try {
+        handle.setPointerCapture(event.pointerId);
+      } catch {
+        // ignore — see the box drag's own comment on this
+      }
+      this.activeRotatePointerId = event.pointerId;
+      const angle = Math.atan2(event.clientY - this.posY, event.clientX - this.posX);
+      this.rotateStartAngleOffset = this.rotation - angle;
+      handle.classList.add('mzj-handle-active');
+    });
+
+    handle.addEventListener('pointermove', (event) => {
+      if (event.pointerId !== this.activeRotatePointerId) return;
+      event.stopPropagation();
+      const angle = Math.atan2(event.clientY - this.posY, event.clientX - this.posX);
+      this.rotation = angle + this.rotateStartAngleOffset;
+      this.syncPreviewTransform();
+      this.syncControlBoxTransform();
+    });
+
+    const endRotate = (event: PointerEvent) => {
+      if (event.pointerId !== this.activeRotatePointerId) return;
+      event.stopPropagation();
+      this.activeRotatePointerId = null;
+      handle.classList.remove('mzj-handle-active');
+    };
+    handle.addEventListener('pointerup', endRotate);
+    handle.addEventListener('pointercancel', endRotate);
+  }
+
   private syncPreviewTransform(): void {
     this.previewText.position.set(this.posX, this.posY);
+    this.previewText.rotation = this.rotation;
     this.previewText.style = this.textStyle();
   }
 
+  /**
+   * Sized from the text's own *local* (unrotated) width/height — not
+   * `getBounds()`, which returns the rotated screen-space AABB and would
+   * make the box balloon out as soon as the text tilts. The box is then
+   * tilted to match via a plain CSS `rotate()` around its own center
+   * (the default transform-origin for an absolutely-positioned element),
+   * which also carries every child handle — including the rotate handle —
+   * around with it, exactly like Canva/Instagram's own box.
+   */
   private syncControlBoxTransform(): void {
     const box = this.controlBoxRoot.querySelector<HTMLDivElement>('#mzj-text-control-box')!;
-    const bounds = this.previewText.getBounds();
     const padding = 14;
-    box.style.left = `${bounds.x - padding}px`;
-    box.style.top = `${bounds.y - padding}px`;
-    box.style.width = `${bounds.width + padding * 2}px`;
-    box.style.height = `${bounds.height + padding * 2}px`;
+    const width = this.previewText.width + padding * 2;
+    const height = this.previewText.height + padding * 2;
+    box.style.left = `${this.posX - width / 2}px`;
+    box.style.top = `${this.posY - height / 2}px`;
+    box.style.width = `${width}px`;
+    box.style.height = `${height}px`;
+    box.style.transform = `rotate(${this.rotation}rad)`;
   }
 
   private template(): string {
