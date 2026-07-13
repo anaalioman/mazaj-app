@@ -137,6 +137,10 @@ export class PlanningScreen {
       this.root.addEventListener(type, (event) => event.stopPropagation());
     }
 
+    this.root.querySelector('#mzj-planning-mode-mass')!.addEventListener('click', () => this.setMode('mass'));
+    this.root
+      .querySelector('#mzj-planning-mode-sequential')!
+      .addEventListener('click', () => this.setMode('sequential'));
     this.root.querySelector('#mzj-planning-open-text')!.addEventListener('click', () => this.textComposer.open());
 
     this.wireRandomMode();
@@ -201,10 +205,12 @@ export class PlanningScreen {
     return this.textComposer.consumeForReveal();
   }
 
-  /** Sets which plan is active — driven entirely by which header gate ("إطلاق جماعي"/"إطلاق متتابع") opened the screen; there's no in-screen mode switch anymore, each gate is its own system. */
+  /** Lets the player switch modes without leaving the planning screen. */
   private setMode(mode: LaunchMode): void {
     this.mode = mode;
     this.root.dataset.mode = mode;
+    this.root.querySelector('#mzj-planning-mode-mass')!.classList.toggle('active', mode === 'mass');
+    this.root.querySelector('#mzj-planning-mode-sequential')!.classList.toggle('active', mode === 'sequential');
     this.shapesPanel.setActive(this.computeActiveShapeIds());
     this.deps.onModeChange(mode);
   }
@@ -459,6 +465,8 @@ export class PlanningScreen {
           <span class="mzj-planning-text-icon">T</span><span>نص</span>
         </button>
         <button type="button" id="mzj-planning-random-mode" class="mzj-planning-icon-btn">${icon('shuffle', 22)}<span>توليد عشوائي هجين</span></button>
+        <button type="button" id="mzj-planning-mode-mass" class="mzj-planning-icon-btn">${icon('fireworksMood', 22)}<span>إطلاق جماعي</span></button>
+        <button type="button" id="mzj-planning-mode-sequential" class="mzj-planning-icon-btn">${icon('mapPin', 22)}<span>إطلاق متتابع</span></button>
         <button type="button" id="mzj-planning-open-shapes" class="mzj-planning-icon-btn">${icon('shapes', 22)}<span>الأشكال</span></button>
         <button type="button" id="mzj-planning-open-camera" class="mzj-planning-icon-btn">${icon('camera', 22)}<span>فيديو خلفية حي</span></button>
         <button type="button" id="mzj-planning-record" class="mzj-planning-icon-btn">${icon('recordDot', 22)}<span>تسجيل فيديو</span></button>
