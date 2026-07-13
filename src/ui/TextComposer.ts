@@ -1,6 +1,7 @@
 import { Application, Graphics, Text, TextStyle } from 'pixi.js';
 import { icon } from './icons';
 import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
+import { TEXT_EFFECTS } from '../effects/textEffects/registry';
 
 export type { TextRevealEffect };
 
@@ -21,7 +22,8 @@ export interface TextComposerDeps {
 const SAMPLE_PHRASE = 'مبروك';
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 3;
-const PREVIEW_ORDER: TextRevealEffect[] = ['smoke', 'flame', 'none'];
+/** Effects bar order/labels come straight from the registry — add an effect there and it shows up here automatically, no other change needed. */
+const PREVIEW_ORDER: TextRevealEffect[] = TEXT_EFFECTS.map((entry) => entry.id);
 /** Fixed demo word for every effects-bar preview — unrelated to the player's own text/the input's pre-filled default. */
 const PREVIEW_PHRASE = 'مرحبا';
 const PREVIEW_HOLD_BEFORE_MS = 600;
@@ -373,9 +375,7 @@ export class TextComposer {
         <input type="text" id="mzj-text-composer-input" class="mzj-text-composer-input" placeholder="اكتب عبارتك هنا" />
       </div>
       <div class="mzj-text-composer-effects">
-        ${this.effectButton('smoke', 'دخان يكشف')}
-        ${this.effectButton('flame', 'لهب يكشف')}
-        ${this.effectButton('none', 'بدون تأثير')}
+        ${TEXT_EFFECTS.map((entry) => this.effectButton(entry.id, entry.label)).join('')}
       </div>
     `;
   }

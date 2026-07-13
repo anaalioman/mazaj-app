@@ -448,7 +448,9 @@
   top: 68px;
   transform: translateX(-50%);
   z-index: 40;
-  width: min(420px, 92vw);
+  width: min(460px, 94vw);
+  max-height: calc(100vh - 84px);
+  overflow-y: auto;
   box-sizing: border-box;
   pointer-events: auto;
 }
@@ -489,8 +491,9 @@
 
 .mzj-text-composer-effects {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
-  gap: 14px;
+  gap: 12px 14px;
   margin-top: 10px;
 }
 
