@@ -1,10 +1,10 @@
 import { Application, Container } from 'pixi.js';
 import { AdvancedBloomFilter } from 'pixi-filters';
-import { Particle } from './Particle';
+import { Particle, lerpColor } from './Particle';
 import { Rocket } from './Rocket';
 import { GroundFountain } from './GroundFountain';
 import { getParticleTexture } from './textures';
-import { pickBurstColors, randomColor, randomPalette } from './colors';
+import { pickBurstColors, randomColor, randomPalette, shadesOf } from './colors';
 
 const MIN_LAUNCH_INTERVAL = 0.9;
 const MAX_LAUNCH_INTERVAL = 2.4;
@@ -91,6 +91,12 @@ export class FireworksSystem {
   private settings: BurstSettings = { ...DEFAULT_BURST_SETTINGS };
   private enabledTypes: BurstType[] = [...ALL_BURST_TYPES];
   private randomModeEnabled = false;
+  // The player's "dye this shell" color-picker choice (see PlanningScreen's
+  // color panel) — null means "متعدد الألوان": fall back to the normal
+  // random palettes below. Every burst/launch color pick consults this
+  // first instead of taking a signature change, so the existing planning/
+  // launch call sites (PlanningMode, launchPlannedShow) never had to change.
+  private activeColor: number | null = null;
 
   private fountains: GroundFountain[] = [];
   private groundFountainModeEnabled = false;
@@ -132,8 +138,7 @@ export class FireworksSystem {
   launch(x: number, targetY?: number, forcedType?: BurstType, onComplete?: () => void): void {
     const { width, height } = this.app.screen;
     const apex = targetY ?? height * (0.15 + Math.random() * 0.45);
-    const palette = randomPalette();
-    const color = randomColor(palette);
+    const color = this.activeColor ?? randomColor(randomPalette());
     const clampedX = Math.min(Math.max(x, 20), width - 20);
 
     const rocket = new Rocket(getParticleTexture(this.app), {
@@ -223,6 +228,11 @@ export class FireworksSystem {
   /** 🎲 Smart Randomizer: every burst hybridizes 1-2 random patterns with perturbed density/lifespan/scale. */
   setRandomMode(enabled: boolean): void {
     this.randomModeEnabled = enabled;
+  }
+
+  /** The player's color-picker choice (see PlanningScreen's color panel): every rocket + burst from now on is dyed this hue. `null` restores the normal random palettes ("متعدد الألوان"). */
+  setActiveColor(hex: number | null): void {
+    this.activeColor = hex;
   }
 
   /** Live-tunable physics/visuals; every subsequent burst reads the merged values. */
@@ -368,8 +378,8 @@ export class FireworksSystem {
   private burstPeony(x: number, y: number, batch?: BurstCompletion): void {
     const texture = getParticleTexture(this.app);
     const outerPalette = randomPalette();
-    const primaryColor = randomColor(outerPalette);
-    const pistilColor = randomColor(contrastingPalette(outerPalette));
+    const primaryColor = this.activeColor ?? randomColor(outerPalette);
+    const pistilColor = this.activeColor !== null ? lerpColor(this.activeColor, 0xffffff, 0.5) : randomColor(contrastingPalette(outerPalette));
 
     // Base counts tuned so a default-density burst lands around 250-400
     // total sparks between the outer sphere and pistil core combined.
@@ -429,7 +439,7 @@ export class FireworksSystem {
    * exactly how the classic rose curve handles it).
    */
   private burstRose(x: number, y: number, batch?: BurstCompletion): void {
-    const burstColors = pickBurstColors(3 + Math.floor(Math.random() * 3));
+    const burstColors = this.activeColor !== null ? shadesOf(this.activeColor, 4) : pickBurstColors(3 + Math.floor(Math.random() * 3));
     const texture = getParticleTexture(this.app);
     const k = 2 + Math.floor(Math.random() * 5);
     const count = Math.max(20, Math.round(140 * this.densityRatio()));
@@ -468,11 +478,12 @@ export class FireworksSystem {
     const texture = getParticleTexture(this.app);
     const count = Math.max(20, Math.round((85 + Math.random() * 35) * this.densityRatio()));
     const baseSpeed = (1.8 + Math.random() * 1.0) * this.settings.explosionScale;
+    const hues = this.activeColor !== null ? shadesOf(this.activeColor, 4) : GOLD_HUES;
 
     for (let i = 0; i < count; i++) {
       const angle = (Math.PI * 2 * i) / count + Math.random() * 0.2;
       const speed = baseSpeed * (0.7 + Math.random() * 0.5);
-      const color = GOLD_HUES[Math.floor(Math.random() * GOLD_HUES.length)];
+      const color = hues[Math.floor(Math.random() * hues.length)];
 
       this.addParticle(
         new Particle(texture, {
@@ -495,7 +506,8 @@ export class FireworksSystem {
 
   private spawnKamuroSparkle(x: number, y: number, batch?: BurstCompletion): void {
     const texture = getParticleTexture(this.app);
-    const color = GOLD_HUES[Math.floor(Math.random() * GOLD_HUES.length)];
+    const hues = this.activeColor !== null ? shadesOf(this.activeColor, 4) : GOLD_HUES;
+    const color = hues[Math.floor(Math.random() * hues.length)];
 
     this.addParticle(
       new Particle(texture, {
@@ -521,7 +533,7 @@ export class FireworksSystem {
    * of continuing straight.
    */
   private burstPalmCrossette(x: number, y: number, batch?: BurstCompletion): void {
-    const burstColors = pickBurstColors(3);
+    const burstColors = this.activeColor !== null ? shadesOf(this.activeColor, 3) : pickBurstColors(3);
     const texture = getParticleTexture(this.app);
     const armCount = 5 + Math.floor(Math.random() * 3); // 5, 6, or 7
     const baseSpeed = (3.0 + Math.random() * 1.4) * this.settings.explosionScale;
@@ -606,8 +618,8 @@ export class FireworksSystem {
   private burstMultiRing(x: number, y: number, batch?: BurstCompletion): void {
     const texture = getParticleTexture(this.app);
     const paletteA = randomPalette();
-    const colorA = randomColor(paletteA);
-    const colorB = randomColor(contrastingPalette(paletteA));
+    const colorA = this.activeColor ?? randomColor(paletteA);
+    const colorB = this.activeColor !== null ? lerpColor(this.activeColor, 0xffffff, 0.4) : randomColor(contrastingPalette(paletteA));
 
     const count = Math.max(30, Math.round(80 * this.densityRatio()));
     const speed = (3.6 + Math.random() * 1.2) * this.settings.explosionScale;
@@ -657,7 +669,7 @@ export class FireworksSystem {
    * fragments, before finally extinguishing.
    */
   private burstStrobe(x: number, y: number, batch?: BurstCompletion): void {
-    const burstColors = pickBurstColors(4 + Math.floor(Math.random() * 2));
+    const burstColors = this.activeColor !== null ? shadesOf(this.activeColor, 5) : pickBurstColors(4 + Math.floor(Math.random() * 2));
     const texture = getParticleTexture(this.app);
     const count = Math.max(10, Math.round((110 + Math.random() * 60) * this.densityRatio()));
     const baseSpeed = (2.6 + Math.random() * 2.0) * this.settings.explosionScale;

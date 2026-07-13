@@ -1,5 +1,6 @@
 import type { Application } from 'pixi.js';
 import { type BurstType, type FireworksSystem } from '../fireworks/FireworksSystem';
+import { COLOR_CHOICES } from '../fireworks/colors';
 import type { BackgroundLayer } from '../background';
 import { icon } from './icons';
 import { UploadHint } from './UploadHint';
@@ -73,6 +74,7 @@ export class PlanningScreen {
   private mode: LaunchMode = 'mass';
   private readonly massSelection = new Set<BurstType>();
   private activeSequentialShape: BurstType | null = null;
+  private activeColorId = 'multi';
   private liveDocumentationArmed = false;
   private hintTimer: number | undefined;
 
@@ -111,6 +113,7 @@ export class PlanningScreen {
     this.wireSubpanels();
     this.wireMedia();
     this.wireSliders();
+    this.wireColorPicker();
   }
 
   show(mode: LaunchMode): void {
@@ -206,6 +209,36 @@ export class PlanningScreen {
     }
   }
 
+  /**
+   * "لون المقذوفة": picking a swatch dyes every rocket + burst fired from
+   * now on that color, however it's fired (free tap, mass, sequential) —
+   * this just tells FireworksSystem its `activeColor`, so the existing
+   * launch call sites (PlanningMode, launchPlannedShow, free-tap fireAt)
+   * never had to change. "متعدد الألوان" resets it back to the normal
+   * random palettes.
+   */
+  private wireColorPicker(): void {
+    const buttons = Array.from(this.root.querySelectorAll<HTMLButtonElement>('[data-color-id]'));
+    for (const btn of buttons) {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.colorId!;
+        const choice = COLOR_CHOICES.find((c) => c.id === id);
+        if (!choice) return;
+        this.activeColorId = id;
+        this.deps.fireworks.setActiveColor(choice.hex);
+        this.syncColorVisuals();
+      });
+    }
+    this.syncColorVisuals();
+  }
+
+  private syncColorVisuals(): void {
+    const buttons = Array.from(this.root.querySelectorAll<HTMLButtonElement>('[data-color-id]'));
+    for (const btn of buttons) {
+      btn.classList.toggle('active', btn.dataset.colorId === this.activeColorId);
+    }
+  }
+
   private wireRandomMode(): void {
     const button = this.query<HTMLButtonElement>('#mzj-planning-random-mode');
     let enabled = false;
@@ -249,6 +282,7 @@ export class PlanningScreen {
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-dimmer'), panel: this.query<HTMLDivElement>('#mzj-planning-dimmer-panel') },
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-glow'), panel: this.query<HTMLDivElement>('#mzj-planning-glow-panel') },
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-lab'), panel: this.query<HTMLDivElement>('#mzj-planning-lab-panel') },
+      { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-color'), panel: this.query<HTMLDivElement>('#mzj-planning-color-panel') },
     ];
 
     for (const entry of entries) {
@@ -358,6 +392,7 @@ export class PlanningScreen {
         <button type="button" id="mzj-planning-bg-image" class="mzj-planning-icon-btn">${icon('image', 22)}<span>صورة خلفية</span></button>
         <button type="button" class="mzj-planning-icon-btn mzj-planning-icon-btn-disabled" disabled title="لا وظيفة مستقلة بعد">${icon('shapes', 22)}<span>الأنماط</span></button>
         <button type="button" id="mzj-planning-open-glow" class="mzj-planning-icon-btn">${icon('gem', 22)}<span>توهج الألعاب النارية</span></button>
+        <button type="button" id="mzj-planning-open-color" class="mzj-planning-icon-btn">${icon('droplet', 22)}<span>لون المقذوفة</span></button>
       </div>
       <div class="mzj-planning-side mzj-planning-side-left">
         <button type="button" id="mzj-planning-random-mode" class="mzj-planning-icon-btn">${icon('shuffle', 22)}<span>توليد عشوائي هجين</span></button>
@@ -395,10 +430,21 @@ export class PlanningScreen {
         ${this.sliderRow(SLIDERS.lifespan)}
         ${this.sliderRow(SLIDERS.scale)}
       </div>
+
+      <div class="mzj-planning-subpanel mzj-planning-color-panel" id="mzj-planning-color-panel">
+        ${COLOR_CHOICES.map((choice) => this.colorSwatchButton(choice)).join('')}
+      </div>
     `;
   }
 
   private shapeIconButton(name: BurstType, label: string): string {
     return `<button type="button" class="mzj-planning-icon-btn" data-burst-type="${name}">${icon(name, 22)}<span>${label}</span></button>`;
+  }
+
+  private colorSwatchButton(choice: (typeof COLOR_CHOICES)[number]): string {
+    const isMulti = choice.hex === null;
+    const style = isMulti ? '' : ` style="background:#${choice.hex!.toString(16).padStart(6, '0')}"`;
+    const activeClass = choice.id === this.activeColorId ? ' active' : '';
+    return `<button type="button" class="mzj-color-swatch${isMulti ? ' mzj-color-swatch-multi' : ''}${activeClass}" data-color-id="${choice.id}"${style} aria-label="${choice.label}" title="${choice.label}"></button>`;
   }
 }
