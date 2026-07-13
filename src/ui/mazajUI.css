@@ -532,10 +532,60 @@
 
 #mzj-text-control-box {
   position: absolute;
-  border: 1.5px dashed rgba(255, 233, 179, 0.75);
-  border-radius: 10px;
+  border: 2.5px solid rgba(255, 233, 179, 0.95);
+  border-radius: 14px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 4px 16px rgba(0, 0, 0, 0.35);
   touch-action: none;
   cursor: grab;
+}
+
+/* Corner resize handles — same visual language as Canva/Instagram Stories:
+   solid filled circles sitting on the border, each with a generous invisible
+   touch target (the visible dot is smaller than the 44px-ish hit area a
+   finger actually needs). */
+.mzj-text-control-handle {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  margin: -14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+
+.mzj-text-control-handle::after {
+  content: '';
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(255, 233, 179, 0.95);
+  border: 2px solid rgba(42, 20, 0, 0.9);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+.mzj-text-control-handle[data-handle='nw'] {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.mzj-text-control-handle[data-handle='ne'] {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+
+.mzj-text-control-handle[data-handle='sw'] {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+.mzj-text-control-handle[data-handle='se'] {
+  bottom: 0;
+  right: 0;
+  cursor: nwse-resize;
 }
 
 @media (max-width: 640px) {

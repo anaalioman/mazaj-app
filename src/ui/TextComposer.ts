@@ -77,6 +77,11 @@ export class TextComposer {
   private pinchStartDist: number | null = null;
   private pinchStartScale = 1;
 
+  /** Single-finger corner-handle resize, independent of (and mutually exclusive with) the two-finger pinch above — both stay equally capable ways to resize. */
+  private activeHandlePointerId: number | null = null;
+  private handleStartDist = 0;
+  private handleStartScale = 1;
+
   private previewCycleActive = false;
   private previewGeneration = 0;
   private previewIndex = 0;
@@ -119,7 +124,14 @@ export class TextComposer {
     this.controlBoxRoot = document.createElement('div');
     this.controlBoxRoot.id = 'mzj-text-control-backdrop';
     this.controlBoxRoot.className = 'mzj-hidden';
-    this.controlBoxRoot.innerHTML = `<div id="mzj-text-control-box"></div>`;
+    this.controlBoxRoot.innerHTML = `
+      <div id="mzj-text-control-box">
+        <div class="mzj-text-control-handle" data-handle="nw"></div>
+        <div class="mzj-text-control-handle" data-handle="ne"></div>
+        <div class="mzj-text-control-handle" data-handle="sw"></div>
+        <div class="mzj-text-control-handle" data-handle="se"></div>
+      </div>
+    `;
     document.body.appendChild(this.controlBoxRoot);
 
     for (const root of [this.root, this.controlBoxRoot]) {
@@ -288,6 +300,7 @@ export class TextComposer {
     this.activePointers.clear();
     this.dragStart = null;
     this.pinchStartDist = null;
+    this.activeHandlePointerId = null;
   }
 
   /** Tapping the backdrop outside the box commits it: chrome disappears, bare text stays at its last position/scale. */
@@ -347,10 +360,53 @@ export class TextComposer {
     box.addEventListener('pointerup', endPointer);
     box.addEventListener('pointercancel', endPointer);
 
+    this.wireResizeHandles(box);
+
     // Tapping the backdrop (anywhere in controlBoxRoot outside the box itself) commits.
     this.controlBoxRoot.addEventListener('pointerdown', (event) => {
       if (!box.contains(event.target as Node)) this.commit();
     });
+  }
+
+  /**
+   * One-finger corner handles — equally capable as the two-finger pinch
+   * above, not a fallback for it. Dragging a handle measures its distance
+   * from the box's center and scales relative to where the drag started,
+   * exactly like pinch does with two points instead of one.
+   */
+  private wireResizeHandles(box: HTMLDivElement): void {
+    for (const handle of box.querySelectorAll<HTMLDivElement>('.mzj-text-control-handle')) {
+      handle.addEventListener('pointerdown', (event) => {
+        // Stops this from also being seen by the box's own pointerdown
+        // above — a handle grab is never simultaneously a box drag.
+        event.stopPropagation();
+        try {
+          handle.setPointerCapture(event.pointerId);
+        } catch {
+          // ignore — see the box drag's own comment on this
+        }
+        this.activeHandlePointerId = event.pointerId;
+        this.handleStartDist = Math.max(1, Math.hypot(event.clientX - this.posX, event.clientY - this.posY));
+        this.handleStartScale = this.scale;
+      });
+
+      handle.addEventListener('pointermove', (event) => {
+        if (event.pointerId !== this.activeHandlePointerId) return;
+        event.stopPropagation();
+        const dist = Math.hypot(event.clientX - this.posX, event.clientY - this.posY);
+        this.scale = clamp(this.handleStartScale * (dist / this.handleStartDist), MIN_SCALE, MAX_SCALE);
+        this.syncPreviewTransform();
+        this.syncControlBoxTransform();
+      });
+
+      const endHandle = (event: PointerEvent) => {
+        if (event.pointerId !== this.activeHandlePointerId) return;
+        event.stopPropagation();
+        this.activeHandlePointerId = null;
+      };
+      handle.addEventListener('pointerup', endHandle);
+      handle.addEventListener('pointercancel', endHandle);
+    }
   }
 
   private syncPreviewTransform(): void {
