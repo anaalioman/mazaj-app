@@ -1,10 +1,10 @@
 import type { Application } from 'pixi.js';
 import { type BurstType, type FireworksSystem } from '../fireworks/FireworksSystem';
-import { COLOR_CHOICES } from '../fireworks/colors';
 import type { BackgroundLayer } from '../background';
 import { icon } from './icons';
 import { UploadHint } from './UploadHint';
 import { TextComposer, type TextRevealConfig } from './TextComposer';
+import { ColorPickerPanel } from './ColorPickerPanel';
 
 export type LaunchMode = 'mass' | 'sequential';
 
@@ -71,10 +71,10 @@ export class PlanningScreen {
   private readonly deps: PlanningScreenDeps;
   private readonly uploadHint: UploadHint;
   private readonly textComposer: TextComposer;
+  private readonly colorPicker: ColorPickerPanel;
   private mode: LaunchMode = 'mass';
   private readonly massSelection = new Set<BurstType>();
   private activeSequentialShape: BurstType | null = null;
-  private activeColorId = 'multi';
   private liveDocumentationArmed = false;
   private hintTimer: number | undefined;
 
@@ -87,6 +87,8 @@ export class PlanningScreen {
     this.root.innerHTML = this.template();
     document.body.appendChild(this.root);
     this.uploadHint = new UploadHint(this.root);
+    // Canvas-drawn (no HTML/CSS) glowing swatch panel — see ColorPickerPanel.
+    this.colorPicker = new ColorPickerPanel(deps.app, deps.fireworks);
 
     // While composing text (input+effects bar, or the position/scale
     // control box), this screen's own icon columns step aside so the
@@ -129,6 +131,7 @@ export class PlanningScreen {
   hide(): void {
     this.root.classList.add('mzj-hidden');
     window.clearTimeout(this.hintTimer);
+    this.colorPicker.setOpen(false);
     for (const el of this.root.querySelectorAll('.mzj-planning-subpanel.open')) el.classList.remove('open');
     // The camera trigger's `.active` means "a video background is set", not
     // "its panel is open" — it must survive closing/reopening the screen,
@@ -210,33 +213,26 @@ export class PlanningScreen {
   }
 
   /**
-   * "لون المقذوفة": picking a swatch dyes every rocket + burst fired from
-   * now on that color, however it's fired (free tap, mass, sequential) —
-   * this just tells FireworksSystem its `activeColor`, so the existing
-   * launch call sites (PlanningMode, launchPlannedShow, free-tap fireAt)
-   * never had to change. "متعدد الألوان" resets it back to the normal
-   * random palettes.
+   * "لون المقذوفة": the trigger itself stays a normal HTML icon button (same
+   * as every other icon in this column), but what it opens is the fully
+   * canvas-drawn ColorPickerPanel, not an HTML subpanel — so it has to close
+   * every HTML subpanel itself (they'd otherwise stay open underneath it)
+   * and the reverse: wireSubpanels closes this one whenever another HTML
+   * subpanel opens.
    */
   private wireColorPicker(): void {
-    const buttons = Array.from(this.root.querySelectorAll<HTMLButtonElement>('[data-color-id]'));
-    for (const btn of buttons) {
-      btn.addEventListener('click', () => {
-        const id = btn.dataset.colorId!;
-        const choice = COLOR_CHOICES.find((c) => c.id === id);
-        if (!choice) return;
-        this.activeColorId = id;
-        this.deps.fireworks.setActiveColor(choice.hex);
-        this.syncColorVisuals();
-      });
-    }
-    this.syncColorVisuals();
-  }
-
-  private syncColorVisuals(): void {
-    const buttons = Array.from(this.root.querySelectorAll<HTMLButtonElement>('[data-color-id]'));
-    for (const btn of buttons) {
-      btn.classList.toggle('active', btn.dataset.colorId === this.activeColorId);
-    }
+    const trigger = this.query<HTMLButtonElement>('#mzj-planning-open-color');
+    trigger.addEventListener('click', () => {
+      const willOpen = !this.colorPicker.open;
+      for (const el of this.root.querySelectorAll('.mzj-planning-subpanel.open')) el.classList.remove('open');
+      for (const el of this.root.querySelectorAll(
+        '[id^="mzj-planning-open-"].active:not(#mzj-planning-open-camera):not(#mzj-planning-open-color)',
+      )) {
+        el.classList.remove('active');
+      }
+      this.colorPicker.setOpen(willOpen);
+      trigger.classList.toggle('active', willOpen);
+    });
   }
 
   private wireRandomMode(): void {
@@ -282,12 +278,13 @@ export class PlanningScreen {
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-dimmer'), panel: this.query<HTMLDivElement>('#mzj-planning-dimmer-panel') },
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-glow'), panel: this.query<HTMLDivElement>('#mzj-planning-glow-panel') },
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-lab'), panel: this.query<HTMLDivElement>('#mzj-planning-lab-panel') },
-      { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-color'), panel: this.query<HTMLDivElement>('#mzj-planning-color-panel') },
     ];
 
     for (const entry of entries) {
       entry.trigger.addEventListener('click', () => {
         const willOpen = !entry.panel.classList.contains('open');
+        this.colorPicker.setOpen(false);
+        this.query<HTMLButtonElement>('#mzj-planning-open-color').classList.remove('active');
         for (const other of entries) {
           other.panel.classList.toggle('open', other === entry && willOpen);
           if (other.trigger !== cameraTrigger) other.trigger.classList.toggle('active', other === entry && willOpen);
@@ -430,21 +427,10 @@ export class PlanningScreen {
         ${this.sliderRow(SLIDERS.lifespan)}
         ${this.sliderRow(SLIDERS.scale)}
       </div>
-
-      <div class="mzj-planning-subpanel mzj-planning-color-panel" id="mzj-planning-color-panel">
-        ${COLOR_CHOICES.map((choice) => this.colorSwatchButton(choice)).join('')}
-      </div>
     `;
   }
 
   private shapeIconButton(name: BurstType, label: string): string {
     return `<button type="button" class="mzj-planning-icon-btn" data-burst-type="${name}">${icon(name, 22)}<span>${label}</span></button>`;
-  }
-
-  private colorSwatchButton(choice: (typeof COLOR_CHOICES)[number]): string {
-    const isMulti = choice.hex === null;
-    const style = isMulti ? '' : ` style="background:#${choice.hex!.toString(16).padStart(6, '0')}"`;
-    const activeClass = choice.id === this.activeColorId ? ' active' : '';
-    return `<button type="button" class="mzj-color-swatch${isMulti ? ' mzj-color-swatch-multi' : ''}${activeClass}" data-color-id="${choice.id}"${style} aria-label="${choice.label}" title="${choice.label}"></button>`;
   }
 }

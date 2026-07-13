@@ -432,35 +432,6 @@
   cursor: pointer;
 }
 
-/* لون المقذوفة: a grid of round swatches, one per named color choice — the
-   selected one gets a bright ring; "متعدد الألوان" gets a rainbow conic
-   gradient instead of a flat fill so it visually reads as "no single color". */
-.mzj-planning-color-panel {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-  justify-items: center;
-}
-
-.mzj-color-swatch {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.25);
-  padding: 0;
-  cursor: pointer;
-  box-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
-}
-
-.mzj-color-swatch.active {
-  border-color: #fff;
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25), 0 0 10px rgba(255, 255, 255, 0.6);
-}
-
-.mzj-color-swatch-multi {
-  background: conic-gradient(from 0deg, #ff2d2d, #fff23d, #39ff6a, #1e6bff, #9a3dff, #ff2ecb, #ff2d2d);
-}
-
 /* ---------- Text composer ("T" icon) ---------- */
 
 /* While composing (input+effects bar, or the position/scale control box),
