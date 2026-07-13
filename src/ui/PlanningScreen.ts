@@ -88,7 +88,13 @@ export class PlanningScreen {
     document.body.appendChild(this.root);
     this.uploadHint = new UploadHint(this.root);
     // Canvas-drawn (no HTML/CSS) glowing swatch panel — see ColorPickerPanel.
-    this.colorPicker = new ColorPickerPanel(deps.app, deps.fireworks);
+    // It docks just left of the right icon column's live on-screen edge, so
+    // it never overlaps/covers those icons.
+    this.colorPicker = new ColorPickerPanel(
+      deps.app,
+      deps.fireworks,
+      () => this.query<HTMLElement>('.mzj-planning-side-right').getBoundingClientRect().left,
+    );
 
     // While composing text (input+effects bar, or the position/scale
     // control box), this screen's own icon columns step aside so the

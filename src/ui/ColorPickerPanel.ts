@@ -13,7 +13,9 @@ const PANEL_PADDING = 16;
 // would run straight off the viewport).
 const PANEL_WIDTH = 108;
 const TITLE_AREA = 56;
-const PANEL_TOP = 100;
+// Gap kept clear between the panel's own edge and the icon column it docks
+// beside, so it never touches/overlaps the icons themselves.
+const DOCK_GAP = 14;
 const HALO_SCALE = 2.6;
 const SLIDE_MS = 220;
 const MULTI_SEGMENT_COLORS = [0xff2d2d, 0xfff23d, 0x39ff6a, 0x1e6bff, 0x9a3dff, 0xff2ecb];
@@ -34,10 +36,16 @@ interface Swatch {
  * like neon instead of reading as flat color chips. Picking one calls
  * `FireworksSystem.setActiveColor()` immediately; every subsequent rocket is
  * dyed that color however it's launched (free tap, mass, or sequential).
+ *
+ * It docks *beside* the planning screen's right icon column, not over it —
+ * `getLeftBoundary` reports that column's live on-screen left edge (it can
+ * reflow with label text/viewport size), and the panel settles just to the
+ * left of it with a fixed gap, so both stay fully visible and usable at once.
  */
 export class ColorPickerPanel {
   private readonly app: Application;
   private readonly fireworks: FireworksSystem;
+  private readonly getLeftBoundary: () => number;
   private readonly container: Container;
   private readonly panelBg: Graphics;
   private readonly title: Text;
@@ -50,9 +58,10 @@ export class ColorPickerPanel {
   private panelWidth = 0;
   private panelHeight = 0;
 
-  constructor(app: Application, fireworks: FireworksSystem) {
+  constructor(app: Application, fireworks: FireworksSystem, getLeftBoundary: () => number) {
     this.app = app;
     this.fireworks = fireworks;
+    this.getLeftBoundary = getLeftBoundary;
 
     this.container = new Container();
     this.container.visible = false;
@@ -190,13 +199,16 @@ export class ColorPickerPanel {
     }
     this.syncActiveRing();
 
-    this.container.y = PANEL_TOP;
+    // Vertically centered on screen, matching how the icon column beside it
+    // is centered (see .mzj-planning-side's justify-content: center).
+    this.container.y = Math.max(8, (this.app.screen.height - this.panelHeight) / 2);
     this.applyPosition();
   }
 
   private applyPosition(): void {
-    const { width } = this.app.screen;
-    this.container.x = width - this.panelWidth * this.animT;
+    const dockX = this.getLeftBoundary() - DOCK_GAP - this.panelWidth;
+    const hiddenX = this.app.screen.width;
+    this.container.x = hiddenX + (dockX - hiddenX) * this.animT;
     this.container.alpha = this.animT;
   }
 
