@@ -1,17 +1,15 @@
 import type { Application } from 'pixi.js';
 import type { AudioManager } from '../audio/AudioManager';
 import { icon } from './icons';
-import type { LaunchMode } from './PlanningScreen';
 
 export interface HeaderBarDeps {
   app: Application;
   audio: AudioManager;
   onStartShow: () => void;
   onBackToHome: () => void;
-  onOpenPlanningScreen: (mode: LaunchMode) => void;
 }
 
-/** Transparent horizontal bar: home + start-show + جماعي/متتابع entry points (right), FPS + mute (left). */
+/** Transparent horizontal bar: home + start-show (right), FPS + mute (left). Planning screen is always visible on its own — no header trigger for it. */
 export class HeaderBar {
   readonly root: HTMLDivElement;
   private readonly deps: HeaderBarDeps;
@@ -30,7 +28,6 @@ export class HeaderBar {
 
     this.wireHome();
     this.wireStartShow();
-    this.wireOpenPlanning();
     this.wireMute();
     this.wireFps();
   }
@@ -40,8 +37,6 @@ export class HeaderBar {
       <div class="mzj-header-group mzj-header-right">
         <button type="button" id="mzj-home" aria-label="العودة للقائمة الرئيسية">${icon('home', 18)}</button>
         <button type="button" id="mzj-start-show" class="mzj-mode-toggle">${icon('play', 15)}<span>ابدأ العرض</span></button>
-        <button type="button" id="mzj-open-mass" aria-label="إطلاق جماعي">${icon('fireworksMood', 18)}</button>
-        <button type="button" id="mzj-open-sequential" aria-label="إطلاق متتابع">${icon('mapPin', 18)}</button>
       </div>
       <div class="mzj-header-group mzj-header-left">
         <span id="mzj-fps" class="mzj-fps">60</span>
@@ -66,22 +61,6 @@ export class HeaderBar {
       button.disabled = true;
       button.innerHTML = `${icon('play', 15)}<span>بدأ العرض</span>`;
     });
-  }
-
-  /**
-   * "إطلاق جماعي" and "إطلاق متتابع" each open the planning screen already
-   * set to that mode — no separate neutral "خطة الإطلاق" gate in between,
-   * and no in-screen mode switch either: each is a fully self-contained
-   * entry point, so changing your mind means picking the other header icon
-   * (closing/reopening the screen loses no in-progress selections — shapes,
-   * colors, مدفع, etc. all live on PlanningScreen's own instance fields,
-   * untouched by hide()/show()).
-   */
-  private wireOpenPlanning(): void {
-    this.query<HTMLButtonElement>('#mzj-open-mass').addEventListener('click', () => this.deps.onOpenPlanningScreen('mass'));
-    this.query<HTMLButtonElement>('#mzj-open-sequential').addEventListener('click', () =>
-      this.deps.onOpenPlanningScreen('sequential'),
-    );
   }
 
   private wireMute(): void {

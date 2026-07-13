@@ -314,13 +314,12 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
       handle.hide();
       onBackToHome();
     },
-    onOpenPlanningScreen: (mode) => planningScreen.show(mode),
   });
 
-  // Shown after picking a launch mode (or the header's plan button). Every
-  // control that has a real, already-built function behind it is wired
-  // directly here to `fireworks`/`background` — see PlanningScreen's own
-  // doc-comment for exactly which icons are still inert and why.
+  // Always visible the instant the mood boots — see PlanningScreen's own
+  // doc-comment for the full architecture. Every control that has a real,
+  // already-built function behind it is wired directly here to
+  // `fireworks`/`background`.
   const planningScreen = new PlanningScreen({
     app,
     fireworks,

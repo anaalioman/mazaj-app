@@ -47,9 +47,16 @@ const SLIDERS = {
 const HINT_VISIBLE_MS = 2600;
 
 /**
- * Full-screen planning layout shown after the player picks "إطلاق جماعي" or
- * "إطلاق متتابع". Neither mode icon is a "fire" button — they only set what
- * a subsequent shape-icon tap *means*:
+ * Full-screen planning layout — a permanent part of the fireworks mood, not
+ * something opened via any trigger: it reveals itself the instant this
+ * class is constructed (see `show()` called at the end of the constructor)
+ * and only disappears once "ابدأ العرض" actually fires the show (see
+ * `hide()`, called from `beginShow()` in fireworksMood.ts). There is no
+ * "خطة إطلاق" gate icon anywhere, and no duplicate mode icons in the
+ * header — "إطلاق جماعي"/"إطلاق متتابع" only exist here, in this screen.
+ *
+ * Neither mode icon is a "fire" button — they only set what a subsequent
+ * shape-icon tap *means*:
  *   - 'mass': tapping a shape toggles its membership in a set that will all
  *     launch together, superimposed at one shared point, with no location
  *     step at all.
@@ -58,10 +65,9 @@ const HINT_VISIBLE_MS = 2600;
  *     drops a numbered marker of that shape there; tapping a different
  *     shape icon switches what gets placed next; a 500ms press-and-hold on
  *     an existing marker removes it (see PlanningMode).
- * There is no separate launch/confirm button anywhere in here — the
- * header's existing "ابدأ العرض" is the single trigger for both firing
- * whichever plan is active and collapsing into full immersion; see
- * `beginShow()` in fireworksMood.ts.
+ * There is no separate launch/confirm button anywhere in here — "ابدأ
+ * العرض" is the single trigger for both firing whichever plan is active and
+ * collapsing into full immersion; see `beginShow()` in fireworksMood.ts.
  *
  * Every other icon that has a real, already-built function behind it
  * (random/ground-fountain mode, auto-show, background image/video,
@@ -137,6 +143,10 @@ export class PlanningScreen {
       this.root.addEventListener(type, (event) => event.stopPropagation());
     }
 
+    this.root.querySelector('#mzj-planning-mode-mass')!.addEventListener('click', () => this.setMode('mass'));
+    this.root
+      .querySelector('#mzj-planning-mode-sequential')!
+      .addEventListener('click', () => this.setMode('sequential'));
     this.root.querySelector('#mzj-planning-open-text')!.addEventListener('click', () => this.textComposer.open());
 
     this.wireRandomMode();
@@ -148,6 +158,12 @@ export class PlanningScreen {
     this.wireSliders();
     this.wireColorPicker();
     this.wireShapesTrigger();
+
+    // The whole screen is a permanent part of the fireworks mood now — no
+    // "open" trigger anywhere reveals it, it's just visible the instant the
+    // mood boots (see the class doc-comment). hide() still collapses it once
+    // "ابدأ العرض" actually fires the show.
+    this.show(this.mode);
   }
 
   /** Called by fireworksMood.ts once a recording actually starts/stops, to sync the icon. */
@@ -201,10 +217,12 @@ export class PlanningScreen {
     return this.textComposer.consumeForReveal();
   }
 
-  /** Sets which plan is active — driven entirely by which header gate ("إطلاق جماعي"/"إطلاق متتابع") opened the screen; there's no in-screen mode switch anymore, each gate is its own system. */
+  /** Lets the player switch plans — the screen itself is always visible, so this is the only way mode ever changes. */
   private setMode(mode: LaunchMode): void {
     this.mode = mode;
     this.root.dataset.mode = mode;
+    this.root.querySelector('#mzj-planning-mode-mass')!.classList.toggle('active', mode === 'mass');
+    this.root.querySelector('#mzj-planning-mode-sequential')!.classList.toggle('active', mode === 'sequential');
     this.shapesPanel.setActive(this.computeActiveShapeIds());
     this.deps.onModeChange(mode);
   }
@@ -459,6 +477,8 @@ export class PlanningScreen {
           <span class="mzj-planning-text-icon">T</span><span>نص</span>
         </button>
         <button type="button" id="mzj-planning-random-mode" class="mzj-planning-icon-btn">${icon('shuffle', 22)}<span>توليد عشوائي هجين</span></button>
+        <button type="button" id="mzj-planning-mode-mass" class="mzj-planning-icon-btn">${icon('fireworksMood', 22)}<span>إطلاق جماعي</span></button>
+        <button type="button" id="mzj-planning-mode-sequential" class="mzj-planning-icon-btn">${icon('mapPin', 22)}<span>إطلاق متتابع</span></button>
         <button type="button" id="mzj-planning-open-shapes" class="mzj-planning-icon-btn">${icon('shapes', 22)}<span>الأشكال</span></button>
         <button type="button" id="mzj-planning-open-camera" class="mzj-planning-icon-btn">${icon('camera', 22)}<span>فيديو خلفية حي</span></button>
         <button type="button" id="mzj-planning-record" class="mzj-planning-icon-btn">${icon('recordDot', 22)}<span>تسجيل فيديو</span></button>
