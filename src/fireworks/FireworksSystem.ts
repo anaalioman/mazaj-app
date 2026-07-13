@@ -347,6 +347,20 @@ export class FireworksSystem {
   }
 
   /**
+   * A narrow, near-uniform speed range sends every spark to almost the same
+   * radius at once — the "hollow ring" look. Sampling speed uniformly across
+   * the FULL range from near-zero up to `maxSpeed` instead means a good
+   * share of sparks are slow and settle deep inside the burst instead of
+   * only ever living on its rim, filling the sphere with real depth. It also
+   * naturally packs more sparks per unit area near the center (smaller
+   * radii cover less area for the same particle count), which is exactly
+   * where a real shell's brightest, hottest core sits.
+   */
+  private fillSpeed(maxSpeed: number, minRatio = 0.1): number {
+    return maxSpeed * (minRatio + Math.random() * (1 - minRatio));
+  }
+
+  /**
    * Peony with Pistil Core: a dense outer sphere in one primary color, and a
    * smaller, slower inner sphere in a contrasting color exploding at the
    * same instant — the classic two-tone "flower with a center" look.
@@ -357,12 +371,14 @@ export class FireworksSystem {
     const primaryColor = randomColor(outerPalette);
     const pistilColor = randomColor(contrastingPalette(outerPalette));
 
-    const outerCount = Math.max(8, Math.round((70 + Math.random() * 50) * this.densityRatio()));
+    // Base counts tuned so a default-density burst lands around 250-400
+    // total sparks between the outer sphere and pistil core combined.
+    const outerCount = Math.max(8, Math.round((180 + Math.random() * 80) * this.densityRatio()));
     const outerSpeed = (2.6 + Math.random() * 2.0) * this.settings.explosionScale;
 
     for (let i = 0; i < outerCount; i++) {
       const angle = (Math.PI * 2 * i) / outerCount + Math.random() * 0.25;
-      const speed = outerSpeed * (0.75 + Math.random() * 0.35);
+      const speed = this.fillSpeed(outerSpeed);
 
       this.addParticle(
         new Particle(texture, {
@@ -371,7 +387,7 @@ export class FireworksSystem {
           vx: Math.cos(angle) * speed,
           vy: Math.sin(angle) * speed,
           color: primaryColor,
-          size: (8 + Math.random() * 5) * this.glowSizeBoost(),
+          size: (7 + Math.random() * 4) * this.glowSizeBoost(),
           life: (55 + Math.random() * 40) * this.settings.lifespanScale,
           gravity: 0.1 * this.settings.gravityScale,
           drag: 0.982,
@@ -381,12 +397,12 @@ export class FireworksSystem {
       );
     }
 
-    const pistilCount = Math.max(6, Math.round(outerCount * 0.4));
+    const pistilCount = Math.max(6, Math.round(outerCount * 0.45));
     const pistilSpeed = outerSpeed * 0.42;
 
     for (let i = 0; i < pistilCount; i++) {
       const angle = (Math.PI * 2 * i) / pistilCount + Math.random() * 0.4;
-      const speed = pistilSpeed * (0.7 + Math.random() * 0.5);
+      const speed = this.fillSpeed(pistilSpeed);
 
       this.addParticle(
         new Particle(texture, {
@@ -395,7 +411,7 @@ export class FireworksSystem {
           vx: Math.cos(angle) * speed,
           vy: Math.sin(angle) * speed,
           color: pistilColor,
-          size: (6 + Math.random() * 4) * this.glowSizeBoost(),
+          size: (5 + Math.random() * 3) * this.glowSizeBoost(),
           life: (38 + Math.random() * 22) * this.settings.lifespanScale,
           gravity: 0.1 * this.settings.gravityScale,
           drag: 0.978,
@@ -643,12 +659,12 @@ export class FireworksSystem {
   private burstStrobe(x: number, y: number, batch?: BurstCompletion): void {
     const burstColors = pickBurstColors(4 + Math.floor(Math.random() * 2));
     const texture = getParticleTexture(this.app);
-    const count = Math.max(10, Math.round((60 + Math.random() * 50) * this.densityRatio()));
+    const count = Math.max(10, Math.round((110 + Math.random() * 60) * this.densityRatio()));
     const baseSpeed = (2.6 + Math.random() * 2.0) * this.settings.explosionScale;
 
     for (let i = 0; i < count; i++) {
       const angle = (Math.PI * 2 * i) / count + Math.random() * 0.4;
-      const speed = baseSpeed * (0.5 + Math.random() * 0.7);
+      const speed = this.fillSpeed(baseSpeed);
       const color = burstColors[Math.floor(Math.random() * burstColors.length)];
 
       this.addParticle(
