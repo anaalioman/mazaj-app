@@ -10,7 +10,6 @@ export interface HeaderBarDeps {
   audio: AudioManager;
   onModeChange: (mode: InputMode) => void;
   onStartShow: () => void;
-  onSnapshot: () => void;
   onBackToHome: () => void;
   onOpenPlanningScreen: (mode: LaunchMode) => void;
 }
@@ -48,7 +47,6 @@ export class HeaderBar {
     this.wireOpenPlanning();
     this.wireModeToggle();
     this.wireMute();
-    this.wireSnapshot();
     this.wireFps();
   }
 
@@ -67,7 +65,6 @@ export class HeaderBar {
       <div class="mzj-header-group mzj-header-left">
         <span id="mzj-fps" class="mzj-fps">60</span>
         <button type="button" id="mzj-mute" aria-label="كتم الصوت">${icon('volume2', 18)}</button>
-        <button type="button" id="mzj-snapshot" aria-label="لقطة عالية الدقة">${icon('camera', 18)}</button>
       </div>
     `;
   }
@@ -111,11 +108,6 @@ export class HeaderBar {
       const muted = this.deps.audio.toggleMute();
       button.innerHTML = icon(muted ? 'volumeX' : 'volume2', 18);
     });
-  }
-
-  private wireSnapshot(): void {
-    const button = this.query<HTMLButtonElement>('#mzj-snapshot');
-    button.addEventListener('click', () => this.deps.onSnapshot());
   }
 
   private wireFps(): void {

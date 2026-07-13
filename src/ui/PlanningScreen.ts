@@ -17,6 +17,8 @@ export interface PlanningScreenDeps {
   onModeChange: (mode: LaunchMode) => void;
   /** "تسجيل فيديو": starts/stops recording the show's output (distinct from "فيديو خلفية حي" right above it, which picks the *input* background media, not the output). */
   onToggleRecording: () => void;
+  /** "لقطة": captures a single high-resolution still of the current frame. */
+  onSnapshot: () => void;
 }
 
 interface SliderSpec {
@@ -139,6 +141,7 @@ export class PlanningScreen {
     this.wireSubpanels();
     this.wireMedia();
     this.wireRecording();
+    this.wireSnapshot();
     this.wireSliders();
     this.wireColorPicker();
     this.wireShapesTrigger();
@@ -402,6 +405,11 @@ export class PlanningScreen {
     button.addEventListener('click', () => this.deps.onToggleRecording());
   }
 
+  private wireSnapshot(): void {
+    const button = this.query<HTMLButtonElement>('#mzj-planning-snapshot');
+    button.addEventListener('click', () => this.deps.onSnapshot());
+  }
+
   private wireSliders(): void {
     this.bindSlider(SLIDERS.density.id, (v) => this.deps.fireworks.updateSettings({ particleDensity: v }));
     this.bindSlider(SLIDERS.gravity.id, (v) => this.deps.fireworks.updateSettings({ gravityScale: v }));
@@ -447,6 +455,7 @@ export class PlanningScreen {
         <button type="button" id="mzj-planning-open-shapes" class="mzj-planning-icon-btn">${icon('shapes', 22)}<span>الأشكال</span></button>
         <button type="button" id="mzj-planning-open-camera" class="mzj-planning-icon-btn">${icon('camera', 22)}<span>فيديو خلفية حي</span></button>
         <button type="button" id="mzj-planning-record" class="mzj-planning-icon-btn">${icon('recordDot', 22)}<span>تسجيل فيديو</span></button>
+        <button type="button" id="mzj-planning-snapshot" class="mzj-planning-icon-btn">${icon('camera', 22)}<span>لقطة</span></button>
         <button type="button" id="mzj-planning-bg-image" class="mzj-planning-icon-btn">${icon('image', 22)}<span>صورة خلفية</span></button>
         <button type="button" id="mzj-planning-open-glow" class="mzj-planning-icon-btn">${icon('gem', 22)}<span>توهج الألعاب النارية</span></button>
         <button type="button" id="mzj-planning-open-color" class="mzj-planning-icon-btn">${icon('droplet', 22)}<span>لون المقذوفة</span></button>

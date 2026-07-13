@@ -310,7 +310,6 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
       inputMode = mode;
     },
     onStartShow: () => beginShow(),
-    onSnapshot: () => void takeSnapshot(),
     onBackToHome: () => {
       handle.hide();
       onBackToHome();
@@ -328,6 +327,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     background,
     onModeChange: (mode) => planningMode.setActive(mode === 'sequential'),
     onToggleRecording: () => void toggleRecording(),
+    onSnapshot: () => void takeSnapshot(),
   });
 
   // The header is fully visible the instant the mood opens — see the module
