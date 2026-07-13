@@ -1,4 +1,5 @@
 import { Application, Container, Graphics, Rectangle, Text, TextStyle, type FederatedPointerEvent } from 'pixi.js';
+import { DropShadowFilter } from 'pixi-filters';
 import { icon } from './icons';
 import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
 import { TEXT_EFFECTS } from '../effects/textEffects/registry';
@@ -32,17 +33,23 @@ const PREVIEW_HOLD_BEFORE_MS = 600;
 const PREVIEW_HOLD_AFTER_MS = 600;
 const PREVIEW_NONE_HOLD_MS = 2000;
 
-/** Ported by hand from Konva.js's real Transformer defaults (konva/src/shapes/Transformer.ts) — see the control-box doc comment below. */
-const KONVA_BLUE = 0x00a1ff; // rgb(0, 161, 255): anchorStroke / borderStroke
-const HANDLE_SIZE = 10; // anchorSize (anchorCornerRadius: 0 — an actual square, not a circle)
-const HANDLE_STROKE_WIDTH = 1; // anchorStrokeWidth / borderStrokeWidth
-const ROTATE_ANCHOR_OFFSET = 50; // rotateAnchorOffset: the rotate handle's stalk length
-/** Not a Konva number — Konva has no touch story of its own (it leans on cursor changes, which don't exist on touch). Explicit oversized Pixi hitArea per finger, same idea as the old CSS invisible touch target. */
-const HANDLE_HIT_SIZE = 44;
+/** The box outline itself stays Konva.js's real Transformer border default (konva/src/shapes/Transformer.ts): borderStroke 'rgb(0, 161, 255)', borderStrokeWidth 1, no radius. */
+const KONVA_BLUE = 0x00a1ff;
+const BOX_BORDER_WIDTH = 1;
 const BOX_PADDING = 14;
 
-type HandleId = 'nw' | 'ne' | 'sw' | 'se';
-const HANDLE_IDS: HandleId[] = ['nw', 'ne', 'sw', 'se'];
+/**
+ * Two dedicated corner handles replace both the old 4-identical-corners
+ * grid and the separate rotate stalk+handle that used to stick out above
+ * the box: top-right (`ne`) rotates, bottom-right (`se`) resizes. Nothing
+ * ever renders outside the box's own rectangle anymore.
+ */
+const HANDLE_VISUAL_DIAMETER = 24;
+const HANDLE_FILL = 0xfff6df;
+const HANDLE_STROKE = 0xc98f34;
+const HANDLE_STROKE_WIDTH = 2;
+/** Explicit oversized Pixi hitArea per finger — the circle stays 24px, the tappable area is still a generous 44x44 for accurate mobile touch. */
+const HANDLE_HIT_SIZE = 44;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -62,15 +69,16 @@ function clamp(value: number, min: number, max: number): number {
  * `root` (the top input + effects bar) is the one and only DOM element in
  * this class — real keyboard text entry has no Pixi equivalent, so it stays
  * plain HTML, same as every other compose-time toolbar in this app. The
- * control box itself (border, the 4 resize handles, the rotate handle +
- * its stalk) and the full-screen "tap outside to commit" backdrop are
- * genuine Pixi `Graphics`/`Container` objects living on `app.stage`,
- * positioned/rotated via Pixi's own `position`/`rotation` — never CSS —
- * so they never desync from the WebGL frame the way a DOM overlay can.
- * Their look is Konva.js's own Transformer defaults, ported by hand
- * (see the KONVA_* constants above and syncControlBoxTransform() below):
- * 10x10 square anchors, 1px `rgb(0, 161, 255)` stroke on a white fill, a
- * 50px rotate stalk — not an invented style.
+ * control box itself (border + two dedicated corner handles) and the
+ * full-screen "tap outside to commit" backdrop are genuine Pixi
+ * `Graphics`/`Container` objects living on `app.stage`, positioned/rotated
+ * via Pixi's own `position`/`rotation` — never CSS — so they never desync
+ * from the WebGL frame the way a DOM overlay can. The border keeps
+ * Konva.js's own Transformer border default (1px `rgb(0, 161, 255)`, see
+ * the KONVA_BLUE constant); the two handles are their own dedicated
+ * multi-function circles, not a generic 4-corner grid — nothing renders
+ * outside the box's own rectangle (see HANDLE_* constants above and
+ * syncControlBoxTransform() below).
  *
  * The effects bar's demo previews reuse the exact same TextReveal engine as
  * the real final reveal (same particle physics, no CSS/static-image
@@ -92,11 +100,10 @@ export class TextComposer {
   /** Everything the player drags/pinches/rotates: positioned at (posX, posY) and rotated by `this.rotation` as one unit, which is why every child below is drawn centered on its own local origin. */
   private readonly controlBox: Container;
   private readonly boxBorder: Graphics;
-  private readonly cornerHandles: Record<HandleId, Graphics>;
-  private readonly rotateLine: Graphics;
-  private readonly rotateHandle: Graphics;
-  /** Whichever corner handle is mid-drag, purely to reset its press-scale back to 1 on release without guessing which one it was. */
-  private activeHandleGraphic: Graphics | null = null;
+  /** Top-right corner: rotation only. `.glow` is the soft additive halo behind the mark, hidden until pressed — see createHandle()'s doc comment for why that halo has to exist as its own shape. */
+  private readonly rotateHandle: { root: Container; glow: Graphics };
+  /** Bottom-right corner: resize/scale only. */
+  private readonly resizeHandle: { root: Container; glow: Graphics };
 
   private text = SAMPLE_PHRASE;
   private effect: TextRevealEffect = 'none';
@@ -192,19 +199,11 @@ export class TextComposer {
     this.boxBorder.cursor = 'grab';
     this.controlBox.addChild(this.boxBorder);
 
-    this.cornerHandles = {
-      nw: this.createHandleGraphic('nwse-resize'),
-      ne: this.createHandleGraphic('nesw-resize'),
-      sw: this.createHandleGraphic('nesw-resize'),
-      se: this.createHandleGraphic('nwse-resize'),
-    };
-    for (const id of HANDLE_IDS) this.controlBox.addChild(this.cornerHandles[id]);
+    this.rotateHandle = this.createHandle('crosshair');
+    this.controlBox.addChild(this.rotateHandle.root);
 
-    this.rotateLine = new Graphics();
-    this.controlBox.addChild(this.rotateLine);
-
-    this.rotateHandle = this.createHandleGraphic('crosshair');
-    this.controlBox.addChild(this.rotateHandle);
+    this.resizeHandle = this.createHandle('nwse-resize');
+    this.controlBox.addChild(this.resizeHandle.root);
 
     this.wireInput();
     this.wireEffectButtons();
@@ -212,17 +211,43 @@ export class TextComposer {
     this.wireControlBox();
   }
 
-  /** One 10x10 white/blue square (Konva's own anchor look, shared by every corner + the rotater), centered on its own local origin so positioning it is just a `.position.set()`. */
-  private createHandleGraphic(cursor: string): Graphics {
-    const handle = new Graphics();
-    handle
-      .rect(-HANDLE_SIZE / 2, -HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE)
-      .fill(0xffffff)
-      .stroke({ width: HANDLE_STROKE_WIDTH, color: KONVA_BLUE });
-    handle.eventMode = 'static';
-    handle.cursor = cursor;
-    handle.hitArea = new Rectangle(-HANDLE_HIT_SIZE / 2, -HANDLE_HIT_SIZE / 2, HANDLE_HIT_SIZE, HANDLE_HIT_SIZE);
-    return handle;
+  /**
+   * One 24px gold circle with a real drop shadow, plus a separate soft
+   * additive "glow" halo behind it that stays hidden until pressed. The
+   * halo has to be its own shape, not just `blendMode = 'add'` on the mark
+   * itself: additive blending only brightens where it overlaps *something*
+   * underneath, and against this app's plain black sky an opaque circle has
+   * nothing to add to — it renders pixel-identical in 'add' and 'normal'.
+   * The halo is several concentric, alpha-fading circles (the exact
+   * layering technique `textures.ts`'s own particle texture already uses)
+   * so additive blending has translucent content to actually bloom against.
+   * Both handles (rotate + resize) share this exact look — only their
+   * position and the gesture wired to them differ.
+   */
+  private createHandle(cursor: string): { root: Container; glow: Graphics } {
+    const root = new Container();
+
+    const glow = new Graphics();
+    const glowSteps = 5;
+    const glowRadius = HANDLE_VISUAL_DIAMETER * 1.5;
+    for (let i = glowSteps; i > 0; i--) {
+      const t = i / glowSteps;
+      glow.circle(0, 0, glowRadius * t).fill({ color: HANDLE_FILL, alpha: (1 - t) * 0.6 });
+    }
+    glow.blendMode = 'add';
+    glow.visible = false;
+    glow.eventMode = 'none';
+    root.addChild(glow);
+
+    const mark = new Graphics();
+    mark.circle(0, 0, HANDLE_VISUAL_DIAMETER / 2).fill(HANDLE_FILL).stroke({ width: HANDLE_STROKE_WIDTH, color: HANDLE_STROKE });
+    mark.filters = [new DropShadowFilter({ color: 0x000000, alpha: 0.45, blur: 2, offset: { x: 0, y: 2 } })];
+    root.addChild(mark);
+
+    root.eventMode = 'static';
+    root.cursor = cursor;
+    root.hitArea = new Rectangle(-HANDLE_HIT_SIZE / 2, -HANDLE_HIT_SIZE / 2, HANDLE_HIT_SIZE, HANDLE_HIT_SIZE);
+    return { root, glow };
   }
 
   /** Opens the composer pre-filled with whatever text/effect is currently set — used by the T icon and by tapping the committed text. */
@@ -382,10 +407,9 @@ export class TextComposer {
     this.dragStart = null;
     this.pinchStartDist = null;
     this.activeHandlePointerId = null;
-    this.activeHandleGraphic?.scale.set(1);
-    this.activeHandleGraphic = null;
+    this.resizeHandle.glow.visible = false;
     this.activeRotatePointerId = null;
-    this.rotateHandle.scale.set(1);
+    this.rotateHandle.glow.visible = false;
   }
 
   /** Tapping the backdrop outside the box commits it: chrome disappears, bare text stays at its last position/scale. */
@@ -423,7 +447,7 @@ export class TextComposer {
       }
     });
 
-    this.wireResizeHandles();
+    this.wireResizeHandle();
     this.wireRotateHandle();
 
     this.deps.app.stage.on('pointermove', this.handleControlPointerMove);
@@ -471,13 +495,12 @@ export class TextComposer {
   private handleControlPointerEnd = (event: FederatedPointerEvent): void => {
     if (event.pointerId === this.activeRotatePointerId) {
       this.activeRotatePointerId = null;
-      this.rotateHandle.scale.set(1);
+      this.rotateHandle.glow.visible = false;
       return;
     }
     if (event.pointerId === this.activeHandlePointerId) {
       this.activeHandlePointerId = null;
-      this.activeHandleGraphic?.scale.set(1);
-      this.activeHandleGraphic = null;
+      this.resizeHandle.glow.visible = false;
       return;
     }
     this.activePointers.delete(event.pointerId);
@@ -486,47 +509,43 @@ export class TextComposer {
   };
 
   /**
-   * One-finger corner handles — equally capable as the two-finger pinch
-   * above, not a fallback for it. Dragging a handle measures its distance
-   * from the box's center and scales relative to where the drag started,
-   * exactly like pinch does with two points instead of one.
+   * The bottom-right handle only — equally capable as the two-finger pinch
+   * above, not a fallback for it. Dragging it measures its distance from
+   * the box's center and scales relative to where the drag started, exactly
+   * like pinch does with two points instead of one. Showing its `.glow`
+   * (additive-blended) while held is the touch feedback, the same
+   * overlapping-additive-brightness technique every spark/rocket in
+   * FireworksSystem.ts already uses for its own glow.
    */
-  private wireResizeHandles(): void {
-    for (const id of HANDLE_IDS) {
-      const handle = this.cornerHandles[id];
-      handle.on('pointerdown', (event: FederatedPointerEvent) => {
-        event.stopPropagation();
-        const { x, y } = event.global;
-        this.activeHandlePointerId = event.pointerId;
-        this.handleStartDist = Math.max(1, Math.hypot(x - this.posX, y - this.posY));
-        this.handleStartScale = this.scale;
-        this.activeHandleGraphic = handle;
-        handle.scale.set(1.15);
-      });
-    }
+  private wireResizeHandle(): void {
+    this.resizeHandle.root.on('pointerdown', (event: FederatedPointerEvent) => {
+      event.stopPropagation();
+      const { x, y } = event.global;
+      this.activeHandlePointerId = event.pointerId;
+      this.handleStartDist = Math.max(1, Math.hypot(x - this.posX, y - this.posY));
+      this.handleStartScale = this.scale;
+      this.resizeHandle.glow.visible = true;
+    });
   }
 
   /**
-   * The rotate handle sits above the box and is a child of `controlBox`, so
-   * Pixi's own `controlBox.rotation` already carries it around the center
-   * as the player turns the text — the handle never needs its own position
-   * math for that part. What this wires is purely "finger angle around the
-   * center -> new rotation": on grab it records the offset between the
-   * pointer's current angle (relative to `posX/posY`, in stage space,
-   * independent of the box's own current rotation) and the current
-   * rotation, then every move just re-applies that same offset to wherever
-   * the finger now is — so the handle tracks the finger exactly, a full
-   * 360° free turn, same technique the pinch/corner handles use for
-   * distance instead of angle.
+   * The top-right handle: Pixi's own `controlBox.rotation` already carries
+   * it around the box's center as the player turns the text, so this only
+   * wires "finger angle around the center -> new rotation". On grab it
+   * records the offset between the pointer's current angle (relative to
+   * `posX/posY`, in stage space, independent of the box's own current
+   * rotation) and the current rotation, then every move just re-applies
+   * that same offset to wherever the finger now is — so the handle tracks
+   * the finger exactly, a full 360° free turn.
    */
   private wireRotateHandle(): void {
-    this.rotateHandle.on('pointerdown', (event: FederatedPointerEvent) => {
+    this.rotateHandle.root.on('pointerdown', (event: FederatedPointerEvent) => {
       event.stopPropagation();
       const { x, y } = event.global;
       this.activeRotatePointerId = event.pointerId;
       const angle = Math.atan2(y - this.posY, x - this.posX);
       this.rotateStartAngleOffset = this.rotation - angle;
-      this.rotateHandle.scale.set(1.15);
+      this.rotateHandle.glow.visible = true;
     });
   }
 
@@ -542,9 +561,11 @@ export class TextComposer {
    * make the box balloon out as soon as the text tilts. `controlBox` is
    * positioned at (posX, posY) and rotated by `this.rotation` as one unit
    * via Pixi's own `position`/`rotation` (never CSS), which is why the
-   * border/handles/stalk below are all drawn centered on local (0, 0) —
-   * the container's own transform carries all of them around together,
-   * matching how Konva.js's own Transformer box works.
+   * border and both handles below are drawn/positioned centered on local
+   * (0, 0) — the container's own transform carries all of them around
+   * together. Nothing is ever positioned outside the box's own rectangle:
+   * the rotate handle sits exactly on the top-right corner, the resize
+   * handle exactly on the bottom-right corner, no stalk sticking out above.
    */
   private syncControlBoxTransform(): void {
     const width = this.previewText.width + BOX_PADDING * 2;
@@ -556,19 +577,10 @@ export class TextComposer {
       .clear()
       .rect(-hw, -hh, width, height)
       .fill({ color: 0x000000, alpha: 0.001 })
-      .stroke({ width: HANDLE_STROKE_WIDTH, color: KONVA_BLUE });
+      .stroke({ width: BOX_BORDER_WIDTH, color: KONVA_BLUE });
 
-    this.cornerHandles.nw.position.set(-hw, -hh);
-    this.cornerHandles.ne.position.set(hw, -hh);
-    this.cornerHandles.sw.position.set(-hw, hh);
-    this.cornerHandles.se.position.set(hw, hh);
-
-    this.rotateLine
-      .clear()
-      .moveTo(0, -hh)
-      .lineTo(0, -hh - ROTATE_ANCHOR_OFFSET)
-      .stroke({ width: HANDLE_STROKE_WIDTH, color: KONVA_BLUE });
-    this.rotateHandle.position.set(0, -hh - ROTATE_ANCHOR_OFFSET);
+    this.rotateHandle.root.position.set(hw, -hh);
+    this.resizeHandle.root.position.set(hw, hh);
 
     this.controlBox.position.set(this.posX, this.posY);
     this.controlBox.rotation = this.rotation;
