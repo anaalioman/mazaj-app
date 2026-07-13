@@ -408,6 +408,7 @@ export class PlanningScreen {
     return `
       <div class="mzj-planning-hint" id="mzj-planning-hint">اختر الشكل وحدد موقعه</div>
       <div class="mzj-planning-side mzj-planning-side-right">
+        <button type="button" id="mzj-planning-open-dimmer" class="mzj-planning-icon-btn">${icon('palette', 22)}<span>إضاءة الخلفية</span></button>
         <button type="button" id="mzj-planning-auto-show" class="mzj-planning-icon-btn">${icon('sparkles', 22)}<span>العرض التلقائي</span></button>
         <button type="button" id="mzj-planning-open-lab" class="mzj-planning-icon-btn">${icon('sliders', 22)}<span>المختبر</span></button>
         <button type="button" id="mzj-planning-open-text" class="mzj-planning-icon-btn">
@@ -421,9 +422,6 @@ export class PlanningScreen {
         <button type="button" id="mzj-planning-bg-image" class="mzj-planning-icon-btn">${icon('image', 22)}<span>صورة خلفية</span></button>
         <button type="button" id="mzj-planning-open-glow" class="mzj-planning-icon-btn">${icon('gem', 22)}<span>توهج الألعاب النارية</span></button>
         <button type="button" id="mzj-planning-open-color" class="mzj-planning-icon-btn">${icon('droplet', 22)}<span>لون المقذوفة</span></button>
-      </div>
-      <div class="mzj-planning-side mzj-planning-side-left">
-        <button type="button" id="mzj-planning-open-dimmer" class="mzj-planning-icon-btn">${icon('palette', 22)}<span>إضاءة الخلفية</span></button>
       </div>
 
       <input type="file" id="mzj-bg-image" accept="image/*" class="mzj-file-input-sr" />
