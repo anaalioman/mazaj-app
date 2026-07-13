@@ -5,6 +5,7 @@ import { icon } from './icons';
 import { UploadHint } from './UploadHint';
 import { TextComposer, type TextRevealConfig } from './TextComposer';
 import { ColorPickerPanel } from './ColorPickerPanel';
+import { ShapesPanel } from './ShapesPanel';
 
 export type LaunchMode = 'mass' | 'sequential';
 
@@ -60,13 +61,15 @@ const HINT_VISIBLE_MS = 2600;
  * anymore: each control it used to group behind one tap now has its own
  * dedicated icon instead.
  *
- * "الأشكال" opens a subpanel holding all 7 shape/pattern icons (peony,
- * rose, kamuro, ground fountain, palm crossette, multi-ring, strobe) —
- * consolidated here instead of spread across both side columns so those
- * columns stay short. Each keeps its exact original click behavior (shape
- * toggle or ground-fountain mode toggle); tapping any of them also closes
- * this subpanel immediately, same as picking a color closes ColorPicker.
- * "نص" (T) opens the full text-composing flow — see TextComposer.
+ * "الأشكال" opens ShapesPanel — a fully canvas-drawn (no HTML/CSS) panel
+ * docked beside this same right icon column, same style/geometry as
+ * ColorPickerPanel (see SideDockPanel) — holding all 7 shape/pattern icons
+ * (peony, rose, kamuro, ground fountain, palm crossette, multi-ring,
+ * strobe), consolidated here instead of spread across both side columns.
+ * Each keeps its exact original behavior (shape toggle or ground-fountain
+ * mode toggle) via the callbacks passed into ShapesPanel; tapping any of
+ * them also closes it immediately, same auto-hide as ColorPicker. "نص" (T)
+ * opens the full text-composing flow — see TextComposer.
  */
 export class PlanningScreen {
   readonly root: HTMLDivElement;
@@ -74,9 +77,11 @@ export class PlanningScreen {
   private readonly uploadHint: UploadHint;
   private readonly textComposer: TextComposer;
   private readonly colorPicker: ColorPickerPanel;
+  private readonly shapesPanel: ShapesPanel;
   private mode: LaunchMode = 'mass';
   private readonly massSelection = new Set<BurstType>();
   private activeSequentialShape: BurstType | null = null;
+  private groundFountainEnabled = false;
   private liveDocumentationArmed = false;
   private hintTimer: number | undefined;
 
@@ -92,13 +97,21 @@ export class PlanningScreen {
     // Canvas-drawn (no HTML/CSS) glowing swatch panel — see ColorPickerPanel.
     // It docks just left of the right icon column's live on-screen edge, so
     // it never overlaps/covers those icons.
+    const getLeftBoundary = () => this.query<HTMLElement>('.mzj-planning-side-right').getBoundingClientRect().left;
     this.colorPicker = new ColorPickerPanel(
       deps.app,
       deps.fireworks,
-      () => this.query<HTMLElement>('.mzj-planning-side-right').getBoundingClientRect().left,
+      getLeftBoundary,
       // Keeps the trigger icon's active state true even when the panel
       // closes itself (a confirmed swatch pick), not just via the trigger.
       (open) => this.query<HTMLButtonElement>('#mzj-planning-open-color').classList.toggle('active', open),
+    );
+    this.shapesPanel = new ShapesPanel(
+      deps.app,
+      getLeftBoundary,
+      (open) => this.query<HTMLButtonElement>('#mzj-planning-open-shapes').classList.toggle('active', open),
+      (type) => this.handlePickShape(type),
+      () => this.handleToggleGroundFountain(),
     );
 
     // While composing text (input+effects bar, or the position/scale
@@ -119,14 +132,13 @@ export class PlanningScreen {
       .addEventListener('click', () => this.setMode('sequential'));
     this.root.querySelector('#mzj-planning-open-text')!.addEventListener('click', () => this.textComposer.open());
 
-    this.wireShapeToggles();
     this.wireRandomMode();
-    this.wireGroundFountainMode();
     this.wireAutoShow();
     this.wireSubpanels();
     this.wireMedia();
     this.wireSliders();
     this.wireColorPicker();
+    this.wireShapesTrigger();
   }
 
   show(mode: LaunchMode): void {
@@ -143,6 +155,7 @@ export class PlanningScreen {
     this.root.classList.add('mzj-hidden');
     window.clearTimeout(this.hintTimer);
     this.colorPicker.setOpen(false);
+    this.shapesPanel.setOpen(false);
     for (const el of this.root.querySelectorAll('.mzj-planning-subpanel.open')) el.classList.remove('open');
     // The camera trigger's `.active` means "a video background is set", not
     // "its panel is open" — it must survive closing/reopening the screen,
@@ -178,7 +191,7 @@ export class PlanningScreen {
     this.root.dataset.mode = mode;
     this.root.querySelector('#mzj-planning-mode-mass')!.classList.toggle('active', mode === 'mass');
     this.root.querySelector('#mzj-planning-mode-sequential')!.classList.toggle('active', mode === 'sequential');
-    this.syncShapeVisuals();
+    this.shapesPanel.setActive(this.computeActiveShapeIds());
     this.deps.onModeChange(mode);
   }
 
@@ -187,33 +200,35 @@ export class PlanningScreen {
   }
 
   /**
-   * A shape-icon tap means something different per mode: in 'mass' it
-   * toggles that shape's membership in the launch-together set; in
-   * 'sequential' it selects the one shape new markers get stamped with
+   * A shape pick from ShapesPanel means something different per mode: in
+   * 'mass' it toggles that shape's membership in the launch-together set;
+   * in 'sequential' it selects the one shape new markers get stamped with
    * (see PlanningMode.getActiveShape). Neither ever fires anything itself.
    */
-  private wireShapeToggles(): void {
-    const buttons = Array.from(this.root.querySelectorAll<HTMLButtonElement>('[data-burst-type]'));
-
-    for (const btn of buttons) {
-      btn.addEventListener('click', () => {
-        const type = btn.dataset.burstType as BurstType;
-        if (this.mode === 'mass') {
-          if (this.massSelection.has(type)) this.massSelection.delete(type);
-          else this.massSelection.add(type);
-        } else {
-          this.activeSequentialShape = type;
-        }
-        this.syncShapeVisuals();
-        this.closeShapesPanel();
-      });
+  private handlePickShape(type: BurstType): void {
+    if (this.mode === 'mass') {
+      if (this.massSelection.has(type)) this.massSelection.delete(type);
+      else this.massSelection.add(type);
+    } else {
+      this.activeSequentialShape = type;
     }
+    this.shapesPanel.setActive(this.computeActiveShapeIds());
   }
 
-  /** A confirmed pick from "الأشكال" collapses that subpanel immediately — same auto-hide behavior as ColorPickerPanel. */
-  private closeShapesPanel(): void {
-    this.query<HTMLDivElement>('#mzj-planning-shapes-panel').classList.remove('open');
-    this.query<HTMLButtonElement>('#mzj-planning-open-shapes').classList.remove('active');
+  private handleToggleGroundFountain(): void {
+    this.groundFountainEnabled = !this.groundFountainEnabled;
+    this.deps.fireworks.setGroundFountainMode(this.groundFountainEnabled);
+    this.shapesPanel.setActive(this.computeActiveShapeIds());
+  }
+
+  /** Ground fountain is an independent on/off toggle (not tied to mode), so it's always unioned in on top of whichever shape(s) the current mode has active. */
+  private computeActiveShapeIds(): Set<string> {
+    const ids: Set<string> =
+      this.mode === 'mass'
+        ? new Set(this.massSelection)
+        : new Set(this.activeSequentialShape ? [this.activeSequentialShape] : []);
+    if (this.groundFountainEnabled) ids.add('groundFountain');
+    return ids;
   }
 
   /** getActiveShape dep PlanningMode calls on every stage tap while sequential mode is active. */
@@ -221,35 +236,41 @@ export class PlanningScreen {
     return this.activeSequentialShape;
   }
 
-  private syncShapeVisuals(): void {
-    const buttons = Array.from(this.root.querySelectorAll<HTMLButtonElement>('[data-burst-type]'));
-    for (const btn of buttons) {
-      const type = btn.dataset.burstType as BurstType;
-      const active = this.mode === 'mass' ? this.massSelection.has(type) : type === this.activeSequentialShape;
-      btn.classList.toggle('active', active);
-    }
-  }
-
   /**
-   * "لون المقذوفة": the trigger itself stays a normal HTML icon button (same
-   * as every other icon in this column), but what it opens is the fully
-   * canvas-drawn ColorPickerPanel, not an HTML subpanel — so it has to close
-   * every HTML subpanel itself (they'd otherwise stay open underneath it)
-   * and the reverse: wireSubpanels closes this one whenever another HTML
-   * subpanel opens.
+   * "لون المقذوفة" and "الأشكال": both triggers stay normal HTML icon
+   * buttons (same as every other icon in this column), but each opens a
+   * fully canvas-drawn SideDockPanel, not an HTML subpanel — so each has to
+   * close every HTML subpanel *and* the other canvas panel itself (they'd
+   * otherwise stay open underneath it), and wireSubpanels closes both
+   * whenever an HTML subpanel opens.
    */
   private wireColorPicker(): void {
     const trigger = this.query<HTMLButtonElement>('#mzj-planning-open-color');
     trigger.addEventListener('click', () => {
       const willOpen = !this.colorPicker.open;
-      for (const el of this.root.querySelectorAll('.mzj-planning-subpanel.open')) el.classList.remove('open');
-      for (const el of this.root.querySelectorAll(
-        '[id^="mzj-planning-open-"].active:not(#mzj-planning-open-camera):not(#mzj-planning-open-color)',
-      )) {
-        el.classList.remove('active');
-      }
+      this.closeAllHtmlSubpanels();
+      this.shapesPanel.setOpen(false);
       this.colorPicker.setOpen(willOpen);
     });
+  }
+
+  private wireShapesTrigger(): void {
+    const trigger = this.query<HTMLButtonElement>('#mzj-planning-open-shapes');
+    trigger.addEventListener('click', () => {
+      const willOpen = !this.shapesPanel.open;
+      this.closeAllHtmlSubpanels();
+      this.colorPicker.setOpen(false);
+      this.shapesPanel.setOpen(willOpen);
+    });
+  }
+
+  private closeAllHtmlSubpanels(): void {
+    for (const el of this.root.querySelectorAll('.mzj-planning-subpanel.open')) el.classList.remove('open');
+    for (const el of this.root.querySelectorAll(
+      '[id^="mzj-planning-open-"].active:not(#mzj-planning-open-camera):not(#mzj-planning-open-color):not(#mzj-planning-open-shapes)',
+    )) {
+      el.classList.remove('active');
+    }
   }
 
   private wireRandomMode(): void {
@@ -259,17 +280,6 @@ export class PlanningScreen {
       enabled = !enabled;
       this.deps.fireworks.setRandomMode(enabled);
       button.classList.toggle('active', enabled);
-    });
-  }
-
-  private wireGroundFountainMode(): void {
-    const button = this.query<HTMLButtonElement>('#mzj-planning-ground-fountain');
-    let enabled = false;
-    button.addEventListener('click', () => {
-      enabled = !enabled;
-      this.deps.fireworks.setGroundFountainMode(enabled);
-      button.classList.toggle('active', enabled);
-      this.closeShapesPanel();
     });
   }
 
@@ -296,13 +306,13 @@ export class PlanningScreen {
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-dimmer'), panel: this.query<HTMLDivElement>('#mzj-planning-dimmer-panel') },
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-glow'), panel: this.query<HTMLDivElement>('#mzj-planning-glow-panel') },
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-lab'), panel: this.query<HTMLDivElement>('#mzj-planning-lab-panel') },
-      { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-shapes'), panel: this.query<HTMLDivElement>('#mzj-planning-shapes-panel') },
     ];
 
     for (const entry of entries) {
       entry.trigger.addEventListener('click', () => {
         const willOpen = !entry.panel.classList.contains('open');
         this.colorPicker.setOpen(false);
+        this.shapesPanel.setOpen(false);
         for (const other of entries) {
           other.panel.classList.toggle('open', other === entry && willOpen);
           if (other.trigger !== cameraTrigger) other.trigger.classList.toggle('active', other === entry && willOpen);
@@ -419,16 +429,6 @@ export class PlanningScreen {
       <input type="file" id="mzj-bg-image" accept="image/*" class="mzj-file-input-sr" />
       <input type="file" id="mzj-bg-video" accept="video/*" class="mzj-file-input-sr" />
 
-      <div class="mzj-planning-subpanel mzj-planning-shapes-panel" id="mzj-planning-shapes-panel">
-        ${this.shapeIconButton('peony', 'بيوني بقلب')}
-        ${this.shapeIconButton('rose', 'وردة')}
-        ${this.shapeIconButton('kamuro', 'كامورو ذهبي')}
-        <button type="button" id="mzj-planning-ground-fountain" class="mzj-planning-icon-btn">${icon('groundFountain', 22)}<span>نافورة أرضية</span></button>
-        ${this.shapeIconButton('crossette', 'كروسيت نخلة')}
-        ${this.shapeIconButton('multiRing', 'حلقات متعددة')}
-        ${this.shapeIconButton('strobe', 'وميض متلألئ')}
-      </div>
-
       <div class="mzj-planning-subpanel mzj-planning-camera-panel" id="mzj-planning-camera-panel">
         <button type="button" id="mzj-planning-camera-upload" class="mzj-planning-choice-btn">رفع فيديو</button>
         <button type="button" id="mzj-planning-camera-live" class="mzj-planning-choice-btn">توثيق مباشر</button>
@@ -449,9 +449,5 @@ export class PlanningScreen {
         ${this.sliderRow(SLIDERS.scale)}
       </div>
     `;
-  }
-
-  private shapeIconButton(name: BurstType, label: string): string {
-    return `<button type="button" class="mzj-planning-icon-btn" data-burst-type="${name}">${icon(name, 22)}<span>${label}</span></button>`;
   }
 }

@@ -1,23 +1,17 @@
-import { Application, Container, Graphics, Rectangle, Sprite, Text, TextStyle } from 'pixi.js';
-import { AdvancedBloomFilter } from 'pixi-filters';
+import { Application, Container, Graphics, Sprite } from 'pixi.js';
 import { COLOR_CHOICES, type NamedColorChoice } from '../fireworks/colors';
 import { getParticleTexture } from '../fireworks/textures';
 import type { FireworksSystem } from '../fireworks/FireworksSystem';
+import { SideDockPanel } from './SideDockPanel';
 
 const SWATCH_RADIUS = 13;
 const SWATCH_GAP = 10;
-const PANEL_PADDING = 16;
 // Wider than the swatch column itself needs — the title wraps across a
 // couple of lines within this width instead of overflowing sideways past
 // the panel (it's docked at the screen's right edge, so an unwrapped line
 // would run straight off the viewport).
 const PANEL_WIDTH = 108;
-const TITLE_AREA = 56;
-// Gap kept clear between the panel's own edge and the icon column it docks
-// beside, so it never touches/overlaps the icons themselves.
-const DOCK_GAP = 14;
 const HALO_SCALE = 2.6;
-const SLIDE_MS = 220;
 const MULTI_SEGMENT_COLORS = [0xff2d2d, 0xfff23d, 0x39ff6a, 0x1e6bff, 0x9a3dff, 0xff2ecb];
 
 interface Swatch {
@@ -27,42 +21,20 @@ interface Swatch {
 }
 
 /**
- * "لون المقذوفة": a fully canvas-drawn (no HTML/CSS) vertical panel that
- * slides in from the screen's right edge. Every swatch is a real additive
- * glow — a color-tinted soft-particle-texture halo (the same shared texture
- * every spark in the engine uses) behind a solid `add`-blended core — plus a
- * shared AdvancedBloomFilter over the whole panel, the identical filter
- * FireworksSystem uses on its own bursts, so the swatches genuinely bloom
- * like neon instead of reading as flat color chips. Picking one calls
- * `FireworksSystem.setActiveColor()` immediately; every subsequent rocket is
- * dyed that color however it's launched (free tap, mass, or sequential).
- *
- * It docks *beside* the planning screen's right icon column, not over it —
- * `getLeftBoundary` reports that column's live on-screen left edge (it can
- * reflow with label text/viewport size), and the panel settles just to the
- * left of it with a fixed gap, so both stay fully visible and usable at once.
- *
- * Auto-hides itself the instant a swatch is tapped (a confirmed pick, not
- * just a hover) so the planning area goes back to fully clean/unobstructed;
- * `onOpenChange` lets the caller keep its own trigger icon's active state in
- * sync even when the close happens this way instead of via that trigger.
+ * "لون المقذوفة": a fully canvas-drawn (no HTML/CSS) glowing swatch grid —
+ * see SideDockPanel for the shared dock/slide/bloom/title mechanics. Every
+ * swatch is a real additive glow — a color-tinted soft-particle-texture
+ * halo (the same shared texture every spark in the engine uses) behind an
+ * `add`-blended solid core — so the swatches genuinely bloom like neon
+ * instead of reading as flat color chips. Picking one calls
+ * `FireworksSystem.setActiveColor()` immediately and auto-closes the panel;
+ * every subsequent rocket is dyed that color however it's launched (free
+ * tap, mass, or sequential).
  */
-export class ColorPickerPanel {
-  private readonly app: Application;
+export class ColorPickerPanel extends SideDockPanel {
   private readonly fireworks: FireworksSystem;
-  private readonly getLeftBoundary: () => number;
-  private readonly onOpenChange?: (open: boolean) => void;
-  private readonly container: Container;
-  private readonly panelBg: Graphics;
-  private readonly title: Text;
   private readonly swatches: Swatch[] = [];
   private activeId = 'multi';
-
-  private isOpen = false;
-  private animT = 0;
-  private animDir = 0;
-  private panelWidth = 0;
-  private panelHeight = 0;
 
   constructor(
     app: Application,
@@ -70,61 +42,21 @@ export class ColorPickerPanel {
     getLeftBoundary: () => number,
     onOpenChange?: (open: boolean) => void,
   ) {
-    this.app = app;
+    super(app, 'حدد لون المقذوفة', PANEL_WIDTH, getLeftBoundary, onOpenChange);
     this.fireworks = fireworks;
-    this.getLeftBoundary = getLeftBoundary;
-    this.onOpenChange = onOpenChange;
 
-    this.container = new Container();
-    this.container.visible = false;
-    this.container.filters = [
-      new AdvancedBloomFilter({ threshold: 0.35, blur: 4, quality: 4, bloomScale: 1.2, brightness: 1 }),
-    ];
-    app.stage.addChild(this.container);
+    let y = this.contentTop + SWATCH_RADIUS;
+    for (const choice of COLOR_CHOICES) {
+      const swatch = this.buildSwatch(choice);
+      swatch.group.position.set(this.panelWidth / 2, y);
+      this.addContent(swatch.group);
+      this.swatches.push(swatch);
+      y += SWATCH_RADIUS * 2 + SWATCH_GAP;
+    }
+    this.syncActiveRing();
 
-    this.panelBg = new Graphics();
-    this.panelBg.eventMode = 'static';
-    // Absorbs every tap anywhere on the panel (gaps included) so it never
-    // leaks through to the stage's own tap-to-fire handler underneath.
-    this.panelBg.on('pointertap', (event) => event.stopPropagation());
-    this.container.addChild(this.panelBg);
-
-    this.title = new Text({
-      text: 'حدد لون المقذوفة',
-      style: new TextStyle({
-        fontFamily: 'Tajawal, system-ui, sans-serif',
-        fontWeight: '800',
-        fontSize: 12,
-        fill: 0xffe9b3,
-        align: 'center',
-        wordWrap: true,
-        wordWrapWidth: PANEL_WIDTH - PANEL_PADDING * 2,
-      }),
-    });
-    this.title.anchor.set(0.5, 0);
-    this.container.addChild(this.title);
-
-    for (const choice of COLOR_CHOICES) this.swatches.push(this.buildSwatch(choice));
-
-    this.layout();
-    app.renderer.on('resize', () => this.layout());
-    app.ticker.add(this.tick);
-  }
-
-  get open(): boolean {
-    return this.isOpen;
-  }
-
-  toggle(): void {
-    this.setOpen(!this.isOpen);
-  }
-
-  setOpen(open: boolean): void {
-    if (this.isOpen === open) return;
-    this.isOpen = open;
-    this.animDir = open ? 1 : -1;
-    if (open) this.container.visible = true;
-    this.onOpenChange?.(open);
+    const count = COLOR_CHOICES.length;
+    this.finalize(count * (SWATCH_RADIUS * 2) + (count - 1) * SWATCH_GAP);
   }
 
   private buildSwatch(choice: NamedColorChoice): Swatch {
@@ -169,7 +101,6 @@ export class ColorPickerPanel {
       this.select(choice.id);
     });
 
-    this.container.addChild(group);
     return { id: choice.id, group, ring };
   }
 
@@ -193,50 +124,4 @@ export class ColorPickerPanel {
       }
     }
   }
-
-  private layout(): void {
-    const count = COLOR_CHOICES.length;
-    this.panelWidth = PANEL_WIDTH;
-    this.panelHeight = TITLE_AREA + count * (SWATCH_RADIUS * 2) + (count - 1) * SWATCH_GAP + PANEL_PADDING * 2;
-
-    this.panelBg
-      .clear()
-      .roundRect(0, 0, this.panelWidth, this.panelHeight, 18)
-      .fill({ color: 0x0a0a14, alpha: 0.6 })
-      .stroke({ width: 1.5, color: 0xffe9b3, alpha: 0.35 });
-    this.panelBg.hitArea = new Rectangle(0, 0, this.panelWidth, this.panelHeight);
-
-    this.title.position.set(this.panelWidth / 2, PANEL_PADDING);
-
-    let y = PANEL_PADDING + TITLE_AREA + SWATCH_RADIUS;
-    for (const swatch of this.swatches) {
-      swatch.group.position.set(this.panelWidth / 2, y);
-      y += SWATCH_RADIUS * 2 + SWATCH_GAP;
-    }
-    this.syncActiveRing();
-
-    // Vertically centered on screen, matching how the icon column beside it
-    // is centered (see .mzj-planning-side's justify-content: center).
-    this.container.y = Math.max(8, (this.app.screen.height - this.panelHeight) / 2);
-    this.applyPosition();
-  }
-
-  private applyPosition(): void {
-    const dockX = this.getLeftBoundary() - DOCK_GAP - this.panelWidth;
-    const hiddenX = this.app.screen.width;
-    this.container.x = hiddenX + (dockX - hiddenX) * this.animT;
-    this.container.alpha = this.animT;
-  }
-
-  private tick = (ticker: { deltaMS: number }): void => {
-    if (this.animDir === 0) return;
-    this.animT += (ticker.deltaMS / SLIDE_MS) * this.animDir;
-    this.animT = Math.max(0, Math.min(1, this.animT));
-    this.applyPosition();
-    if (this.animDir > 0 && this.animT >= 1) this.animDir = 0;
-    if (this.animDir < 0 && this.animT <= 0) {
-      this.animDir = 0;
-      this.container.visible = false;
-    }
-  };
 }
