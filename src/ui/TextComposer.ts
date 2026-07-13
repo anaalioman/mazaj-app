@@ -1,4 +1,4 @@
-import { Application, Graphics, Text, TextStyle } from 'pixi.js';
+import { Application, Container, Graphics, Rectangle, Text, TextStyle, type FederatedPointerEvent } from 'pixi.js';
 import { icon } from './icons';
 import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
 import { TEXT_EFFECTS } from '../effects/textEffects/registry';
@@ -32,6 +32,18 @@ const PREVIEW_HOLD_BEFORE_MS = 600;
 const PREVIEW_HOLD_AFTER_MS = 600;
 const PREVIEW_NONE_HOLD_MS = 2000;
 
+/** Ported by hand from Konva.js's real Transformer defaults (konva/src/shapes/Transformer.ts) — see the control-box doc comment below. */
+const KONVA_BLUE = 0x00a1ff; // rgb(0, 161, 255): anchorStroke / borderStroke
+const HANDLE_SIZE = 10; // anchorSize (anchorCornerRadius: 0 — an actual square, not a circle)
+const HANDLE_STROKE_WIDTH = 1; // anchorStrokeWidth / borderStrokeWidth
+const ROTATE_ANCHOR_OFFSET = 50; // rotateAnchorOffset: the rotate handle's stalk length
+/** Not a Konva number — Konva has no touch story of its own (it leans on cursor changes, which don't exist on touch). Explicit oversized Pixi hitArea per finger, same idea as the old CSS invisible touch target. */
+const HANDLE_HIT_SIZE = 44;
+const BOX_PADDING = 14;
+
+type HandleId = 'nw' | 'ne' | 'sw' | 'se';
+const HANDLE_IDS: HandleId[] = ['nw', 'ne', 'sw', 'se'];
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -41,15 +53,24 @@ function clamp(value: number, min: number, max: number): number {
  * bar (each icon auto-loops its own demo continuously — no tap needed to
  * preview, a tap only confirms that effect), a back arrow that closes all of
  * that and reveals the player's real text in a draggable + pinch-resizable
- * control box, and tapping outside commits it (bare text, no chrome) at
- * whatever position/scale was left. Tapping the committed text later
- * reopens this whole flow pre-filled. Position/scale persist in memory for
- * as long as the mood instance lives (see fireworksMood.ts's module doc).
+ * + rotatable control box, and tapping outside commits it (bare text, no
+ * chrome) at whatever position/scale/rotation was left. Tapping the
+ * committed text later reopens this whole flow pre-filled. Position/scale/
+ * rotation persist in memory for as long as the mood instance lives (see
+ * fireworksMood.ts's module doc).
  *
- * Two separate DOM roots because exactly one of them is ever visible at a
- * time: `root` (top input + effects bar) while composing text, and
- * `controlBoxRoot` (a full-screen backdrop containing the drag/pinch box)
- * once the back arrow closes that — they can't be nested inside each other.
+ * `root` (the top input + effects bar) is the one and only DOM element in
+ * this class — real keyboard text entry has no Pixi equivalent, so it stays
+ * plain HTML, same as every other compose-time toolbar in this app. The
+ * control box itself (border, the 4 resize handles, the rotate handle +
+ * its stalk) and the full-screen "tap outside to commit" backdrop are
+ * genuine Pixi `Graphics`/`Container` objects living on `app.stage`,
+ * positioned/rotated via Pixi's own `position`/`rotation` — never CSS —
+ * so they never desync from the WebGL frame the way a DOM overlay can.
+ * Their look is Konva.js's own Transformer defaults, ported by hand
+ * (see the KONVA_* constants above and syncControlBoxTransform() below):
+ * 10x10 square anchors, 1px `rgb(0, 161, 255)` stroke on a white fill, a
+ * 50px rotate stalk — not an invented style.
  *
  * The effects bar's demo previews reuse the exact same TextReveal engine as
  * the real final reveal (same particle physics, no CSS/static-image
@@ -59,13 +80,23 @@ function clamp(value: number, min: number, max: number): number {
  */
 export class TextComposer {
   readonly root: HTMLDivElement;
-  readonly controlBoxRoot: HTMLDivElement;
   private readonly deps: TextComposerDeps;
   private readonly previewText: Text;
   private readonly baseFontSize: number;
   private readonly previewReveal: TextReveal;
   /** Clips the preview reveal's text+particles to the current icon slot's rectangle — nothing may render outside it, however the particles naturally move. */
   private readonly previewMask: Graphics;
+
+  /** Full-screen, invisible-but-hit-testable — catches "tap outside the box" to commit. Sits directly under `controlBox` on the stage so the box/handles always win the hit test over it. */
+  private readonly backdrop: Graphics;
+  /** Everything the player drags/pinches/rotates: positioned at (posX, posY) and rotated by `this.rotation` as one unit, which is why every child below is drawn centered on its own local origin. */
+  private readonly controlBox: Container;
+  private readonly boxBorder: Graphics;
+  private readonly cornerHandles: Record<HandleId, Graphics>;
+  private readonly rotateLine: Graphics;
+  private readonly rotateHandle: Graphics;
+  /** Whichever corner handle is mid-drag, purely to reset its press-scale back to 1 on release without guessing which one it was. */
+  private activeHandleGraphic: Graphics | null = null;
 
   private text = SAMPLE_PHRASE;
   private effect: TextRevealEffect = 'none';
@@ -129,31 +160,69 @@ export class TextComposer {
     this.root.innerHTML = this.template();
     document.body.appendChild(this.root);
 
-    this.controlBoxRoot = document.createElement('div');
-    this.controlBoxRoot.id = 'mzj-text-control-backdrop';
-    this.controlBoxRoot.className = 'mzj-hidden';
-    this.controlBoxRoot.innerHTML = `
-      <div id="mzj-text-control-box">
-        <div class="mzj-text-control-handle" data-handle="nw"></div>
-        <div class="mzj-text-control-handle" data-handle="ne"></div>
-        <div class="mzj-text-control-handle" data-handle="sw"></div>
-        <div class="mzj-text-control-handle" data-handle="se"></div>
-        <div class="mzj-text-rotate-line"></div>
-        <div class="mzj-text-rotate-handle"></div>
-      </div>
-    `;
-    document.body.appendChild(this.controlBoxRoot);
-
-    for (const root of [this.root, this.controlBoxRoot]) {
-      for (const type of ['pointerdown', 'click', 'input', 'change'] as const) {
-        root.addEventListener(type, (event) => event.stopPropagation());
-      }
+    for (const type of ['pointerdown', 'click', 'input', 'change'] as const) {
+      this.root.addEventListener(type, (event) => event.stopPropagation());
     }
+
+    // Full-screen hit target for "tap outside the box commits it" — a
+    // near-zero-alpha fill so it's still real drawn geometry (Pixi hit-tests
+    // a Graphics against its own shape when no explicit `hitArea` is set),
+    // matching how `app.stage.hitArea` itself is kept in sync on resize
+    // (see fireworksMood.ts).
+    this.backdrop = new Graphics();
+    this.backdrop.rect(0, 0, width, height).fill({ color: 0x000000, alpha: 0.001 });
+    this.backdrop.eventMode = 'static';
+    this.backdrop.visible = false;
+    this.backdrop.on('pointerdown', (event: FederatedPointerEvent) => {
+      event.stopPropagation();
+      this.commit();
+    });
+    deps.app.stage.addChild(this.backdrop);
+    deps.app.renderer.on('resize', () => {
+      const screen = deps.app.screen;
+      this.backdrop.clear().rect(0, 0, screen.width, screen.height).fill({ color: 0x000000, alpha: 0.001 });
+    });
+
+    this.controlBox = new Container();
+    this.controlBox.visible = false;
+    deps.app.stage.addChild(this.controlBox);
+
+    this.boxBorder = new Graphics();
+    this.boxBorder.eventMode = 'static';
+    this.boxBorder.cursor = 'grab';
+    this.controlBox.addChild(this.boxBorder);
+
+    this.cornerHandles = {
+      nw: this.createHandleGraphic('nwse-resize'),
+      ne: this.createHandleGraphic('nesw-resize'),
+      sw: this.createHandleGraphic('nesw-resize'),
+      se: this.createHandleGraphic('nwse-resize'),
+    };
+    for (const id of HANDLE_IDS) this.controlBox.addChild(this.cornerHandles[id]);
+
+    this.rotateLine = new Graphics();
+    this.controlBox.addChild(this.rotateLine);
+
+    this.rotateHandle = this.createHandleGraphic('crosshair');
+    this.controlBox.addChild(this.rotateHandle);
 
     this.wireInput();
     this.wireEffectButtons();
     this.wireBack();
     this.wireControlBox();
+  }
+
+  /** One 10x10 white/blue square (Konva's own anchor look, shared by every corner + the rotater), centered on its own local origin so positioning it is just a `.position.set()`. */
+  private createHandleGraphic(cursor: string): Graphics {
+    const handle = new Graphics();
+    handle
+      .rect(-HANDLE_SIZE / 2, -HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE)
+      .fill(0xffffff)
+      .stroke({ width: HANDLE_STROKE_WIDTH, color: KONVA_BLUE });
+    handle.eventMode = 'static';
+    handle.cursor = cursor;
+    handle.hitArea = new Rectangle(-HANDLE_HIT_SIZE / 2, -HANDLE_HIT_SIZE / 2, HANDLE_HIT_SIZE, HANDLE_HIT_SIZE);
+    return handle;
   }
 
   /** Opens the composer pre-filled with whatever text/effect is currently set — used by the T icon and by tapping the committed text. */
@@ -300,18 +369,23 @@ export class TextComposer {
   }
 
   private openControlBox(): void {
-    this.controlBoxRoot.classList.remove('mzj-hidden');
+    this.backdrop.visible = true;
+    this.controlBox.visible = true;
     this.syncControlBoxTransform();
     this.deps.onComposingChange(true);
   }
 
   private closeControlBox(): void {
-    this.controlBoxRoot.classList.add('mzj-hidden');
+    this.backdrop.visible = false;
+    this.controlBox.visible = false;
     this.activePointers.clear();
     this.dragStart = null;
     this.pinchStartDist = null;
     this.activeHandlePointerId = null;
+    this.activeHandleGraphic?.scale.set(1);
+    this.activeHandleGraphic = null;
     this.activeRotatePointerId = null;
+    this.rotateHandle.scale.set(1);
   }
 
   /** Tapping the backdrop outside the box commits it: chrome disappears, bare text stays at its last position/scale. */
@@ -321,23 +395,27 @@ export class TextComposer {
     this.deps.onComposingChange(false);
   }
 
+  /**
+   * Every drag/resize/rotate gesture starts on a specific Pixi object's own
+   * `pointerdown` (the box border, a corner handle, or the rotate handle),
+   * but `pointermove`/`pointerup` are wired once here on `app.stage` — the
+   * same idiom PlanningMode.ts already uses elsewhere in this app for its
+   * own pin-dragging, and the standard Pixi pattern for "keep tracking a
+   * finger even once it slides off the small object that grabbed it"
+   * (there's no DOM-style `setPointerCapture` for a Pixi DisplayObject).
+   * `event.stopPropagation()` on every `pointerdown` below matters for a
+   * different reason than it did as CSS: without it, the same tap would
+   * also bubble up to `app.stage`'s own tap-to-fire listener in
+   * fireworksMood.ts and launch a rocket underneath the box.
+   */
   private wireControlBox(): void {
-    const box = this.controlBoxRoot.querySelector<HTMLDivElement>('#mzj-text-control-box')!;
-
-    box.addEventListener('pointerdown', (event) => {
-      // Capture is best-effort: without it a finger sliding off the box's
-      // bounds would stop delivering move events to it, but a capture
-      // failure must never abort tracking the pointer for the drag/pinch
-      // math below.
-      try {
-        box.setPointerCapture(event.pointerId);
-      } catch {
-        // ignore — see above
-      }
-      this.activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    this.boxBorder.on('pointerdown', (event: FederatedPointerEvent) => {
+      event.stopPropagation();
+      const { x, y } = event.global;
+      this.activePointers.set(event.pointerId, { x, y });
 
       if (this.activePointers.size === 1) {
-        this.dragStart = { x: event.clientX - this.posX, y: event.clientY - this.posY };
+        this.dragStart = { x: x - this.posX, y: y - this.posY };
       } else if (this.activePointers.size === 2) {
         const [a, b] = Array.from(this.activePointers.values());
         this.pinchStartDist = Math.hypot(a.x - b.x, a.y - b.y);
@@ -345,40 +423,67 @@ export class TextComposer {
       }
     });
 
-    box.addEventListener('pointermove', (event) => {
-      if (!this.activePointers.has(event.pointerId)) return;
-      this.activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    this.wireResizeHandles();
+    this.wireRotateHandle();
 
-      if (this.activePointers.size >= 2 && this.pinchStartDist !== null) {
-        const [a, b] = Array.from(this.activePointers.values());
-        const dist = Math.hypot(a.x - b.x, a.y - b.y);
-        this.scale = clamp(this.pinchStartScale * (dist / this.pinchStartDist), MIN_SCALE, MAX_SCALE);
-        this.syncPreviewTransform();
-        this.syncControlBoxTransform();
-      } else if (this.activePointers.size === 1 && this.dragStart) {
-        this.posX = event.clientX - this.dragStart.x;
-        this.posY = event.clientY - this.dragStart.y;
-        this.syncPreviewTransform();
-        this.syncControlBoxTransform();
-      }
-    });
-
-    const endPointer = (event: PointerEvent) => {
-      this.activePointers.delete(event.pointerId);
-      if (this.activePointers.size < 2) this.pinchStartDist = null;
-      if (this.activePointers.size < 1) this.dragStart = null;
-    };
-    box.addEventListener('pointerup', endPointer);
-    box.addEventListener('pointercancel', endPointer);
-
-    this.wireResizeHandles(box);
-    this.wireRotateHandle(box);
-
-    // Tapping the backdrop (anywhere in controlBoxRoot outside the box itself) commits.
-    this.controlBoxRoot.addEventListener('pointerdown', (event) => {
-      if (!box.contains(event.target as Node)) this.commit();
-    });
+    this.deps.app.stage.on('pointermove', this.handleControlPointerMove);
+    this.deps.app.stage.on('pointerup', this.handleControlPointerEnd);
+    this.deps.app.stage.on('pointerupoutside', this.handleControlPointerEnd);
   }
+
+  private handleControlPointerMove = (event: FederatedPointerEvent): void => {
+    if (!this.controlBox.visible) return;
+    const { x, y } = event.global;
+
+    if (event.pointerId === this.activeRotatePointerId) {
+      const angle = Math.atan2(y - this.posY, x - this.posX);
+      this.rotation = angle + this.rotateStartAngleOffset;
+      this.syncPreviewTransform();
+      this.syncControlBoxTransform();
+      return;
+    }
+
+    if (event.pointerId === this.activeHandlePointerId) {
+      const dist = Math.hypot(x - this.posX, y - this.posY);
+      this.scale = clamp(this.handleStartScale * (dist / this.handleStartDist), MIN_SCALE, MAX_SCALE);
+      this.syncPreviewTransform();
+      this.syncControlBoxTransform();
+      return;
+    }
+
+    if (!this.activePointers.has(event.pointerId)) return;
+    this.activePointers.set(event.pointerId, { x, y });
+
+    if (this.activePointers.size >= 2 && this.pinchStartDist !== null) {
+      const [a, b] = Array.from(this.activePointers.values());
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      this.scale = clamp(this.pinchStartScale * (dist / this.pinchStartDist), MIN_SCALE, MAX_SCALE);
+      this.syncPreviewTransform();
+      this.syncControlBoxTransform();
+    } else if (this.activePointers.size === 1 && this.dragStart) {
+      this.posX = x - this.dragStart.x;
+      this.posY = y - this.dragStart.y;
+      this.syncPreviewTransform();
+      this.syncControlBoxTransform();
+    }
+  };
+
+  private handleControlPointerEnd = (event: FederatedPointerEvent): void => {
+    if (event.pointerId === this.activeRotatePointerId) {
+      this.activeRotatePointerId = null;
+      this.rotateHandle.scale.set(1);
+      return;
+    }
+    if (event.pointerId === this.activeHandlePointerId) {
+      this.activeHandlePointerId = null;
+      this.activeHandleGraphic?.scale.set(1);
+      this.activeHandleGraphic = null;
+      return;
+    }
+    this.activePointers.delete(event.pointerId);
+    if (this.activePointers.size < 2) this.pinchStartDist = null;
+    if (this.activePointers.size < 1) this.dragStart = null;
+  };
 
   /**
    * One-finger corner handles — equally capable as the two-finger pinch
@@ -386,89 +491,43 @@ export class TextComposer {
    * from the box's center and scales relative to where the drag started,
    * exactly like pinch does with two points instead of one.
    */
-  private wireResizeHandles(box: HTMLDivElement): void {
-    for (const handle of box.querySelectorAll<HTMLDivElement>('.mzj-text-control-handle')) {
-      handle.addEventListener('pointerdown', (event) => {
-        // Stops this from also being seen by the box's own pointerdown
-        // above — a handle grab is never simultaneously a box drag.
+  private wireResizeHandles(): void {
+    for (const id of HANDLE_IDS) {
+      const handle = this.cornerHandles[id];
+      handle.on('pointerdown', (event: FederatedPointerEvent) => {
         event.stopPropagation();
-        try {
-          handle.setPointerCapture(event.pointerId);
-        } catch {
-          // ignore — see the box drag's own comment on this
-        }
+        const { x, y } = event.global;
         this.activeHandlePointerId = event.pointerId;
-        this.handleStartDist = Math.max(1, Math.hypot(event.clientX - this.posX, event.clientY - this.posY));
+        this.handleStartDist = Math.max(1, Math.hypot(x - this.posX, y - this.posY));
         this.handleStartScale = this.scale;
-        handle.classList.add('mzj-handle-active');
+        this.activeHandleGraphic = handle;
+        handle.scale.set(1.15);
       });
-
-      handle.addEventListener('pointermove', (event) => {
-        if (event.pointerId !== this.activeHandlePointerId) return;
-        event.stopPropagation();
-        const dist = Math.hypot(event.clientX - this.posX, event.clientY - this.posY);
-        this.scale = clamp(this.handleStartScale * (dist / this.handleStartDist), MIN_SCALE, MAX_SCALE);
-        this.syncPreviewTransform();
-        this.syncControlBoxTransform();
-      });
-
-      const endHandle = (event: PointerEvent) => {
-        if (event.pointerId !== this.activeHandlePointerId) return;
-        event.stopPropagation();
-        this.activeHandlePointerId = null;
-        handle.classList.remove('mzj-handle-active');
-      };
-      handle.addEventListener('pointerup', endHandle);
-      handle.addEventListener('pointercancel', endHandle);
     }
   }
 
   /**
-   * The rotate handle sits above the box and is a child of it, so Pixi's
-   * own `box.style.transform: rotate()` already carries it around the
-   * center as the player turns the text — the handle never needs its own
-   * position math for that part. What this wires is purely "finger angle
-   * around the center -> new rotation": on grab it records the offset
-   * between the pointer's current angle (relative to `posX/posY`, in
-   * screen space, independent of the box's own CSS tilt) and the current
-   * rotation, then every move just re-applies that same offset to
-   * wherever the finger now is — so the handle tracks the finger exactly,
-   * a full 360° free turn, same technique the pinch/corner handles use for
+   * The rotate handle sits above the box and is a child of `controlBox`, so
+   * Pixi's own `controlBox.rotation` already carries it around the center
+   * as the player turns the text — the handle never needs its own position
+   * math for that part. What this wires is purely "finger angle around the
+   * center -> new rotation": on grab it records the offset between the
+   * pointer's current angle (relative to `posX/posY`, in stage space,
+   * independent of the box's own current rotation) and the current
+   * rotation, then every move just re-applies that same offset to wherever
+   * the finger now is — so the handle tracks the finger exactly, a full
+   * 360° free turn, same technique the pinch/corner handles use for
    * distance instead of angle.
    */
-  private wireRotateHandle(box: HTMLDivElement): void {
-    const handle = box.querySelector<HTMLDivElement>('.mzj-text-rotate-handle')!;
-
-    handle.addEventListener('pointerdown', (event) => {
+  private wireRotateHandle(): void {
+    this.rotateHandle.on('pointerdown', (event: FederatedPointerEvent) => {
       event.stopPropagation();
-      try {
-        handle.setPointerCapture(event.pointerId);
-      } catch {
-        // ignore — see the box drag's own comment on this
-      }
+      const { x, y } = event.global;
       this.activeRotatePointerId = event.pointerId;
-      const angle = Math.atan2(event.clientY - this.posY, event.clientX - this.posX);
+      const angle = Math.atan2(y - this.posY, x - this.posX);
       this.rotateStartAngleOffset = this.rotation - angle;
-      handle.classList.add('mzj-handle-active');
+      this.rotateHandle.scale.set(1.15);
     });
-
-    handle.addEventListener('pointermove', (event) => {
-      if (event.pointerId !== this.activeRotatePointerId) return;
-      event.stopPropagation();
-      const angle = Math.atan2(event.clientY - this.posY, event.clientX - this.posX);
-      this.rotation = angle + this.rotateStartAngleOffset;
-      this.syncPreviewTransform();
-      this.syncControlBoxTransform();
-    });
-
-    const endRotate = (event: PointerEvent) => {
-      if (event.pointerId !== this.activeRotatePointerId) return;
-      event.stopPropagation();
-      this.activeRotatePointerId = null;
-      handle.classList.remove('mzj-handle-active');
-    };
-    handle.addEventListener('pointerup', endRotate);
-    handle.addEventListener('pointercancel', endRotate);
   }
 
   private syncPreviewTransform(): void {
@@ -479,23 +538,40 @@ export class TextComposer {
 
   /**
    * Sized from the text's own *local* (unrotated) width/height — not
-   * `getBounds()`, which returns the rotated screen-space AABB and would
-   * make the box balloon out as soon as the text tilts. The box is then
-   * tilted to match via a plain CSS `rotate()` around its own center
-   * (the default transform-origin for an absolutely-positioned element),
-   * which also carries every child handle — including the rotate handle —
-   * around with it, matching how Konva.js's own Transformer box works.
+   * `getBounds()`, which returns the rotated stage-space AABB and would
+   * make the box balloon out as soon as the text tilts. `controlBox` is
+   * positioned at (posX, posY) and rotated by `this.rotation` as one unit
+   * via Pixi's own `position`/`rotation` (never CSS), which is why the
+   * border/handles/stalk below are all drawn centered on local (0, 0) —
+   * the container's own transform carries all of them around together,
+   * matching how Konva.js's own Transformer box works.
    */
   private syncControlBoxTransform(): void {
-    const box = this.controlBoxRoot.querySelector<HTMLDivElement>('#mzj-text-control-box')!;
-    const padding = 14;
-    const width = this.previewText.width + padding * 2;
-    const height = this.previewText.height + padding * 2;
-    box.style.left = `${this.posX - width / 2}px`;
-    box.style.top = `${this.posY - height / 2}px`;
-    box.style.width = `${width}px`;
-    box.style.height = `${height}px`;
-    box.style.transform = `rotate(${this.rotation}rad)`;
+    const width = this.previewText.width + BOX_PADDING * 2;
+    const height = this.previewText.height + BOX_PADDING * 2;
+    const hw = width / 2;
+    const hh = height / 2;
+
+    this.boxBorder
+      .clear()
+      .rect(-hw, -hh, width, height)
+      .fill({ color: 0x000000, alpha: 0.001 })
+      .stroke({ width: HANDLE_STROKE_WIDTH, color: KONVA_BLUE });
+
+    this.cornerHandles.nw.position.set(-hw, -hh);
+    this.cornerHandles.ne.position.set(hw, -hh);
+    this.cornerHandles.sw.position.set(-hw, hh);
+    this.cornerHandles.se.position.set(hw, hh);
+
+    this.rotateLine
+      .clear()
+      .moveTo(0, -hh)
+      .lineTo(0, -hh - ROTATE_ANCHOR_OFFSET)
+      .stroke({ width: HANDLE_STROKE_WIDTH, color: KONVA_BLUE });
+    this.rotateHandle.position.set(0, -hh - ROTATE_ANCHOR_OFFSET);
+
+    this.controlBox.position.set(this.posX, this.posY);
+    this.controlBox.rotation = this.rotation;
   }
 
   private template(): string {
