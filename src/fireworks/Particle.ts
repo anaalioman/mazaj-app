@@ -28,6 +28,18 @@ const TRAIL_MAX_STRETCH_RATIO = 3; // tail length caps at 3x the particle's own 
 const CORE_COLOR_MIX = 0.22;
 const CORE_SIZE_RATIO = 0.4;
 
+// 3D Depth Illusion: a random share of sparks rapidly balloon up to 1.5x-2x
+// their normal size early in life (as if rushing toward the viewer) with a
+// matching brightness/heat bump, then recede back down through the rest of
+// their life like any other spark. Most sparks get none of this and just
+// stay at their normal depth — that mix of "some jump out at you, most stay
+// back" is what actually reads as depth, not a uniform effect on everyone.
+const APPROACH_CHANCE = 0.32;
+const APPROACH_MIN_STRENGTH = 0.5; // -> 1.5x peak size
+const APPROACH_MAX_STRENGTH = 1.0; // -> 2.0x peak size
+const APPROACH_PEAK_MIN = 0.15;
+const APPROACH_PEAK_MAX = 0.33;
+
 /** Per-channel lerp via bit-shifting — no allocations, no texture/sprite work. */
 export function lerpColor(from: number, to: number, t: number): number {
   const ratio = t < 0 ? 0 : t > 1 ? 1 : t;
@@ -91,6 +103,9 @@ export class Particle {
   private strobeTimer: number;
   private strobeOn = true;
 
+  private readonly approachStrength: number;
+  private readonly approachPeakRatio: number;
+
   constructor(texture: Texture, options: ParticleOptions) {
     const {
       x,
@@ -125,6 +140,9 @@ export class Particle {
     this.strobe = strobe;
     this.strobeTimer = 3 + Math.random() * 10;
     this.coreTint = lerpColor(IGNITION_COLOR, color, CORE_COLOR_MIX);
+    this.approachStrength =
+      Math.random() < APPROACH_CHANCE ? APPROACH_MIN_STRENGTH + Math.random() * (APPROACH_MAX_STRENGTH - APPROACH_MIN_STRENGTH) : 0;
+    this.approachPeakRatio = APPROACH_PEAK_MIN + Math.random() * (APPROACH_PEAK_MAX - APPROACH_PEAK_MIN);
 
     this.sprite = new Container();
     this.sprite.position.set(x, y);
@@ -172,10 +190,26 @@ export class Particle {
       }
       alpha *= this.strobeOn ? 1 : 0.04;
     }
-    // Set once on the container: cascades to both the trail and core children.
-    this.sprite.alpha = Math.max(0, alpha);
 
-    const scale = 0.4 + 0.6 * fade;
+    // 3D Depth Illusion: 0 for most sparks (normal depth); for the chosen
+    // few, rises fast toward 1 as they "rush the viewer" then eases back
+    // down to 0 for the rest of their life.
+    let approach = 0;
+    if (this.approachStrength > 0) {
+      if (lifeRatio < this.approachPeakRatio) {
+        const t = lifeRatio / this.approachPeakRatio;
+        approach = t * t * this.approachStrength;
+      } else {
+        const t = (lifeRatio - this.approachPeakRatio) / (1 - this.approachPeakRatio);
+        approach = Math.max(0, 1 - t) * this.approachStrength;
+      }
+      alpha *= 1 + Math.min(1, approach) * 0.35;
+    }
+
+    // Set once on the container: cascades to both the trail and core children.
+    this.sprite.alpha = Math.max(0, Math.min(1, alpha));
+
+    const scale = (0.4 + 0.6 * fade) * (1 + approach);
     const thickness = this.baseSize * scale;
     const speed = Math.hypot(this.vx, this.vy);
     const stretch = Math.min(speed * TRAIL_STRETCH_FACTOR, thickness * TRAIL_MAX_STRETCH_RATIO);
@@ -205,6 +239,11 @@ export class Particle {
     } else {
       const t = (lifeRatio - TRAIL_STABLE_STAGE_END) / (1 - TRAIL_STABLE_STAGE_END);
       this.trail.tint = lerpColor(this.baseColor, COOLING_ASH_COLOR, t);
+    }
+    if (approach > 0) {
+      // Extra heat while "rushing the viewer" — additive blending makes a
+      // whiter tint read as brighter, not just bigger.
+      this.trail.tint = lerpColor(this.trail.tint, IGNITION_COLOR, Math.min(1, approach) * 0.55);
     }
 
     // The core stays near-white/hot for most of the particle's life, then
