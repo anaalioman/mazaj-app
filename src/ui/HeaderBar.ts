@@ -71,9 +71,11 @@ export class HeaderBar {
   /**
    * "إطلاق جماعي" and "إطلاق متتابع" each open the planning screen already
    * set to that mode — no separate neutral "خطة الإطلاق" gate in between,
-   * since every plan already belongs to one of these two systems and a mode
-   * switch is still available inside the screen itself if the player
-   * changes their mind after opening it.
+   * and no in-screen mode switch either: each is a fully self-contained
+   * entry point, so changing your mind means picking the other header icon
+   * (closing/reopening the screen loses no in-progress selections — shapes,
+   * colors, مدفع, etc. all live on PlanningScreen's own instance fields,
+   * untouched by hide()/show()).
    */
   private wireOpenPlanning(): void {
     this.query<HTMLButtonElement>('#mzj-open-mass').addEventListener('click', () => this.deps.onOpenPlanningScreen('mass'));

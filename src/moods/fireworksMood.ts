@@ -202,7 +202,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     // real runtime — recording starts now and stops the instant every fired
     // shot's explosion has actually finished (see launchPlannedShow()'s
     // onAllComplete), never on a guessed delay. Nothing else about recording
-    // changes if it wasn't chosen — the header's manual record button keeps
+    // changes if it wasn't chosen — "تسجيل فيديو" in the planning list keeps
     // working exactly as before.
     if (planningScreen.isLiveDocumentationArmed()) {
       void startRecording();
