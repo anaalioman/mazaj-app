@@ -94,6 +94,9 @@ export class PlanningScreen {
       deps.app,
       deps.fireworks,
       () => this.query<HTMLElement>('.mzj-planning-side-right').getBoundingClientRect().left,
+      // Keeps the trigger icon's active state true even when the panel
+      // closes itself (a confirmed swatch pick), not just via the trigger.
+      (open) => this.query<HTMLButtonElement>('#mzj-planning-open-color').classList.toggle('active', open),
     );
 
     // While composing text (input+effects bar, or the position/scale
@@ -237,7 +240,6 @@ export class PlanningScreen {
         el.classList.remove('active');
       }
       this.colorPicker.setOpen(willOpen);
-      trigger.classList.toggle('active', willOpen);
     });
   }
 
@@ -290,7 +292,6 @@ export class PlanningScreen {
       entry.trigger.addEventListener('click', () => {
         const willOpen = !entry.panel.classList.contains('open');
         this.colorPicker.setOpen(false);
-        this.query<HTMLButtonElement>('#mzj-planning-open-color').classList.remove('active');
         for (const other of entries) {
           other.panel.classList.toggle('open', other === entry && willOpen);
           if (other.trigger !== cameraTrigger) other.trigger.classList.toggle('active', other === entry && willOpen);

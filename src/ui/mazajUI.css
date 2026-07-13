@@ -323,9 +323,9 @@
 
 .mzj-planning-hint {
   position: absolute;
-  top: 42%;
   left: 50%;
-  transform: translate(-50%, -50%);
+  bottom: 96px;
+  transform: translateX(-50%);
   color: rgba(255, 255, 255, 0.85);
   font-size: 15px;
   font-weight: 600;

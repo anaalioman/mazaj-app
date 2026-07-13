@@ -41,11 +41,17 @@ interface Swatch {
  * `getLeftBoundary` reports that column's live on-screen left edge (it can
  * reflow with label text/viewport size), and the panel settles just to the
  * left of it with a fixed gap, so both stay fully visible and usable at once.
+ *
+ * Auto-hides itself the instant a swatch is tapped (a confirmed pick, not
+ * just a hover) so the planning area goes back to fully clean/unobstructed;
+ * `onOpenChange` lets the caller keep its own trigger icon's active state in
+ * sync even when the close happens this way instead of via that trigger.
  */
 export class ColorPickerPanel {
   private readonly app: Application;
   private readonly fireworks: FireworksSystem;
   private readonly getLeftBoundary: () => number;
+  private readonly onOpenChange?: (open: boolean) => void;
   private readonly container: Container;
   private readonly panelBg: Graphics;
   private readonly title: Text;
@@ -58,10 +64,16 @@ export class ColorPickerPanel {
   private panelWidth = 0;
   private panelHeight = 0;
 
-  constructor(app: Application, fireworks: FireworksSystem, getLeftBoundary: () => number) {
+  constructor(
+    app: Application,
+    fireworks: FireworksSystem,
+    getLeftBoundary: () => number,
+    onOpenChange?: (open: boolean) => void,
+  ) {
     this.app = app;
     this.fireworks = fireworks;
     this.getLeftBoundary = getLeftBoundary;
+    this.onOpenChange = onOpenChange;
 
     this.container = new Container();
     this.container.visible = false;
@@ -112,6 +124,7 @@ export class ColorPickerPanel {
     this.isOpen = open;
     this.animDir = open ? 1 : -1;
     if (open) this.container.visible = true;
+    this.onOpenChange?.(open);
   }
 
   private buildSwatch(choice: NamedColorChoice): Swatch {
@@ -161,12 +174,15 @@ export class ColorPickerPanel {
   }
 
   private select(id: string): void {
-    if (this.activeId === id) return;
     const choice = COLOR_CHOICES.find((c) => c.id === id);
     if (!choice) return;
-    this.activeId = id;
-    this.fireworks.setActiveColor(choice.hex);
-    this.syncActiveRing();
+    if (this.activeId !== id) {
+      this.activeId = id;
+      this.fireworks.setActiveColor(choice.hex);
+      this.syncActiveRing();
+    }
+    // A confirmed pick — collapse back to a clean planning view immediately.
+    this.setOpen(false);
   }
 
   private syncActiveRing(): void {
