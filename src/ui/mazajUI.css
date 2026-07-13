@@ -378,13 +378,6 @@
   line-height: 1;
 }
 
-/* Icons with no working destination yet (see PlanningScreen.ts doc-comment) —
-   dimmed and inert rather than looking clickable-but-broken. */
-.mzj-planning-icon-btn-disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
 /* Environment/lab controls: a flat bottom sheet that slides up over the
    reserved empty middle area only while open, so it stays free the rest
    of the time for the future tap-to-place interaction. */
@@ -415,6 +408,15 @@
 .mzj-planning-camera-panel {
   display: flex;
   gap: 8px;
+}
+
+/* "الأشكال": all 7 shape/pattern icons consolidated into one grid instead
+   of spread across both side columns — same .mzj-planning-icon-btn look. */
+.mzj-planning-shapes-panel {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px 12px;
+  justify-items: center;
 }
 
 /* Flat, borderless choice buttons — same design language as everywhere

@@ -60,11 +60,13 @@ const HINT_VISIBLE_MS = 2600;
  * anymore: each control it used to group behind one tap now has its own
  * dedicated icon instead.
  *
- * "الأنماط" stays deliberately inert (see `.mzj-planning-icon-btn-disabled`
- * in the template) — it has no distinct destination left now that the
- * patterns-tab content it used to reveal is already individually
- * represented elsewhere on this screen. "نص" (T) opens the full text-
- * composing flow — see TextComposer.
+ * "الأشكال" opens a subpanel holding all 7 shape/pattern icons (peony,
+ * rose, kamuro, ground fountain, palm crossette, multi-ring, strobe) —
+ * consolidated here instead of spread across both side columns so those
+ * columns stay short. Each keeps its exact original click behavior (shape
+ * toggle or ground-fountain mode toggle); tapping any of them also closes
+ * this subpanel immediately, same as picking a color closes ColorPicker.
+ * "نص" (T) opens the full text-composing flow — see TextComposer.
  */
 export class PlanningScreen {
   readonly root: HTMLDivElement;
@@ -203,8 +205,15 @@ export class PlanningScreen {
           this.activeSequentialShape = type;
         }
         this.syncShapeVisuals();
+        this.closeShapesPanel();
       });
     }
+  }
+
+  /** A confirmed pick from "الأشكال" collapses that subpanel immediately — same auto-hide behavior as ColorPickerPanel. */
+  private closeShapesPanel(): void {
+    this.query<HTMLDivElement>('#mzj-planning-shapes-panel').classList.remove('open');
+    this.query<HTMLButtonElement>('#mzj-planning-open-shapes').classList.remove('active');
   }
 
   /** getActiveShape dep PlanningMode calls on every stage tap while sequential mode is active. */
@@ -260,6 +269,7 @@ export class PlanningScreen {
       enabled = !enabled;
       this.deps.fireworks.setGroundFountainMode(enabled);
       button.classList.toggle('active', enabled);
+      this.closeShapesPanel();
     });
   }
 
@@ -286,6 +296,7 @@ export class PlanningScreen {
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-dimmer'), panel: this.query<HTMLDivElement>('#mzj-planning-dimmer-panel') },
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-glow'), panel: this.query<HTMLDivElement>('#mzj-planning-glow-panel') },
       { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-lab'), panel: this.query<HTMLDivElement>('#mzj-planning-lab-panel') },
+      { trigger: this.query<HTMLButtonElement>('#mzj-planning-open-shapes'), panel: this.query<HTMLDivElement>('#mzj-planning-shapes-panel') },
     ];
 
     for (const entry of entries) {
@@ -389,21 +400,14 @@ export class PlanningScreen {
       <div class="mzj-planning-side mzj-planning-side-right">
         <button type="button" id="mzj-planning-mode-mass" class="mzj-planning-icon-btn">${icon('fireworksMood', 22)}<span>إطلاق جماعي</span></button>
         <button type="button" id="mzj-planning-mode-sequential" class="mzj-planning-icon-btn">${icon('mapPin', 22)}<span>إطلاق متتابع</span></button>
-        ${this.shapeIconButton('peony', 'بيوني بقلب')}
-        ${this.shapeIconButton('rose', 'وردة')}
-        ${this.shapeIconButton('kamuro', 'كامورو ذهبي')}
+        <button type="button" id="mzj-planning-open-shapes" class="mzj-planning-icon-btn">${icon('shapes', 22)}<span>الأشكال</span></button>
         <button type="button" id="mzj-planning-open-camera" class="mzj-planning-icon-btn">${icon('camera', 22)}<span>فيديو خلفية حي</span></button>
         <button type="button" id="mzj-planning-bg-image" class="mzj-planning-icon-btn">${icon('image', 22)}<span>صورة خلفية</span></button>
-        <button type="button" class="mzj-planning-icon-btn mzj-planning-icon-btn-disabled" disabled title="لا وظيفة مستقلة بعد">${icon('shapes', 22)}<span>الأنماط</span></button>
         <button type="button" id="mzj-planning-open-glow" class="mzj-planning-icon-btn">${icon('gem', 22)}<span>توهج الألعاب النارية</span></button>
         <button type="button" id="mzj-planning-open-color" class="mzj-planning-icon-btn">${icon('droplet', 22)}<span>لون المقذوفة</span></button>
       </div>
       <div class="mzj-planning-side mzj-planning-side-left">
         <button type="button" id="mzj-planning-random-mode" class="mzj-planning-icon-btn">${icon('shuffle', 22)}<span>توليد عشوائي هجين</span></button>
-        <button type="button" id="mzj-planning-ground-fountain" class="mzj-planning-icon-btn">${icon('groundFountain', 22)}<span>نافورة أرضية</span></button>
-        ${this.shapeIconButton('crossette', 'كروسيت نخلة')}
-        ${this.shapeIconButton('multiRing', 'حلقات متعددة')}
-        ${this.shapeIconButton('strobe', 'وميض متلألئ')}
         <button type="button" id="mzj-planning-open-dimmer" class="mzj-planning-icon-btn">${icon('palette', 22)}<span>إضاءة الخلفية</span></button>
         <button type="button" id="mzj-planning-auto-show" class="mzj-planning-icon-btn">${icon('sparkles', 22)}<span>العرض التلقائي</span></button>
         <button type="button" id="mzj-planning-open-lab" class="mzj-planning-icon-btn">${icon('sliders', 22)}<span>المختبر</span></button>
@@ -414,6 +418,16 @@ export class PlanningScreen {
 
       <input type="file" id="mzj-bg-image" accept="image/*" class="mzj-file-input-sr" />
       <input type="file" id="mzj-bg-video" accept="video/*" class="mzj-file-input-sr" />
+
+      <div class="mzj-planning-subpanel mzj-planning-shapes-panel" id="mzj-planning-shapes-panel">
+        ${this.shapeIconButton('peony', 'بيوني بقلب')}
+        ${this.shapeIconButton('rose', 'وردة')}
+        ${this.shapeIconButton('kamuro', 'كامورو ذهبي')}
+        <button type="button" id="mzj-planning-ground-fountain" class="mzj-planning-icon-btn">${icon('groundFountain', 22)}<span>نافورة أرضية</span></button>
+        ${this.shapeIconButton('crossette', 'كروسيت نخلة')}
+        ${this.shapeIconButton('multiRing', 'حلقات متعددة')}
+        ${this.shapeIconButton('strobe', 'وميض متلألئ')}
+      </div>
 
       <div class="mzj-planning-subpanel mzj-planning-camera-panel" id="mzj-planning-camera-panel">
         <button type="button" id="mzj-planning-camera-upload" class="mzj-planning-choice-btn">رفع فيديو</button>
