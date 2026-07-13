@@ -11,7 +11,7 @@ export interface HeaderBarDeps {
   onOpenPlanningScreen: (mode: LaunchMode) => void;
 }
 
-/** Transparent horizontal bar: home + start-show + plan (right), FPS + mute (left). */
+/** Transparent horizontal bar: home + start-show + جماعي/متتابع entry points (right), FPS + mute (left). */
 export class HeaderBar {
   readonly root: HTMLDivElement;
   private readonly deps: HeaderBarDeps;
@@ -40,7 +40,8 @@ export class HeaderBar {
       <div class="mzj-header-group mzj-header-right">
         <button type="button" id="mzj-home" aria-label="العودة للقائمة الرئيسية">${icon('home', 18)}</button>
         <button type="button" id="mzj-start-show" class="mzj-mode-toggle">${icon('play', 15)}<span>ابدأ العرض</span></button>
-        <button type="button" id="mzj-open-planning" aria-label="خطة الإطلاق">${icon('mapPin', 18)}</button>
+        <button type="button" id="mzj-open-mass" aria-label="إطلاق جماعي">${icon('fireworksMood', 18)}</button>
+        <button type="button" id="mzj-open-sequential" aria-label="إطلاق متتابع">${icon('mapPin', 18)}</button>
       </div>
       <div class="mzj-header-group mzj-header-left">
         <span id="mzj-fps" class="mzj-fps">60</span>
@@ -67,9 +68,18 @@ export class HeaderBar {
     });
   }
 
+  /**
+   * "إطلاق جماعي" and "إطلاق متتابع" each open the planning screen already
+   * set to that mode — no separate neutral "خطة الإطلاق" gate in between,
+   * since every plan already belongs to one of these two systems and a mode
+   * switch is still available inside the screen itself if the player
+   * changes their mind after opening it.
+   */
   private wireOpenPlanning(): void {
-    const button = this.query<HTMLButtonElement>('#mzj-open-planning');
-    button.addEventListener('click', () => this.deps.onOpenPlanningScreen('mass'));
+    this.query<HTMLButtonElement>('#mzj-open-mass').addEventListener('click', () => this.deps.onOpenPlanningScreen('mass'));
+    this.query<HTMLButtonElement>('#mzj-open-sequential').addEventListener('click', () =>
+      this.deps.onOpenPlanningScreen('sequential'),
+    );
   }
 
   private wireMute(): void {
