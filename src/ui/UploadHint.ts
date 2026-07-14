@@ -51,14 +51,14 @@ export class UploadHint {
   private slideOffset = -TOAST_SLIDE_Y;
   private lastMessage = '';
 
-  constructor(app: Application, glowPanel: SliderSheetPanel) {
+  constructor(app: Application, uiContainer: Container, glowPanel: SliderSheetPanel) {
     this.app = app;
     this.glowPanel = glowPanel;
 
     this.toastRoot = new Container();
     this.toastRoot.alpha = 0;
     this.toastRoot.eventMode = 'none';
-    app.stage.addChild(this.toastRoot);
+    uiContainer.addChild(this.toastRoot);
 
     this.toastBg = new Graphics();
     this.toastBg.filters = [

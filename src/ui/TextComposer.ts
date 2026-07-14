@@ -20,6 +20,10 @@ export interface TextRevealConfig {
 export interface TextComposerDeps {
   app: Application;
   audio: AudioManager;
+  /** The committed text (`previewText`) is genuine scene content — it belongs in `worldContainer` so it's captured by snapshot/recording exactly like the rest of the show. See fireworksMood.ts's own container-tree doc comment. */
+  worldContainer: Container;
+  /** Everything else this class draws (the effects-bar chrome, the control box's border/handles, the tap-outside backdrop) is editing-time UI, not final art — it belongs in `uiContainer`. */
+  uiContainer: Container;
   /** True while the input+effects bar OR the control box is open — lets the caller hide whatever else is on screen (e.g. the planning screen's own icon columns) so this stays the sole focus. */
   onComposingChange: (composing: boolean) => void;
 }
@@ -256,6 +260,12 @@ export class TextComposer {
     this.baseFontSize = Math.max(36, Math.min(width, height) * 0.09);
 
     this.previewReveal = new TextReveal(deps.app);
+    // TextReveal's own constructor always self-parents to app.stage — reparent
+    // into uiContainer since this specific instance only ever plays the
+    // effects-bar's demo preview (editing-time UI, not final art). Contrast
+    // with fireworksMood.ts's own separate TextReveal instance for the real
+    // committed reveal, which stays in worldContainer.
+    deps.uiContainer.addChild(this.previewReveal.container);
     deps.app.ticker.add((ticker) => this.previewReveal.update(ticker.deltaTime));
 
     // Not added to the stage — Graphics used purely as a mask don't need to
@@ -272,12 +282,12 @@ export class TextComposer {
       event.stopPropagation();
       this.open();
     });
-    deps.app.stage.addChild(this.previewText);
+    deps.worldContainer.addChild(this.previewText);
     this.syncPreviewTransform();
 
     this.composerContainer = new Container();
     this.composerContainer.visible = false;
-    deps.app.stage.addChild(this.composerContainer);
+    deps.uiContainer.addChild(this.composerContainer);
 
     // A silent catch-all sitting behind every other child: individual
     // buttons/frames only claim their own hitArea, so the *gaps* between
@@ -321,7 +331,7 @@ export class TextComposer {
       event.stopPropagation();
       this.commit();
     });
-    deps.app.stage.addChild(this.backdrop);
+    deps.uiContainer.addChild(this.backdrop);
     deps.app.renderer.on('resize', () => {
       const screen = deps.app.screen;
       this.backdrop.clear().rect(0, 0, screen.width, screen.height).fill({ color: 0x000000, alpha: 0.001 });
@@ -329,7 +339,7 @@ export class TextComposer {
 
     this.controlBox = new Container();
     this.controlBox.visible = false;
-    deps.app.stage.addChild(this.controlBox);
+    deps.uiContainer.addChild(this.controlBox);
 
     this.boxBorder = new Graphics();
     this.boxBorder.eventMode = 'static';

@@ -73,7 +73,8 @@ function contrastingPalette(exclude: number[]): number[] {
  */
 export class FireworksSystem {
   private readonly app: Application;
-  private readonly layer: Container;
+  /** Public so fireworksMood.ts can reparent it into worldContainer (scene content, must be excluded from snapshot/recording UI-exclusion — see fireworksMood.ts's own container-tree doc comment). */
+  readonly layer: Container;
   private readonly glowFilter: AdvancedBloomFilter;
   private readonly onLaunch?: (x: number) => void;
   private readonly onExplode?: (x: number, y: number, intensity: number) => void;

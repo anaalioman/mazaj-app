@@ -23,7 +23,8 @@ const PULSE_MAX_ALPHA = 0.45;
 export abstract class BottomSheetPanel {
   protected readonly app: Application;
   protected readonly panelWidth: number;
-  private readonly container: Container;
+  /** Public so PlanningScreen.ts can reparent it into uiContainer — every subpanel is UI chrome, never scene content (see fireworksMood.ts's own container-tree doc comment). */
+  readonly container: Container;
   private readonly panelBg: Graphics;
   private readonly pulseRing: Graphics;
   private panelHeight = 0;

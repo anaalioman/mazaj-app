@@ -31,8 +31,10 @@ function grayscaleTint(brightness: number): number {
 /**
  * Owns whatever sits behind the show — the Deep Sky Canvas (gradient +
  * horizon glow + twinkling stars), an uploaded photo, or a looping video —
- * plus the dimmer applied to it. It always sits at stage index 0, safely
- * behind the fireworks and mortar layers added on top of it later.
+ * plus the dimmer applied to it. It always sits at index 0 of the `parent`
+ * container it's given (fireworksMood.ts's `worldContainer` — see that
+ * file's own container-tree doc comment), safely behind the fireworks and
+ * mortar layers added on top of it later, and never inside `uiContainer`.
  *
  * Swapping the backdrop or dimming it never touches per-pixel CPU work:
  * cover-fit is a transform and dimming is a GPU tint multiply, so neither
@@ -41,6 +43,7 @@ function grayscaleTint(brightness: number): number {
  */
 export class BackgroundLayer {
   private readonly app: Application;
+  private readonly parent: Container;
   private current: Container;
   private currentSprite: Sprite | null = null;
   private videoEl: HTMLVideoElement | null = null;
@@ -53,10 +56,11 @@ export class BackgroundLayer {
   private skyGradient: FillGradient | null = null;
   private glowGradient: FillGradient | null = null;
 
-  constructor(app: Application) {
+  constructor(app: Application, parent: Container) {
     this.app = app;
+    this.parent = parent;
     this.current = this.buildDeepSky();
-    app.stage.addChildAt(this.current, 0);
+    parent.addChildAt(this.current, 0);
     app.renderer.on('resize', () => this.handleResize());
     app.ticker.add((ticker) => this.updateTwinkle(ticker.deltaTime));
   }
@@ -245,9 +249,9 @@ export class BackgroundLayer {
   }
 
   private replace(next: Container, oldGradients: FillGradient[] = []): void {
-    this.app.stage.addChildAt(next, 0);
+    this.parent.addChildAt(next, 0);
     const old = this.current;
-    this.app.stage.removeChild(old);
+    this.parent.removeChild(old);
     old.destroy({ children: true, texture: true, textureSource: true });
     for (const gradient of oldGradients) gradient.destroy();
     this.current = next;

@@ -1,4 +1,4 @@
-import { Application, Graphics } from 'pixi.js';
+import { Application, Container, Graphics } from 'pixi.js';
 import { FireworksSystem } from '../fireworks/FireworksSystem';
 import { TextReveal } from '../effects/TextReveal';
 import { MortarField } from '../effects/MortarField';
@@ -55,7 +55,47 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
 
   appContainer.appendChild(app.canvas);
 
-  const background = new BackgroundLayer(app);
+  // --- Container tree: worldContainer (captured content) vs. uiContainer (chrome) ---
+  //
+  // Everything used to be added directly to `app.stage`, which meant
+  // `extract.base64({target: app.stage})` (see takeSnapshot() below) baked
+  // the entire header/icon-column/panels/hint/toast into every exported
+  // snapshot — discovered while converting the camera flash to Pixi, since
+  // that was the first object that genuinely needed excluding from a
+  // capture. Two dedicated layers fix this at the source:
+  //   - `worldContainer` (added first, so it renders behind): the actual
+  //     show — background, fireworks/mortar particles, the ambient
+  //     explosion flash, the real text reveal, and TextComposer's own
+  //     *committed* text. This is the only thing takeSnapshot() targets.
+  //   - `uiContainer` (added second, renders on top): every control —
+  //     header, icon column, side/bottom panels, the composing-time text
+  //     toolbar, the hint, the upload toast, planning-mode's placement
+  //     pins, and the camera-flash overlay itself (a real phone camera's
+  //     own screen flash never appears in the photo it takes, so it
+  //     belongs here, not in worldContainer — see flashScreen() below).
+  //
+  // `canvas.captureStream()`-based video recording (see RecordingManager)
+  // reads raw canvas pixels below Pixi's scene graph entirely, so this
+  // split cannot exclude UI chrome from *recordings* the way it does for
+  // snapshots — recording still captures uiContainer too. Fixing that needs
+  // a second, separate WebGL surface rendering worldContainer alone (its
+  // own renderer/canvas, fed to captureStream instead of the main canvas),
+  // which is a materially different, larger change than a container split
+  // and hasn't been attempted here — flagged in PROGRESS.md as follow-up
+  // work rather than silently left unfixed.
+  const worldContainer = new Container();
+  app.stage.addChild(worldContainer);
+  // `isRenderGroup: true` — uiContainer's own subtree (header, icon column,
+  // every panel, the text-composer toolbar) gets its own cached set of GPU
+  // render instructions, independent of worldContainer's constantly-changing
+  // particle counts. Without it, every UI element (mostly static between
+  // frames) would be re-batched alongside the fireworks simulation on every
+  // single frame; with it, Pixi only rebuilds uiContainer's batches when
+  // something inside uiContainer itself actually changes.
+  const uiContainer = new Container({ isRenderGroup: true });
+  app.stage.addChild(uiContainer);
+
+  const background = new BackgroundLayer(app, worldContainer);
 
   const audio = new AudioManager(app);
   // Fire-and-forget: unlocking must never block the panel from appearing,
@@ -67,7 +107,9 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     }
   });
   const mortarField = new MortarField(app);
+  worldContainer.addChild(mortarField.container);
   const explosionFlash = new ScreenFlash(app);
+  worldContainer.addChild(explosionFlash.graphics);
   const shockwave = new ShockwaveManager(app);
   const screenShake = new ScreenShakeManager(app);
 
@@ -86,8 +128,10 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
       screenShake.trigger(intensity);
     },
   });
+  worldContainer.addChild(fireworks.layer);
 
   const textReveal = new TextReveal(app);
+  worldContainer.addChild(textReveal.container);
   const recording = new RecordingManager(app.canvas as HTMLCanvasElement, audio.getRecordingStream());
 
   /** What a tap normally does: aerial burst, or a Ground Fountain if that mode is active. */
@@ -123,6 +167,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     // sequential pin lands wherever a normal shot would from the same tap.
     resolveX: (x) => (inputMode === 'mortar' ? mortarField.getNearestX(x) : x),
   });
+  uiContainer.addChild(planningMode.layer);
 
   app.stage.eventMode = 'static';
   app.stage.hitArea = app.screen;
@@ -243,12 +288,17 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // technique as ScreenFlash.ts's rocket-explosion flash, just a single-shot
   // ease-out fade instead of that one's additive decay. `FLASH_FADE_MS=400`
   // matches the old `transition: opacity 400ms ease-out` exactly; the eased
-  // cubic curve below is the standard ease-out approximation.
+  // cubic curve below is the standard ease-out approximation. Lives in
+  // `uiContainer` (see this file's own container-tree doc comment above) —
+  // a real phone camera's own screen flash never appears in the photo it
+  // takes, and now that it's excluded structurally (takeSnapshot() below
+  // only ever targets `worldContainer`), no timing-sensitive
+  // remove/re-add dance around the capture is needed at all.
   const FLASH_FADE_MS = 400;
   const cameraFlash = new Graphics();
   cameraFlash.alpha = 0;
   cameraFlash.eventMode = 'none';
-  app.stage.addChild(cameraFlash);
+  uiContainer.addChild(cameraFlash);
   function redrawCameraFlash(): void {
     const { width, height } = app.screen;
     cameraFlash.clear().rect(0, 0, width, height).fill({ color: 0xffffff });
@@ -270,30 +320,15 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
 
   async function takeSnapshot(): Promise<void> {
     flashScreen();
-    // The flash is genuine UI chrome simulating a camera's own screen flash
-    // — like a real phone camera, it must never appear *in* the photo it
-    // takes. It lived safely outside app.stage as a DOM overlay before; now
-    // that it's a real Pixi child of app.stage (needed to ever render at
-    // all), it's removed from the stage for the single synchronous instant
-    // `extract.base64()` captures, then re-added immediately — not gated on
-    // the returned promise, which also covers PNG *encoding* and can run
-    // for seconds on slow/software-rendered GPUs (measured: several seconds
-    // in this sandbox's software WebGL) — toggling `.visible` around the
-    // whole `await` would leave the flash invisible on-screen for that
-    // entire span. `removeChild`/`addChild` are synchronous, and Pixi's own
-    // render-to-texture capture happens synchronously at call time (only
-    // the encode is genuinely async), so re-adding immediately after
-    // kicking off the promise is safe and never produces a visible gap in
-    // the ticker-driven render loop.
-    app.stage.removeChild(cameraFlash);
-    const extractPromise = app.renderer.extract.base64({
-      target: app.stage,
-      resolution: Math.min(app.renderer.resolution * 1.5, 3),
-    });
-    app.stage.addChild(cameraFlash);
-
     try {
-      const dataUrl = await extractPromise;
+      // Targets worldContainer exclusively — see this file's own
+      // container-tree doc comment. Every UI control (including the flash
+      // above) lives in the sibling uiContainer and is structurally
+      // invisible to this capture.
+      const dataUrl = await app.renderer.extract.base64({
+        target: worldContainer,
+        resolution: Math.min(app.renderer.resolution * 1.5, 3),
+      });
       const link = document.createElement('a');
       link.href = dataUrl;
       link.download = `mazaj-snapshot-${Date.now()}.png`;
@@ -343,6 +378,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
       onBackToHome();
     },
   });
+  uiContainer.addChild(header.container);
 
   // Always visible the instant the mood boots — see PlanningScreen's own
   // doc-comment for the full architecture. Every control that has a real,
@@ -351,6 +387,8 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   const planningScreen = new PlanningScreen({
     app,
     audio,
+    worldContainer,
+    uiContainer,
     fireworks,
     background,
     onModeChange: (mode) => planningMode.setActive(mode === 'sequential'),

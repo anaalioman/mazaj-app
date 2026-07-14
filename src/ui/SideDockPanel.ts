@@ -24,7 +24,8 @@ export abstract class SideDockPanel {
   protected readonly panelWidth: number;
   private readonly getLeftBoundary: () => number;
   private readonly onOpenChange?: (open: boolean) => void;
-  private readonly container: Container;
+  /** Public so PlanningScreen.ts can reparent it into uiContainer — the color/shapes panels are UI chrome, never scene content (see fireworksMood.ts's own container-tree doc comment). */
+  readonly container: Container;
   private readonly panelBg: Graphics;
   private readonly title: Text;
   private panelHeight = 0;

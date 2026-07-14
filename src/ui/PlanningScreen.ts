@@ -1,4 +1,4 @@
-import { Text, TextStyle, type Application } from 'pixi.js';
+import { Text, TextStyle, type Application, type Container } from 'pixi.js';
 import { type BurstType, type FireworksSystem } from '../fireworks/FireworksSystem';
 import type { BackgroundLayer } from '../background';
 import type { AudioManager } from '../audio/AudioManager';
@@ -18,6 +18,9 @@ export type InputMode = 'tap' | 'mortar';
 export interface PlanningScreenDeps {
   app: Application;
   audio: AudioManager;
+  /** Threaded straight through to TextComposer — its committed text is the only piece of this whole screen that counts as scene content (see fireworksMood.ts's own container-tree doc comment). Everything else this screen owns is UI chrome and gets reparented into `uiContainer`. */
+  worldContainer: Container;
+  uiContainer: Container;
   fireworks: FireworksSystem;
   background: BackgroundLayer;
   /** Lets PlanningMode arm/disarm itself in sync — active only during 'sequential'. */
@@ -133,14 +136,19 @@ export class PlanningScreen {
     this.hintText.anchor.set(0.5, 1);
     this.hintText.alpha = 0;
     this.hintText.eventMode = 'none';
-    deps.app.stage.addChild(this.hintText);
+    deps.uiContainer.addChild(this.hintText);
     deps.app.renderer.on('resize', () => this.layoutHint());
     this.layoutHint();
 
     // The right icon column itself is genuine Pixi (see PlanningIconColumn)
     // — must exist before ColorPickerPanel/ShapesPanel below, since their
     // own constructors call `getLeftBoundary` synchronously while docking.
+    // Every component built in this constructor is UI chrome (never scene
+    // content — see fireworksMood.ts's own container-tree doc comment), so
+    // each one's top-level container is reparented into `deps.uiContainer`
+    // right after construction.
     this.iconColumn = new PlanningIconColumn(deps.app, deps.audio, this.buildIconRowSpecs());
+    deps.uiContainer.addChild(this.iconColumn.container);
 
     // Canvas-drawn (no HTML/CSS) glowing swatch panel — see ColorPickerPanel.
     // It docks just left of the right icon column's live on-screen edge, so
@@ -154,6 +162,7 @@ export class PlanningScreen {
       // closes itself (a confirmed swatch pick), not just via the trigger.
       (open) => this.iconColumn.setActive('mzj-planning-open-color', open),
     );
+    deps.uiContainer.addChild(this.colorPicker.container);
     this.shapesPanel = new ShapesPanel(
       deps.app,
       getLeftBoundary,
@@ -162,23 +171,27 @@ export class PlanningScreen {
       () => this.handleToggleGroundFountain(),
       () => this.handleToggleMortarMode(),
     );
+    deps.uiContainer.addChild(this.shapesPanel.container);
 
     // The four bottom-sheet subpanels (see PlanningSubpanels.ts /
     // BottomSheetPanel) — fully Pixi, no more `.mzj-planning-subpanel` DOM.
     this.dimmerPanel = new SliderSheetPanel(deps.app, [
       { ...SLIDERS.dimmer, onChange: (v) => deps.background.setDimmer(v) },
     ]);
+    deps.uiContainer.addChild(this.dimmerPanel.container);
     this.glowPanel = new SliderSheetPanel(deps.app, [
       { ...SLIDERS.glow, onChange: (v) => deps.fireworks.updateSettings({ glow: v }) },
     ]);
+    deps.uiContainer.addChild(this.glowPanel.container);
     // Needs glowPanel to already exist — see UploadHint's own doc comment.
-    this.uploadHint = new UploadHint(deps.app, this.glowPanel);
+    this.uploadHint = new UploadHint(deps.app, deps.uiContainer, this.glowPanel);
     this.labPanel = new SliderSheetPanel(deps.app, [
       { ...SLIDERS.density, onChange: (v) => deps.fireworks.updateSettings({ particleDensity: v }) },
       { ...SLIDERS.gravity, onChange: (v) => deps.fireworks.updateSettings({ gravityScale: v }) },
       { ...SLIDERS.lifespan, onChange: (v) => deps.fireworks.updateSettings({ lifespanScale: v }) },
       { ...SLIDERS.scale, onChange: (v) => deps.fireworks.updateSettings({ explosionScale: v }) },
     ]);
+    deps.uiContainer.addChild(this.labPanel.container);
     this.cameraPanel = new CameraPickerPanel(
       deps.app,
       deps.audio,
@@ -199,6 +212,7 @@ export class PlanningScreen {
           });
       },
     );
+    deps.uiContainer.addChild(this.cameraPanel.container);
 
     // While composing text (input+effects bar, or the position/scale
     // control box), this screen's own icon column steps aside so the
@@ -206,6 +220,8 @@ export class PlanningScreen {
     this.textComposer = new TextComposer({
       app: deps.app,
       audio: deps.audio,
+      worldContainer: deps.worldContainer,
+      uiContainer: deps.uiContainer,
       onComposingChange: (composing) => {
         this.hintComposing = composing;
         this.applyHintVisibility(false);

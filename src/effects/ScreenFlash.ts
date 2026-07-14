@@ -12,7 +12,8 @@ const DECAY_PER_SECOND = 7; // linear decay: ~70ms from peak to fully gone
  */
 export class ScreenFlash {
   private readonly app: Application;
-  private readonly graphics: Graphics;
+  /** Public so fireworksMood.ts can reparent it into worldContainer (ambient explosion lighting is legitimate scene content, unlike the camera-style UI flash — see fireworksMood.ts's own container-tree doc comment). */
+  readonly graphics: Graphics;
 
   constructor(app: Application) {
     this.app = app;

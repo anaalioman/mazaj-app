@@ -61,7 +61,8 @@ export class PlanningMode {
   private readonly getVisibleRange: () => VisibleRange;
   private readonly getActiveShape: () => BurstType | null;
   private readonly resolveX: (x: number) => number;
-  private readonly layer: Container;
+  /** Public so fireworksMood.ts can reparent it into uiContainer (planning-time placement markers, not final art — see fireworksMood.ts's own container-tree doc comment). */
+  readonly layer: Container;
   private pins: Pin[] = [];
   private active = false;
 
