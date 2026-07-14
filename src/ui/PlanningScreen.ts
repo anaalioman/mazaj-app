@@ -41,12 +41,17 @@ interface SliderSpec {
   value: number;
 }
 
+// Initial handle positions must match FireworksSystem's own
+// DEFAULT_BURST_SETTINGS (burstTypes.ts) — these are two independent
+// literals (the slider doesn't read the engine's defaults back), so a
+// change to one without the other would show a slider sitting somewhere
+// the engine isn't actually starting from.
 const SLIDERS = {
-  density: { label: 'كثافة الجسيمات', min: 50, max: 500, step: 1, value: 150 },
-  gravity: { label: 'شدة الجاذبية', min: 0, max: 2, step: 0.05, value: 1 },
-  lifespan: { label: 'عمر الجسيمات', min: 0.4, max: 2.5, step: 0.05, value: 1 },
+  density: { label: 'كثافة الجسيمات', min: 50, max: 500, step: 1, value: 240 },
+  gravity: { label: 'شدة الجاذبية', min: 0, max: 2, step: 0.05, value: 0.6 },
+  lifespan: { label: 'عمر الجسيمات', min: 0.4, max: 2.5, step: 0.05, value: 1.7 },
   scale: { label: 'اتساع الانفجار', min: 0.5, max: 2, step: 0.05, value: 1 },
-  glow: { label: 'توهج الألعاب النارية', min: 0, max: 10, step: 0.5, value: 2 },
+  glow: { label: 'توهج الألعاب النارية', min: 0, max: 10, step: 0.5, value: 4 },
   dimmer: { label: 'إضاءة الخلفية', min: 0, max: 1, step: 0.01, value: 1 },
 } satisfies Record<string, SliderSpec>;
 

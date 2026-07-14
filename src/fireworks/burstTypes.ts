@@ -23,10 +23,15 @@ export interface BurstSettings {
   glow: number;
 }
 
+// Richer out-of-the-box feel: denser bursts, a slower "royal" gravitational
+// fall, and a longer-lingering glow, without changing any slider's own
+// range — see the matching SLIDERS defaults in PlanningScreen.ts, which
+// must stay in sync with these (the sliders' initial handle position has to
+// reflect the engine's actual starting state, not a stale one).
 export const DEFAULT_BURST_SETTINGS: BurstSettings = {
-  particleDensity: 150,
-  gravityScale: 1,
-  lifespanScale: 1,
+  particleDensity: 240,
+  gravityScale: 0.6,
+  lifespanScale: 1.7,
   explosionScale: 1,
-  glow: 2,
+  glow: 4,
 };
