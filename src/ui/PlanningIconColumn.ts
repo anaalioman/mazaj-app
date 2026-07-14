@@ -1,4 +1,5 @@
 import { Application, Container, Graphics, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent } from 'pixi.js';
+import { AdvancedBloomFilter, DropShadowFilter } from 'pixi-filters';
 import { iconTexture } from './svgIconTexture';
 import type { IconName } from './icons';
 
@@ -25,12 +26,21 @@ const HIT_WIDTH = 64;
 const HIT_HEIGHT = 44;
 
 const IDLE_ALPHA = 0.75;
-const ACTIVE_TINT = 0xffffff;
-const IDLE_TINT = 0xffffff;
+/** The 14 icon glyphs' unified gold identity — the row labels stay the old CSS's plain white, only the icons themselves carry this. */
+const ICON_GOLD = 0xfff6df;
+const LABEL_TINT = 0xffffff;
 const FLASH_COLOR = 0x06b6d4;
 const FLASH_MS = 180;
 const RECORD_COLOR = 0xff5a63;
 const RECORD_PULSE_MS = 1000;
+
+/** A fresh filter pair per icon (Pixi filters aren't safely shareable across multiple display objects) — real bloom (bright-pass + blur + additive composite, not a flat glow) plus a real drop shadow for depth, same techniques already used for the fireworks glow (FireworksSystem.ts) and the text control box's handles (TextComposer.ts). */
+function iconFilters(): (AdvancedBloomFilter | DropShadowFilter)[] {
+  return [
+    new AdvancedBloomFilter({ threshold: 0.3, blur: 3, quality: 4, bloomScale: 1.2, brightness: 1.05 }),
+    new DropShadowFilter({ color: 0x000000, alpha: 0.5, blur: 2, offset: { x: 0, y: 2 } }),
+  ];
+}
 
 export interface IconRowSpec {
   id: string;
@@ -140,19 +150,21 @@ export class PlanningIconColumn {
     if (spec.icon === 'T') {
       const glyph = new Text({
         text: 'T',
-        style: new TextStyle({ fontFamily: 'Tajawal, system-ui, sans-serif', fontSize: 18, fontWeight: '800', fill: IDLE_TINT }),
+        style: new TextStyle({ fontFamily: 'Tajawal, system-ui, sans-serif', fontSize: 18, fontWeight: '800', fill: ICON_GOLD }),
       });
       glyph.anchor.set(0.5);
       glyph.alpha = IDLE_ALPHA;
+      glyph.filters = iconFilters();
       root.addChild(glyph);
       iconDisplay = glyph;
     } else {
       const sprite = new Sprite();
       sprite.anchor.set(0.5);
-      sprite.tint = IDLE_TINT;
+      sprite.tint = ICON_GOLD;
       sprite.alpha = IDLE_ALPHA;
       sprite.width = ICON_SIZE;
       sprite.height = ICON_SIZE;
+      sprite.filters = iconFilters();
       root.addChild(sprite);
       void iconTexture(spec.icon, ICON_SOURCE_SIZE, '#ffffff').then((texture) => {
         sprite.texture = texture;
@@ -182,7 +194,7 @@ export class PlanningIconColumn {
       fontFamily: 'Tajawal, system-ui, sans-serif',
       fontSize: 10,
       fontWeight: active ? '700' : '400',
-      fill: active ? ACTIVE_TINT : IDLE_TINT,
+      fill: LABEL_TINT,
     });
   }
 
