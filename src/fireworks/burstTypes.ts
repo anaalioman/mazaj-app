@@ -28,8 +28,14 @@ export interface BurstSettings {
 // range — see the matching SLIDERS defaults in PlanningScreen.ts, which
 // must stay in sync with these (the sliders' initial handle position has to
 // reflect the engine's actual starting state, not a stale one).
+//
+// particleDensity raised again (240->320) after Particle.ts/FireworksSystem.ts
+// switched to a real object pool (see FireworksSystem's `deadPool` doc
+// comment) — measured spawn-loop cost with a warm pool dropped to 0-1ms per
+// burst across every pattern (down from up to 8ms cold), so there's real,
+// measured headroom for this increase, not a guess.
 export const DEFAULT_BURST_SETTINGS: BurstSettings = {
-  particleDensity: 240,
+  particleDensity: 320,
   gravityScale: 0.6,
   lifespanScale: 1.7,
   explosionScale: 1,

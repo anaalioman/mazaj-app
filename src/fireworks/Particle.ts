@@ -81,47 +81,64 @@ export interface ParticleOptions {
 // clash with this very class) supports exactly the per-particle properties
 // this effect needs — x/y, scaleX/scaleY, anchorX/anchorY, rotation, tint,
 // alpha — every one of them individually, every frame, at ParticleContainer
-// batching speed instead of per-object Sprite/Container overhead. The one
-// thing a shared parent Container gave for free that two independent flat
-// particles don't — `sprite.alpha` cascading to both children from one
-// assignment — is now two explicit assignments in update() below; everything
-// else maps 1:1.
+// batching speed instead of per-object Sprite/Container overhead.
+//
+// Object pool member: the trail/core PixiParticles are created exactly once
+// per `Particle` instance and added to their containers exactly once —
+// never via `new Particle(...)` per spark. `FireworksSystem` recycles dead
+// instances through `init()` instead, so a steady-state show (after its
+// first few bursts have warmed the pool) does zero PixiParticle allocation
+// and zero `ParticleContainer.addParticle()`/`removeParticle()` calls (each
+// of which marks the container's internal buffer dirty and forces a partial
+// rebuild) — only property writes on already-live particles. `kill()`
+// hides a particle (zero scale, zero alpha) instead of removing it from the
+// container, keeping the container's own particle count — and therefore its
+// GPU buffer size — constant across a particle's whole death/reuse cycle.
 export class Particle {
   private readonly trail: PixiParticle;
   private readonly core: PixiParticle;
-  private readonly trailsContainer: ParticleContainer;
-  private readonly coresContainer: ParticleContainer;
   private readonly texture: Texture;
-  private readonly coreTint: number;
+  private coreTint = 0xffffff;
 
-  private x: number;
-  private y: number;
-  private vx: number;
-  private vy: number;
-  private readonly gravity: number;
-  private readonly drag: number;
-  private readonly life: number;
+  private x = 0;
+  private y = 0;
+  private vx = 0;
+  private vy = 0;
+  private gravity = 0.12;
+  private drag = 0.985;
+  private life = 1;
   private age = 0;
-  private readonly baseSize: number;
-  private readonly baseColor: number;
-  private readonly twinkle: boolean;
+  private baseSize = 1;
+  private baseColor = 0xffffff;
+  private twinkle = false;
 
-  private readonly sparkleInterval?: number;
-  private readonly onSparkle?: (x: number, y: number) => void;
+  private sparkleInterval?: number;
+  private onSparkle?: (x: number, y: number) => void;
   private sparkleAccumulator = 0;
 
-  private readonly splitAt?: number;
-  private readonly onSplit?: (x: number, y: number, vx: number, vy: number) => void;
+  private splitAt?: number;
+  private onSplit?: (x: number, y: number, vx: number, vy: number) => void;
   private hasSplit = false;
 
-  private readonly strobe: boolean;
-  private strobeTimer: number;
+  private strobe = false;
+  private strobeTimer = 0;
   private strobeOn = true;
 
-  private readonly approachStrength: number;
-  private readonly approachPeakRatio: number;
+  private approachStrength = 0;
+  private approachPeakRatio = 0;
 
-  constructor(texture: Texture, trailsContainer: ParticleContainer, coresContainer: ParticleContainer, options: ParticleOptions) {
+  constructor(texture: Texture, trailsContainer: ParticleContainer, coresContainer: ParticleContainer) {
+    this.texture = texture;
+
+    this.trail = new PixiParticle({ texture, anchorX: 0.5, anchorY: 0.5 });
+    trailsContainer.addParticle(this.trail);
+
+    this.core = new PixiParticle({ texture, anchorX: 0.5, anchorY: 0.5 });
+    coresContainer.addParticle(this.core);
+  }
+
+  /** (Re)starts this particle — see the class's own pooling doc comment. Called both for a fresh instance and a recycled dead one. */
+  init(options: ParticleOptions): void {
     const {
       x,
       y,
@@ -147,45 +164,35 @@ export class Particle {
     this.gravity = gravity;
     this.drag = drag;
     this.life = life;
+    this.age = 0;
     this.baseSize = size;
     this.baseColor = color;
     this.twinkle = twinkle;
     this.sparkleInterval = sparkleInterval;
     this.onSparkle = onSparkle;
+    this.sparkleAccumulator = 0;
     this.splitAt = splitAt;
     this.onSplit = onSplit;
+    this.hasSplit = false;
     this.strobe = strobe;
     this.strobeTimer = 3 + Math.random() * 10;
+    this.strobeOn = true;
     this.coreTint = lerpColor(IGNITION_COLOR, color, CORE_COLOR_MIX);
     this.approachStrength =
       Math.random() < APPROACH_CHANCE ? APPROACH_MIN_STRENGTH + Math.random() * (APPROACH_MAX_STRENGTH - APPROACH_MIN_STRENGTH) : 0;
     this.approachPeakRatio = APPROACH_PEAK_MIN + Math.random() * (APPROACH_PEAK_MAX - APPROACH_PEAK_MIN);
 
-    this.texture = texture;
-    this.trailsContainer = trailsContainer;
-    this.coresContainer = coresContainer;
-
-    this.trail = new PixiParticle({
-      texture,
-      x,
-      y,
-      anchorX: 0.5,
-      anchorY: 0.5,
-      tint: IGNITION_COLOR, // stage 1 starts white-hot; update() takes over next tick
-    });
+    this.trail.x = x;
+    this.trail.y = y;
+    this.trail.tint = IGNITION_COLOR; // stage 1 starts white-hot; update() takes over next tick
+    this.trail.alpha = 1;
     this.setScale(this.trail, size, size);
-    trailsContainer.addParticle(this.trail);
 
-    this.core = new PixiParticle({
-      texture,
-      x,
-      y,
-      anchorX: 0.5,
-      anchorY: 0.5,
-      tint: this.coreTint,
-    });
+    this.core.x = x;
+    this.core.y = y;
+    this.core.tint = this.coreTint;
+    this.core.alpha = 1;
     this.setScale(this.core, size * CORE_SIZE_RATIO, size * CORE_SIZE_RATIO);
-    coresContainer.addParticle(this.core);
   }
 
   /** PixiJS's lightweight Particle has no width/height — only scaleX/scaleY relative to its shared texture's own pixel size. */
@@ -307,8 +314,13 @@ export class Particle {
     return true;
   }
 
-  destroy(): void {
-    this.trailsContainer.removeParticle(this.trail);
-    this.coresContainer.removeParticle(this.core);
+  /** Hides this particle without removing it from its ParticleContainer — see the class's own pooling doc comment for why. Ready for `init()` to reuse immediately. */
+  kill(): void {
+    this.trail.alpha = 0;
+    this.trail.scaleX = 0;
+    this.trail.scaleY = 0;
+    this.core.alpha = 0;
+    this.core.scaleX = 0;
+    this.core.scaleY = 0;
   }
 }

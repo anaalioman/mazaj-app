@@ -83,6 +83,14 @@ export class FireworksSystem {
   private pendingSpawns: Particle[] = [];
   // Which particles belong to which tracked burst — see BurstCompletion.
   private readonly particleWatchers = new Map<Particle, BurstCompletion>();
+  // Object pool (see Particle.ts's own doc comment): dead particles land
+  // here via `kill()` instead of being discarded, and `spawnParticle()`
+  // reuses one via `init()` before ever allocating a new instance. A show's
+  // first few bursts still allocate (the pool starts empty and grows to the
+  // high-water mark of concurrent live particles), but every burst after
+  // that reuses entirely — zero `new Particle(...)`, zero
+  // `ParticleContainer.addParticle()`/`removeParticle()` calls.
+  private readonly deadPool: Particle[] = [];
 
   private settings: BurstSettings = { ...DEFAULT_BURST_SETTINGS };
   private enabledTypes: BurstType[] = [...ALL_BURST_TYPES];
@@ -110,19 +118,18 @@ export class FireworksSystem {
 
   constructor(app: Application, options: FireworksSystemOptions = {}) {
     this.app = app;
-    // `isRenderGroup: true` is genuinely meaningful here specifically
-    // *because* of the ParticleContainer split below: before it, `layer`'s
-    // own `.children` list churned every single frame (every live spark was
-    // its own top-level child, added/removed as it spawned/died), which
-    // would have made caching this Container's render instructions pointless
-    // — there was nothing stable to cache. Now `layer`'s own children are
-    // just `trailsContainer` + `coresContainer` (two fixed references that
-    // never change) plus the occasional Rocket sprite; the actual
-    // per-particle churn happens *inside* those two ParticleContainers'
-    // own internal particleChildren arrays, invisible to `layer`'s child
-    // list. That makes `layer`'s top-level render-instruction set genuinely
-    // stable frame-to-frame, which is exactly what `isRenderGroup` caches.
-    this.layer = new Container({ isRenderGroup: true });
+    // Deliberately a plain Container, not `{ isRenderGroup: true }`: an
+    // earlier version of this file marked it a render group, reasoning that
+    // `layer`'s own top-level children (just the two ParticleContainers +
+    // occasional Rocket sprites) are stable frame-to-frame. That reasoning
+    // didn't account for combining a render group with a container-level
+    // filter (`glowFilter` below) on top of content whose *visual* bounds
+    // grow explosively every frame during a burst — a real gap given this
+    // codebase currently has no way to verify render-group/filter
+    // compositing on real Android GPU drivers from this environment.
+    // Reverted to standard rendering rather than defend a speculative
+    // optimization it can't actually verify is safe.
+    this.layer = new Container();
     app.stage.addChild(this.layer);
     this.onLaunch = options.onLaunch;
     this.onExplode = options.onExplode;
@@ -222,7 +229,8 @@ export class FireworksSystem {
     this.particles = this.particles.filter((particle) => {
       const alive = particle.update(delta);
       if (!alive) {
-        particle.destroy();
+        particle.kill();
+        this.deadPool.push(particle);
         this.resolveWatcher(particle);
       }
       return alive;
@@ -296,9 +304,11 @@ export class FireworksSystem {
     this.layer.filters = strength > 0.05 ? [this.glowFilter] : [];
   }
 
-  /** Every burst pattern constructs particles through here instead of `new Particle(...)` directly, so `trailsContainer`/`coresContainer` stay defined in exactly one place. */
+  /** Every burst pattern constructs particles through here — reuses a dead pooled instance when one's available (see `deadPool`'s own doc comment), only ever allocating a fresh `Particle` on a genuine pool miss. */
   private spawnParticle(texture: Texture, options: ParticleOptions): Particle {
-    return new Particle(texture, this.trailsContainer, this.coresContainer, options);
+    const particle = this.deadPool.pop() ?? new Particle(texture, this.trailsContainer, this.coresContainer);
+    particle.init(options);
+    return particle;
   }
 
   private addParticle(particle: Particle, batch?: BurstCompletion): void {

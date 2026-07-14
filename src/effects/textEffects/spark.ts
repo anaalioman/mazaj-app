@@ -49,7 +49,8 @@ export class SparkEffect implements TextEffect {
     for (let i = 0; i < SPARK_COUNT; i++) {
       const angle = (Math.PI * 2 * i) / SPARK_COUNT + Math.random() * 0.3;
       const speed = 1.5 + Math.random() * 2.2;
-      const particle = new Particle(ctx.particleTexture, this.trailsContainer, this.coresContainer, {
+      const particle = new Particle(ctx.particleTexture, this.trailsContainer, this.coresContainer);
+      particle.init({
         x: this.text.x,
         y: this.text.y,
         vx: Math.cos(angle) * speed,
@@ -76,7 +77,7 @@ export class SparkEffect implements TextEffect {
 
     this.particles = this.particles.filter((particle) => {
       const alive = particle.update(delta);
-      if (!alive) particle.destroy();
+      if (!alive) particle.kill();
       return alive;
     });
 
@@ -88,7 +89,7 @@ export class SparkEffect implements TextEffect {
   }
 
   clear(): void {
-    for (const particle of this.particles) particle.destroy();
+    for (const particle of this.particles) particle.kill();
     this.particles = [];
     this.resolveFn = null;
     this.trailsContainer?.destroy();

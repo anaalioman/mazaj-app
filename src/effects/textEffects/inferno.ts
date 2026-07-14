@@ -65,7 +65,8 @@ export class InfernoEffect implements TextEffect {
   }
 
   private spawn(x: number, y: number, vx: number, vy: number, size: number, life: number): void {
-    const particle = new Particle(this.texture, this.trailsContainer, this.coresContainer, {
+    const particle = new Particle(this.texture, this.trailsContainer, this.coresContainer);
+    particle.init({
       x,
       y,
       vx,
@@ -97,7 +98,7 @@ export class InfernoEffect implements TextEffect {
 
     this.particles = this.particles.filter((particle) => {
       const alive = particle.update(delta);
-      if (!alive) particle.destroy();
+      if (!alive) particle.kill();
       return alive;
     });
 
@@ -109,7 +110,7 @@ export class InfernoEffect implements TextEffect {
   }
 
   clear(): void {
-    for (const particle of this.particles) particle.destroy();
+    for (const particle of this.particles) particle.kill();
     this.particles = [];
     this.resolveFn = null;
     this.trailsContainer?.destroy();

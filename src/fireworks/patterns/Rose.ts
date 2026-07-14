@@ -11,11 +11,12 @@ import type { BurstContext } from './types';
 export function burstRose(x: number, y: number, ctx: BurstContext): void {
   const burstColors = ctx.activeColor !== null ? shadesOf(ctx.activeColor, 4) : pickBurstColors(3 + Math.floor(Math.random() * 3));
   const k = 2 + Math.floor(Math.random() * 5);
-  // A thin curve reads clearly with far fewer points than a filled sphere
-  // needs (Peony's base count is 180-260) — even at k=6 (the densest
-  // petal count) and the lowest density setting, this still puts dozens of
-  // points on every petal.
-  const count = Math.max(20, Math.round(100 * ctx.densityRatio));
+  // Back to the same base count every other pattern uses proportionally
+  // (was temporarily cut to 100 to manage spawn-loop CPU cost before
+  // FireworksSystem.ts had a real object pool — see its `deadPool` doc
+  // comment — which removed that pressure; no reason for Rose to be the
+  // one thin-looking pattern now that the actual cost problem is fixed).
+  const count = Math.max(20, Math.round(140 * ctx.densityRatio));
   const baseSpeed = (3.4 + Math.random() * 1.6) * ctx.settings.explosionScale;
 
   for (let i = 0; i < count; i++) {

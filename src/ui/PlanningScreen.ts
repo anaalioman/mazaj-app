@@ -47,7 +47,7 @@ interface SliderSpec {
 // change to one without the other would show a slider sitting somewhere
 // the engine isn't actually starting from.
 const SLIDERS = {
-  density: { label: 'كثافة الجسيمات', min: 50, max: 500, step: 1, value: 240 },
+  density: { label: 'كثافة الجسيمات', min: 50, max: 500, step: 1, value: 320 },
   gravity: { label: 'شدة الجاذبية', min: 0, max: 2, step: 0.05, value: 0.6 },
   lifespan: { label: 'عمر الجسيمات', min: 0.4, max: 2.5, step: 0.05, value: 1.7 },
   scale: { label: 'اتساع الانفجار', min: 0.5, max: 2, step: 0.05, value: 1 },
