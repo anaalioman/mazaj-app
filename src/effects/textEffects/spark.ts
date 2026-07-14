@@ -1,3 +1,4 @@
+import { ParticleContainer } from 'pixi.js';
 import type { Container, Text } from 'pixi.js';
 import { Particle } from '../../fireworks/Particle';
 import type { TextEffect, TextEffectContext } from './types';
@@ -18,6 +19,11 @@ const SPARK_COUNT = 70;
 export class SparkEffect implements TextEffect {
   private container!: Container;
   private text!: Text;
+  // A fresh pair per play() (same batching approach as FireworksSystem's
+  // own bursts — see its own doc comment) — built here rather than shared
+  // across effect instances since each play() supplies its own container.
+  private trailsContainer!: ParticleContainer;
+  private coresContainer!: ParticleContainer;
   private particles: Particle[] = [];
   private age = 0;
   private resolveFn: (() => void) | null = null;
@@ -28,10 +34,22 @@ export class SparkEffect implements TextEffect {
     this.text.alpha = 0;
     this.age = 0;
 
+    this.trailsContainer = new ParticleContainer({
+      texture: ctx.particleTexture,
+      blendMode: 'add',
+      dynamicProperties: { position: true, rotation: true, vertex: true, uvs: false, color: true },
+    });
+    this.coresContainer = new ParticleContainer({
+      texture: ctx.particleTexture,
+      blendMode: 'add',
+      dynamicProperties: { position: true, rotation: false, vertex: true, uvs: false, color: true },
+    });
+    this.container.addChild(this.trailsContainer, this.coresContainer);
+
     for (let i = 0; i < SPARK_COUNT; i++) {
       const angle = (Math.PI * 2 * i) / SPARK_COUNT + Math.random() * 0.3;
       const speed = 1.5 + Math.random() * 2.2;
-      const particle = new Particle(ctx.particleTexture, {
+      const particle = new Particle(ctx.particleTexture, this.trailsContainer, this.coresContainer, {
         x: this.text.x,
         y: this.text.y,
         vx: Math.cos(angle) * speed,
@@ -43,7 +61,6 @@ export class SparkEffect implements TextEffect {
         drag: 0.96,
         twinkle: Math.random() < 0.5,
       });
-      this.container.addChild(particle.sprite);
       this.particles.push(particle);
     }
 
@@ -59,10 +76,7 @@ export class SparkEffect implements TextEffect {
 
     this.particles = this.particles.filter((particle) => {
       const alive = particle.update(delta);
-      if (!alive) {
-        this.container.removeChild(particle.sprite);
-        particle.destroy();
-      }
+      if (!alive) particle.destroy();
       return alive;
     });
 
@@ -74,11 +88,10 @@ export class SparkEffect implements TextEffect {
   }
 
   clear(): void {
-    for (const particle of this.particles) {
-      this.container.removeChild(particle.sprite);
-      particle.destroy();
-    }
+    for (const particle of this.particles) particle.destroy();
     this.particles = [];
     this.resolveFn = null;
+    this.trailsContainer?.destroy();
+    this.coresContainer?.destroy();
   }
 }

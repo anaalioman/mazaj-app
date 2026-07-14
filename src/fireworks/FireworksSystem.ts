@@ -1,6 +1,6 @@
-import { Application, Container } from 'pixi.js';
+import { Application, Container, ParticleContainer, type Texture } from 'pixi.js';
 import { AdvancedBloomFilter } from 'pixi-filters';
-import { Particle, lerpColor } from './Particle';
+import { Particle, lerpColor, type ParticleOptions } from './Particle';
 import { Rocket } from './Rocket';
 import { GroundFountain } from './GroundFountain';
 import { getParticleTexture } from './textures';
@@ -75,6 +75,21 @@ export class FireworksSystem {
   private readonly app: Application;
   /** Public so fireworksMood.ts can reparent it into worldContainer (scene content, must be excluded from snapshot/recording UI-exclusion — see fireworksMood.ts's own container-tree doc comment). */
   readonly layer: Container;
+  /**
+   * Every spark's colored, stretched trail — and every spark's white-hot
+   * core (see `coresContainer` below) — lives in a shared `ParticleContainer`
+   * instead of each spark owning its own Container/Sprite pair. A
+   * `ParticleContainer` batches thousands of flat particles (position,
+   * scale, rotation, tint, alpha — everything `Particle.ts` needs) into a
+   * handful of draw calls via its own dedicated GPU render pipe, instead of
+   * the normal per-object Container instruction path. Split into two
+   * (trails vs. cores) because each needs its own texture-independent
+   * per-particle anchor/rotation state, and a ParticleContainer requires all
+   * its particles to share one uniform set of "dynamic" properties.
+   */
+  private readonly trailsContainer: ParticleContainer;
+  /** The white-hot leading-tip particles — see `trailsContainer` above. */
+  private readonly coresContainer: ParticleContainer;
   private readonly glowFilter: AdvancedBloomFilter;
   private readonly onLaunch?: (x: number) => void;
   private readonly onExplode?: (x: number, y: number, intensity: number) => void;
@@ -107,10 +122,44 @@ export class FireworksSystem {
 
   constructor(app: Application, options: FireworksSystemOptions = {}) {
     this.app = app;
-    this.layer = new Container();
+    // `isRenderGroup: true` is genuinely meaningful here specifically
+    // *because* of the ParticleContainer split below: before it, `layer`'s
+    // own `.children` list churned every single frame (every live spark was
+    // its own top-level child, added/removed as it spawned/died), which
+    // would have made caching this Container's render instructions pointless
+    // — there was nothing stable to cache. Now `layer`'s own children are
+    // just `trailsContainer` + `coresContainer` (two fixed references that
+    // never change) plus the occasional Rocket sprite; the actual
+    // per-particle churn happens *inside* those two ParticleContainers'
+    // own internal particleChildren arrays, invisible to `layer`'s child
+    // list. That makes `layer`'s top-level render-instruction set genuinely
+    // stable frame-to-frame, which is exactly what `isRenderGroup` caches.
+    this.layer = new Container({ isRenderGroup: true });
     app.stage.addChild(this.layer);
     this.onLaunch = options.onLaunch;
     this.onExplode = options.onExplode;
+
+    const texture = getParticleTexture(app);
+    // `vertex: true` covers both scale *and* anchor (PixiJS bakes both into
+    // one "vertex" GPU attribute — see particleData.ts upstream) — required
+    // since every spark's thickness/stretch/anchor changes every frame.
+    // `rotation`/`color` dynamic for the same reason (velocity-angle spin,
+    // thermal color decay); `uvs` stays static since every particle shares
+    // the exact same full, uncropped texture. `blendMode: 'add'` matches
+    // every spark's own additive glow, uniformly, for the whole batch.
+    this.trailsContainer = new ParticleContainer({
+      texture,
+      blendMode: 'add',
+      dynamicProperties: { position: true, rotation: true, vertex: true, uvs: false, color: true },
+    });
+    this.layer.addChild(this.trailsContainer);
+    // Cores never rotate (always a plain circle), so rotation stays static.
+    this.coresContainer = new ParticleContainer({
+      texture,
+      blendMode: 'add',
+      dynamicProperties: { position: true, rotation: false, vertex: true, uvs: false, color: true },
+    });
+    this.layer.addChild(this.coresContainer);
 
     // True bloom (bright-pass extract + blur + additive-style composite),
     // not a flat blur — only genuinely bright pixels (white-hot ignition,
@@ -119,10 +168,6 @@ export class FireworksSystem {
     // drop it further if a real device shows an FPS hit.
     this.glowFilter = new AdvancedBloomFilter({ threshold: 0.4, blur: 6, quality: 4, bloomScale: 1.2, brightness: 1 });
     this.applyGlow();
-
-    // Force-build the shared particle texture up front so the first
-    // firework doesn't stall on texture generation.
-    getParticleTexture(app);
 
     this.autoLaunchEnabled = options.autoLaunch ?? true;
     this.timeToNextAutoLaunch = this.randomLaunchDelay();
@@ -178,7 +223,6 @@ export class FireworksSystem {
     this.particles = this.particles.filter((particle) => {
       const alive = particle.update(delta);
       if (!alive) {
-        this.layer.removeChild(particle.sprite);
         particle.destroy();
         this.resolveWatcher(particle);
       }
@@ -253,8 +297,12 @@ export class FireworksSystem {
     this.layer.filters = strength > 0.05 ? [this.glowFilter] : [];
   }
 
+  /** Every burst method below constructs particles through here instead of `new Particle(...)` directly, so `trailsContainer`/`coresContainer` stay defined in exactly one place. */
+  private spawnParticle(texture: Texture, options: ParticleOptions): Particle {
+    return new Particle(texture, this.trailsContainer, this.coresContainer, options);
+  }
+
   private addParticle(particle: Particle, batch?: BurstCompletion): void {
-    this.layer.addChild(particle.sprite);
     this.pendingSpawns.push(particle);
     if (batch) {
       batch.remaining++;
@@ -392,7 +440,7 @@ export class FireworksSystem {
       const speed = this.fillSpeed(outerSpeed);
 
       this.addParticle(
-        new Particle(texture, {
+        this.spawnParticle(texture, {
           x,
           y,
           vx: Math.cos(angle) * speed,
@@ -416,7 +464,7 @@ export class FireworksSystem {
       const speed = this.fillSpeed(pistilSpeed);
 
       this.addParticle(
-        new Particle(texture, {
+        this.spawnParticle(texture, {
           x,
           y,
           vx: Math.cos(angle) * speed,
@@ -453,7 +501,7 @@ export class FireworksSystem {
       const color = burstColors[Math.floor(Math.random() * burstColors.length)];
 
       this.addParticle(
-        new Particle(texture, {
+        this.spawnParticle(texture, {
           x,
           y,
           vx: Math.cos(theta) * speed,
@@ -487,7 +535,7 @@ export class FireworksSystem {
       const color = hues[Math.floor(Math.random() * hues.length)];
 
       this.addParticle(
-        new Particle(texture, {
+        this.spawnParticle(texture, {
           x,
           y,
           vx: Math.cos(angle) * speed,
@@ -511,7 +559,7 @@ export class FireworksSystem {
     const color = hues[Math.floor(Math.random() * hues.length)];
 
     this.addParticle(
-      new Particle(texture, {
+      this.spawnParticle(texture, {
         x: x + (Math.random() - 0.5) * 4,
         y: y + (Math.random() - 0.5) * 4,
         vx: (Math.random() - 0.5) * 0.3,
@@ -546,7 +594,7 @@ export class FireworksSystem {
       const life = (55 + Math.random() * 20) * this.settings.lifespanScale;
 
       this.addParticle(
-        new Particle(texture, {
+        this.spawnParticle(texture, {
           x,
           y,
           vx: Math.cos(angle) * speed,
@@ -568,7 +616,7 @@ export class FireworksSystem {
 
   private spawnPalmArmTrail(x: number, y: number, color: number, batch?: BurstCompletion): void {
     this.addParticle(
-      new Particle(getParticleTexture(this.app), {
+      this.spawnParticle(getParticleTexture(this.app), {
         x: x + (Math.random() - 0.5) * 3,
         y: y + (Math.random() - 0.5) * 3,
         vx: (Math.random() - 0.5) * 0.3,
@@ -593,7 +641,7 @@ export class FireworksSystem {
     for (const sign of [1, -1]) {
       const angle = baseAngle + (Math.PI / 2) * sign;
       this.addParticle(
-        new Particle(texture, {
+        this.spawnParticle(texture, {
           x,
           y,
           vx: Math.cos(angle) * speed,
@@ -628,7 +676,7 @@ export class FireworksSystem {
     for (let i = 0; i < count; i++) {
       const theta = (i / count) * Math.PI * 2;
       this.addParticle(
-        new Particle(texture, {
+        this.spawnParticle(texture, {
           x,
           y,
           vx: Math.cos(theta) * speed,
@@ -647,7 +695,7 @@ export class FireworksSystem {
     for (let i = 0; i < count; i++) {
       const theta = (i / count) * Math.PI * 2;
       this.addParticle(
-        new Particle(texture, {
+        this.spawnParticle(texture, {
           x,
           y,
           vx: Math.cos(theta) * speed * 0.32,
@@ -681,7 +729,7 @@ export class FireworksSystem {
       const color = burstColors[Math.floor(Math.random() * burstColors.length)];
 
       this.addParticle(
-        new Particle(texture, {
+        this.spawnParticle(texture, {
           x,
           y,
           vx: Math.cos(angle) * speed,
@@ -700,7 +748,7 @@ export class FireworksSystem {
 
   private spawnTrailSpark(x: number, y: number, color: number): void {
     this.addParticle(
-      new Particle(getParticleTexture(this.app), {
+      this.spawnParticle(getParticleTexture(this.app), {
         x,
         y,
         vx: (Math.random() - 0.5) * 0.4,

@@ -1,3 +1,4 @@
+import { ParticleContainer } from 'pixi.js';
 import type { Container, Text } from 'pixi.js';
 import { Particle } from '../../fireworks/Particle';
 import type { TextEffect, TextEffectContext } from './types';
@@ -18,6 +19,9 @@ export abstract class DissolveCloudEffect implements TextEffect {
 
   private container!: Container;
   private text!: Text;
+  // A fresh pair per play() — see SparkEffect's own doc comment for why.
+  private trailsContainer!: ParticleContainer;
+  private coresContainer!: ParticleContainer;
   private particles: Particle[] = [];
   private age = 0;
   private resolveFn: (() => void) | null = null;
@@ -28,6 +32,18 @@ export abstract class DissolveCloudEffect implements TextEffect {
     this.text.alpha = 0;
     this.age = 0;
 
+    this.trailsContainer = new ParticleContainer({
+      texture: ctx.particleTexture,
+      blendMode: 'add',
+      dynamicProperties: { position: true, rotation: true, vertex: true, uvs: false, color: true },
+    });
+    this.coresContainer = new ParticleContainer({
+      texture: ctx.particleTexture,
+      blendMode: 'add',
+      dynamicProperties: { position: true, rotation: false, vertex: true, uvs: false, color: true },
+    });
+    this.container.addChild(this.trailsContainer, this.coresContainer);
+
     const count = 90;
     const halfW = this.text.width / 2;
     const halfH = this.text.height / 2;
@@ -37,7 +53,7 @@ export abstract class DissolveCloudEffect implements TextEffect {
       const px = this.text.x + (Math.random() - 0.5) * halfW * 2.6;
       const py = this.text.y + halfH - heightRatio * this.text.height * 1.6;
 
-      const particle = new Particle(ctx.particleTexture, {
+      const particle = new Particle(ctx.particleTexture, this.trailsContainer, this.coresContainer, {
         x: px,
         y: py,
         vx: (Math.random() - 0.5) * 0.5,
@@ -48,7 +64,6 @@ export abstract class DissolveCloudEffect implements TextEffect {
         gravity: -0.01,
         drag: 0.992,
       });
-      this.container.addChild(particle.sprite);
       this.particles.push(particle);
     }
 
@@ -64,10 +79,7 @@ export abstract class DissolveCloudEffect implements TextEffect {
 
     this.particles = this.particles.filter((particle) => {
       const alive = particle.update(delta);
-      if (!alive) {
-        this.container.removeChild(particle.sprite);
-        particle.destroy();
-      }
+      if (!alive) particle.destroy();
       return alive;
     });
 
@@ -79,11 +91,10 @@ export abstract class DissolveCloudEffect implements TextEffect {
   }
 
   clear(): void {
-    for (const particle of this.particles) {
-      this.container.removeChild(particle.sprite);
-      particle.destroy();
-    }
+    for (const particle of this.particles) particle.destroy();
     this.particles = [];
     this.resolveFn = null;
+    this.trailsContainer?.destroy();
+    this.coresContainer?.destroy();
   }
 }

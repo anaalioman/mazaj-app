@@ -1,4 +1,4 @@
-import { Container, Sprite, Texture } from 'pixi.js';
+import { Particle as PixiParticle, ParticleContainer, Texture } from 'pixi.js';
 
 // Thermal Color Decay: the trail cools from a brief white flash into its
 // assigned shell color almost immediately, then ages into dim ember ash near
@@ -73,14 +73,29 @@ export interface ParticleOptions {
 // A single point of light: an explosion spark, a rocket trail dot, or a
 // falling glitter trail. Moves under gravity + drag and fades out over its
 // lifetime; can optionally emit sparkle children or split mid-flight.
+//
+// Rendered as two entries in shared `ParticleContainer`s (`trailsContainer`/
+// `coresContainer`, owned by FireworksSystem — see its own doc comment for
+// why they're split in two) rather than as Sprites of its own: PixiJS's
+// lightweight `Particle` (imported here as `PixiParticle` to avoid a name
+// clash with this very class) supports exactly the per-particle properties
+// this effect needs — x/y, scaleX/scaleY, anchorX/anchorY, rotation, tint,
+// alpha — every one of them individually, every frame, at ParticleContainer
+// batching speed instead of per-object Sprite/Container overhead. The one
+// thing a shared parent Container gave for free that two independent flat
+// particles don't — `sprite.alpha` cascading to both children from one
+// assignment — is now two explicit assignments in update() below; everything
+// else maps 1:1.
 export class Particle {
-  /** A small Container wrapping the colored `trail` + white-hot `core` sprites — add/remove this as a single unit. */
-  readonly sprite: Container;
-
-  private readonly trail: Sprite;
-  private readonly core: Sprite;
+  private readonly trail: PixiParticle;
+  private readonly core: PixiParticle;
+  private readonly trailsContainer: ParticleContainer;
+  private readonly coresContainer: ParticleContainer;
+  private readonly texture: Texture;
   private readonly coreTint: number;
 
+  private x: number;
+  private y: number;
   private vx: number;
   private vy: number;
   private readonly gravity: number;
@@ -106,7 +121,7 @@ export class Particle {
   private readonly approachStrength: number;
   private readonly approachPeakRatio: number;
 
-  constructor(texture: Texture, options: ParticleOptions) {
+  constructor(texture: Texture, trailsContainer: ParticleContainer, coresContainer: ParticleContainer, options: ParticleOptions) {
     const {
       x,
       y,
@@ -125,6 +140,8 @@ export class Particle {
       strobe = false,
     } = options;
 
+    this.x = x;
+    this.y = y;
     this.vx = vx;
     this.vy = vy;
     this.gravity = gravity;
@@ -144,24 +161,37 @@ export class Particle {
       Math.random() < APPROACH_CHANCE ? APPROACH_MIN_STRENGTH + Math.random() * (APPROACH_MAX_STRENGTH - APPROACH_MIN_STRENGTH) : 0;
     this.approachPeakRatio = APPROACH_PEAK_MIN + Math.random() * (APPROACH_PEAK_MAX - APPROACH_PEAK_MIN);
 
-    this.sprite = new Container();
-    this.sprite.position.set(x, y);
+    this.texture = texture;
+    this.trailsContainer = trailsContainer;
+    this.coresContainer = coresContainer;
 
-    this.trail = new Sprite(texture);
-    this.trail.anchor.set(0.5);
-    this.trail.blendMode = 'add';
-    this.trail.tint = IGNITION_COLOR; // stage 1 starts white-hot; update() takes over next tick
-    this.trail.width = size;
-    this.trail.height = size;
-    this.sprite.addChild(this.trail);
+    this.trail = new PixiParticle({
+      texture,
+      x,
+      y,
+      anchorX: 0.5,
+      anchorY: 0.5,
+      tint: IGNITION_COLOR, // stage 1 starts white-hot; update() takes over next tick
+    });
+    this.setScale(this.trail, size, size);
+    trailsContainer.addParticle(this.trail);
 
-    this.core = new Sprite(texture);
-    this.core.anchor.set(0.5);
-    this.core.blendMode = 'add';
-    this.core.tint = this.coreTint;
-    this.core.width = size * CORE_SIZE_RATIO;
-    this.core.height = size * CORE_SIZE_RATIO;
-    this.sprite.addChild(this.core);
+    this.core = new PixiParticle({
+      texture,
+      x,
+      y,
+      anchorX: 0.5,
+      anchorY: 0.5,
+      tint: this.coreTint,
+    });
+    this.setScale(this.core, size * CORE_SIZE_RATIO, size * CORE_SIZE_RATIO);
+    coresContainer.addParticle(this.core);
+  }
+
+  /** PixiJS's lightweight Particle has no width/height — only scaleX/scaleY relative to its shared texture's own pixel size. */
+  private setScale(particle: PixiParticle, width: number, height: number): void {
+    particle.scaleX = width / this.texture.width;
+    particle.scaleY = height / this.texture.height;
   }
 
   /** Advances the particle. Returns false once it has expired or split. */
@@ -172,14 +202,18 @@ export class Particle {
     this.vx *= this.drag;
     this.vy = this.vy * this.drag + this.gravity * delta;
 
-    this.sprite.x += this.vx * delta;
-    this.sprite.y += this.vy * delta;
+    this.x += this.vx * delta;
+    this.y += this.vy * delta;
+    this.trail.x = this.x;
+    this.trail.y = this.y;
+    this.core.x = this.x;
+    this.core.y = this.y;
 
     const lifeRatio = this.age / this.life;
     const fade = 1 - lifeRatio;
     let alpha = fade * fade;
     if (this.twinkle) {
-      alpha *= 0.55 + 0.45 * Math.sin(this.age * 2.4 + this.sprite.x);
+      alpha *= 0.55 + 0.45 * Math.sin(this.age * 2.4 + this.x);
     }
     if (this.strobe) {
       this.strobeTimer -= delta;
@@ -206,8 +240,11 @@ export class Particle {
       alpha *= 1 + Math.min(1, approach) * 0.35;
     }
 
-    // Set once on the container: cascades to both the trail and core children.
-    this.sprite.alpha = Math.max(0, Math.min(1, alpha));
+    // No shared parent to cascade this through anymore (see class doc
+    // comment) — two independent PixiParticles, two explicit assignments.
+    const clampedAlpha = Math.max(0, Math.min(1, alpha));
+    this.trail.alpha = clampedAlpha;
+    this.core.alpha = clampedAlpha;
 
     const scale = (0.4 + 0.6 * fade) * (1 + approach);
     const thickness = this.baseSize * scale;
@@ -215,19 +252,18 @@ export class Particle {
     const stretch = Math.min(speed * TRAIL_STRETCH_FACTOR, thickness * TRAIL_MAX_STRETCH_RATIO);
     const totalLength = thickness + stretch;
 
-    this.trail.height = thickness;
-    this.trail.width = totalLength;
+    this.setScale(this.trail, totalLength, thickness);
     // Anchor slides from centered (stationary particle, looks like a plain
     // dot) toward the tail end (fast particle, position sits at the head)
     // as stretch grows, so there's never a visible jump between the two.
-    this.trail.anchor.set(0.5 + 0.5 * (stretch / totalLength), 0.5);
+    this.trail.anchorX = 0.5 + 0.5 * (stretch / totalLength);
+    this.trail.anchorY = 0.5;
     this.trail.rotation = Math.atan2(this.vy, this.vx);
 
-    // The core always sits at the container's local origin — i.e. exactly at
-    // the leading point the trail's sliding anchor tracks — so it reads as
-    // the trail's hot tip, not a separate floating dot.
-    this.core.width = thickness * CORE_SIZE_RATIO;
-    this.core.height = thickness * CORE_SIZE_RATIO;
+    // The core always sits at (this.x, this.y) — i.e. exactly at the leading
+    // point the trail's sliding anchor tracks — so it reads as the trail's
+    // hot tip, not a separate floating dot.
+    this.setScale(this.core, thickness * CORE_SIZE_RATIO, thickness * CORE_SIZE_RATIO);
 
     // Thermal Color Decay: brief white flash -> shell color -> cooling ash,
     // purely as a per-frame tint reassignment (no redraw, no new textures).
@@ -258,13 +294,13 @@ export class Particle {
       this.sparkleAccumulator += delta;
       if (this.sparkleAccumulator >= this.sparkleInterval) {
         this.sparkleAccumulator = 0;
-        this.onSparkle(this.sprite.x, this.sprite.y);
+        this.onSparkle(this.x, this.y);
       }
     }
 
     if (!this.hasSplit && this.splitAt !== undefined && this.age >= this.splitAt) {
       this.hasSplit = true;
-      this.onSplit?.(this.sprite.x, this.sprite.y, this.vx, this.vy);
+      this.onSplit?.(this.x, this.y, this.vx, this.vy);
       return false;
     }
 
@@ -272,6 +308,7 @@ export class Particle {
   }
 
   destroy(): void {
-    this.sprite.destroy({ children: true });
+    this.trailsContainer.removeParticle(this.trail);
+    this.coresContainer.removeParticle(this.core);
   }
 }

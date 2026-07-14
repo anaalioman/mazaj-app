@@ -1,3 +1,4 @@
+import { ParticleContainer } from 'pixi.js';
 import type { Container, Text, Texture } from 'pixi.js';
 import { Particle } from '../../fireworks/Particle';
 import type { TextEffect, TextEffectContext } from './types';
@@ -19,6 +20,9 @@ export class InfernoEffect implements TextEffect {
   private container!: Container;
   private text!: Text;
   private texture!: Texture;
+  // A fresh pair per play() — see SparkEffect's own doc comment for why.
+  private trailsContainer!: ParticleContainer;
+  private coresContainer!: ParticleContainer;
   private particles: Particle[] = [];
   private age = 0;
   private emberAccumulator = 0;
@@ -31,6 +35,18 @@ export class InfernoEffect implements TextEffect {
     this.text.alpha = 0;
     this.age = 0;
     this.emberAccumulator = 0;
+
+    this.trailsContainer = new ParticleContainer({
+      texture: ctx.particleTexture,
+      blendMode: 'add',
+      dynamicProperties: { position: true, rotation: true, vertex: true, uvs: false, color: true },
+    });
+    this.coresContainer = new ParticleContainer({
+      texture: ctx.particleTexture,
+      blendMode: 'add',
+      dynamicProperties: { position: true, rotation: false, vertex: true, uvs: false, color: true },
+    });
+    this.container.addChild(this.trailsContainer, this.coresContainer);
 
     const halfW = this.text.width / 2;
     const halfH = this.text.height / 2;
@@ -49,7 +65,7 @@ export class InfernoEffect implements TextEffect {
   }
 
   private spawn(x: number, y: number, vx: number, vy: number, size: number, life: number): void {
-    const particle = new Particle(this.texture, {
+    const particle = new Particle(this.texture, this.trailsContainer, this.coresContainer, {
       x,
       y,
       vx,
@@ -61,7 +77,6 @@ export class InfernoEffect implements TextEffect {
       drag: 0.99,
       twinkle: Math.random() < 0.4,
     });
-    this.container.addChild(particle.sprite);
     this.particles.push(particle);
   }
 
@@ -82,10 +97,7 @@ export class InfernoEffect implements TextEffect {
 
     this.particles = this.particles.filter((particle) => {
       const alive = particle.update(delta);
-      if (!alive) {
-        this.container.removeChild(particle.sprite);
-        particle.destroy();
-      }
+      if (!alive) particle.destroy();
       return alive;
     });
 
@@ -97,11 +109,10 @@ export class InfernoEffect implements TextEffect {
   }
 
   clear(): void {
-    for (const particle of this.particles) {
-      this.container.removeChild(particle.sprite);
-      particle.destroy();
-    }
+    for (const particle of this.particles) particle.destroy();
     this.particles = [];
     this.resolveFn = null;
+    this.trailsContainer?.destroy();
+    this.coresContainer?.destroy();
   }
 }
