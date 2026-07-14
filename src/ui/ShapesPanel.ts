@@ -25,6 +25,7 @@ const SHAPES: ShapeEntry[] = [
   { id: 'crossette', icon: 'crossette', label: 'كروسيت نخلة', burstType: 'crossette' },
   { id: 'multiRing', icon: 'multiRing', label: 'حلقات متعددة', burstType: 'multiRing' },
   { id: 'strobe', icon: 'strobe', label: 'وميض متلألئ', burstType: 'strobe' },
+  { id: 'heart', icon: 'heart', label: 'قلب', burstType: 'heart' },
   // Targeting mode, not a shape — but the player's own reasoning for putting
   // it here holds: this whole panel is already "where does a shape launch
   // from" (see sequential pin placement), and مدفع/حر decides that same

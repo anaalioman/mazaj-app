@@ -1,44 +1,22 @@
 import { Application, Container, ParticleContainer, type Texture } from 'pixi.js';
 import { AdvancedBloomFilter } from 'pixi-filters';
-import { Particle, lerpColor, type ParticleOptions } from './Particle';
+import { Particle, type ParticleOptions } from './Particle';
 import { Rocket } from './Rocket';
 import { GroundFountain } from './GroundFountain';
 import { getParticleTexture } from './textures';
-import { pickBurstColors, randomColor, randomPalette, shadesOf } from './colors';
+import { randomColor, randomPalette } from './colors';
+import { ALL_BURST_TYPES, DEFAULT_BURST_SETTINGS, type BurstSettings, type BurstType } from './burstTypes';
+import { BURST_PATTERNS, type BurstContext } from './patterns';
+
+export { ALL_BURST_TYPES, DEFAULT_BURST_SETTINGS, type BurstSettings, type BurstType } from './burstTypes';
 
 const MIN_LAUNCH_INTERVAL = 0.9;
 const MAX_LAUNCH_INTERVAL = 2.4;
-
-const GOLD_HUES = [0xffd700, 0xffe9a8, 0xffc233, 0xfff4c2];
 
 // Particles spawned by one explosion, relative to this, become its "shake
 // intensity" — dense bursts (peony, rose, multi-ring) shake noticeably,
 // thin ones (a handful of crossette arms) don't shake at all.
 const BURST_INTENSITY_REFERENCE_COUNT = 150;
-
-export type BurstType = 'peony' | 'rose' | 'kamuro' | 'crossette' | 'multiRing' | 'strobe';
-export const ALL_BURST_TYPES: BurstType[] = ['peony', 'rose', 'kamuro', 'crossette', 'multiRing', 'strobe'];
-
-export interface BurstSettings {
-  /** Baseline particle count per burst (control panel: 50-500, default 150). */
-  particleDensity: number;
-  /** Multiplier on the downward pull applied to burst sparks. */
-  gravityScale: number;
-  /** Multiplier on how long fragments linger before fading. */
-  lifespanScale: number;
-  /** Multiplier on initial burst velocity / spread radius. */
-  explosionScale: number;
-  /** 0-10: trail thickness + a screen-space glow (blur) on the particle layer. */
-  glow: number;
-}
-
-export const DEFAULT_BURST_SETTINGS: BurstSettings = {
-  particleDensity: 150,
-  gravityScale: 1,
-  lifespanScale: 1,
-  explosionScale: 1,
-  glow: 2,
-};
 
 export interface FireworksSystemOptions {
   autoLaunch?: boolean;
@@ -59,17 +37,14 @@ interface BurstCompletion {
   onComplete: () => void;
 }
 
-/** Picks a random palette guaranteed to differ from `exclude`, for real color contrast. */
-function contrastingPalette(exclude: number[]): number[] {
-  let palette = randomPalette();
-  let guard = 0;
-  while (palette === exclude && guard++ < 5) palette = randomPalette();
-  return palette;
-}
-
 /**
  * Owns every rocket and spark on screen: spawning, physics, and cleanup.
- * `update()` is meant to be driven from the Pixi ticker each frame.
+ * `update()` is meant to be driven from the Pixi ticker each frame. Every
+ * burst *pattern* (peony, kamuro, heart, ...) lives as an independent
+ * function under `patterns/` — this class owns the shared particle
+ * containers, settings, and completion-tracking those pattern functions are
+ * handed via a `BurstContext` (see `buildContext()`), but has no burst-shape
+ * math of its own.
  */
 export class FireworksSystem {
   private readonly app: Application;
@@ -119,6 +94,14 @@ export class FireworksSystem {
 
   private autoLaunchEnabled: boolean;
   private timeToNextAutoLaunch: number;
+
+  /**
+   * Wall-clock time (`performance.now()` delta, milliseconds) the most
+   * recent explosion's particle-spawn loop took — i.e. exactly the burst
+   * pattern function's own synchronous CPU cost, isolated from rendering.
+   * Real measurement, read live in DevTools/a debug script; not a claim.
+   */
+  lastBurstSpawnMs = 0;
 
   constructor(app: Application, options: FireworksSystemOptions = {}) {
     this.app = app;
@@ -297,7 +280,7 @@ export class FireworksSystem {
     this.layer.filters = strength > 0.05 ? [this.glowFilter] : [];
   }
 
-  /** Every burst method below constructs particles through here instead of `new Particle(...)` directly, so `trailsContainer`/`coresContainer` stay defined in exactly one place. */
+  /** Every burst pattern constructs particles through here instead of `new Particle(...)` directly, so `trailsContainer`/`coresContainer` stay defined in exactly one place. */
   private spawnParticle(texture: Texture, options: ParticleOptions): Particle {
     return new Particle(texture, this.trailsContainer, this.coresContainer, options);
   }
@@ -318,6 +301,23 @@ export class FireworksSystem {
     if (watcher.remaining <= 0) watcher.onComplete();
   }
 
+  /** Builds the `BurstContext` a pattern function (Peony.ts, Heart.ts, ...) runs against — see patterns/types.ts. */
+  private buildContext(batch?: BurstCompletion): BurstContext {
+    const texture = getParticleTexture(this.app);
+    return {
+      spawn: (options) => {
+        const particle = this.spawnParticle(texture, options);
+        this.addParticle(particle, batch);
+        return particle;
+      },
+      settings: this.settings,
+      activeColor: this.activeColor,
+      densityRatio: this.densityRatio(),
+      glowSizeBoost: this.glowSizeBoost(),
+      fillSpeed: (maxSpeed, minRatio) => this.fillSpeed(maxSpeed, minRatio),
+    };
+  }
+
   private explode(x: number, y: number, forcedType?: BurstType, onComplete?: () => void): void {
     const spawnedBefore = this.pendingSpawns.length;
     // Tracks this explosion's full lineage — including deferred children a
@@ -325,14 +325,20 @@ export class FireworksSystem {
     // fires only once every last one of them has actually faded away.
     const batch: BurstCompletion | undefined = onComplete ? { remaining: 0, onComplete } : undefined;
 
+    // Isolated, real wall-clock cost of the burst pattern's own synchronous
+    // spawn loop — see `lastBurstSpawnMs`'s own doc comment.
+    const startTime = performance.now();
+
     if (forcedType) {
-      this.burstByType(forcedType, x, y, batch);
+      BURST_PATTERNS[forcedType](x, y, this.buildContext(batch));
     } else if (this.randomModeEnabled) {
       this.burstRandomHybrid(x, y);
     } else {
       const type = this.enabledTypes[Math.floor(Math.random() * this.enabledTypes.length)];
-      this.burstByType(type, x, y, batch);
+      BURST_PATTERNS[type](x, y, this.buildContext(batch));
     }
+
+    this.lastBurstSpawnMs = performance.now() - startTime;
 
     // Defensive: if somehow nothing was spawned, don't leave onComplete hanging forever.
     if (batch && batch.remaining === 0) batch.onComplete();
@@ -342,29 +348,6 @@ export class FireworksSystem {
     this.onExplode?.(x, y, intensity);
   }
 
-  private burstByType(type: BurstType, x: number, y: number, batch?: BurstCompletion): void {
-    switch (type) {
-      case 'rose':
-        this.burstRose(x, y, batch);
-        break;
-      case 'kamuro':
-        this.burstKamuro(x, y, batch);
-        break;
-      case 'crossette':
-        this.burstPalmCrossette(x, y, batch);
-        break;
-      case 'multiRing':
-        this.burstMultiRing(x, y, batch);
-        break;
-      case 'strobe':
-        this.burstStrobe(x, y, batch);
-        break;
-      default:
-        this.burstPeony(x, y, batch);
-        break;
-    }
-  }
-
   /**
    * 🎲 Smart Randomizer: picks 1 or 2 patterns (merging them into one burst),
    * then perturbs density/lifespan/scale just for this explosion so every
@@ -372,19 +355,10 @@ export class FireworksSystem {
    * restored immediately after.
    */
   private burstRandomHybrid(x: number, y: number): void {
-    const builders: Array<() => void> = [
-      () => this.burstPeony(x, y),
-      () => this.burstRose(x, y),
-      () => this.burstKamuro(x, y),
-      () => this.burstPalmCrossette(x, y),
-      () => this.burstMultiRing(x, y),
-      () => this.burstStrobe(x, y),
-    ];
-
     const layerCount = Math.random() < 0.55 ? 1 : 2;
     const chosenIndices = new Set<number>();
     while (chosenIndices.size < layerCount) {
-      chosenIndices.add(Math.floor(Math.random() * builders.length));
+      chosenIndices.add(Math.floor(Math.random() * ALL_BURST_TYPES.length));
     }
 
     const savedSettings = { ...this.settings };
@@ -392,7 +366,8 @@ export class FireworksSystem {
     this.settings.lifespanScale *= 0.7 + Math.random() * 0.9;
     this.settings.explosionScale *= 0.8 + Math.random() * 0.6;
 
-    for (const index of chosenIndices) builders[index]();
+    const ctx = this.buildContext();
+    for (const index of chosenIndices) BURST_PATTERNS[ALL_BURST_TYPES[index]](x, y, ctx);
 
     this.settings = savedSettings;
   }
@@ -417,333 +392,6 @@ export class FireworksSystem {
    */
   private fillSpeed(maxSpeed: number, minRatio = 0.1): number {
     return maxSpeed * (minRatio + Math.random() * (1 - minRatio));
-  }
-
-  /**
-   * Peony with Pistil Core: a dense outer sphere in one primary color, and a
-   * smaller, slower inner sphere in a contrasting color exploding at the
-   * same instant — the classic two-tone "flower with a center" look.
-   */
-  private burstPeony(x: number, y: number, batch?: BurstCompletion): void {
-    const texture = getParticleTexture(this.app);
-    const outerPalette = randomPalette();
-    const primaryColor = this.activeColor ?? randomColor(outerPalette);
-    const pistilColor = this.activeColor !== null ? lerpColor(this.activeColor, 0xffffff, 0.5) : randomColor(contrastingPalette(outerPalette));
-
-    // Base counts tuned so a default-density burst lands around 250-400
-    // total sparks between the outer sphere and pistil core combined.
-    const outerCount = Math.max(8, Math.round((180 + Math.random() * 80) * this.densityRatio()));
-    const outerSpeed = (2.6 + Math.random() * 2.0) * this.settings.explosionScale;
-
-    for (let i = 0; i < outerCount; i++) {
-      const angle = (Math.PI * 2 * i) / outerCount + Math.random() * 0.25;
-      const speed = this.fillSpeed(outerSpeed);
-
-      this.addParticle(
-        this.spawnParticle(texture, {
-          x,
-          y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          color: primaryColor,
-          size: (7 + Math.random() * 4) * this.glowSizeBoost(),
-          life: (55 + Math.random() * 40) * this.settings.lifespanScale,
-          gravity: 0.1 * this.settings.gravityScale,
-          drag: 0.982,
-          twinkle: Math.random() < 0.25,
-        }),
-        batch,
-      );
-    }
-
-    const pistilCount = Math.max(6, Math.round(outerCount * 0.45));
-    const pistilSpeed = outerSpeed * 0.42;
-
-    for (let i = 0; i < pistilCount; i++) {
-      const angle = (Math.PI * 2 * i) / pistilCount + Math.random() * 0.4;
-      const speed = this.fillSpeed(pistilSpeed);
-
-      this.addParticle(
-        this.spawnParticle(texture, {
-          x,
-          y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          color: pistilColor,
-          size: (5 + Math.random() * 3) * this.glowSizeBoost(),
-          life: (38 + Math.random() * 22) * this.settings.lifespanScale,
-          gravity: 0.1 * this.settings.gravityScale,
-          drag: 0.978,
-          twinkle: Math.random() < 0.3,
-        }),
-        batch,
-      );
-    }
-  }
-
-  /**
-   * Polar rose burst: initial velocity follows r = cos(k*theta), so as
-   * particles fly outward in straight lines the expanding pattern traces a
-   * k-petaled rose curve (negative r flips through the origin, which is
-   * exactly how the classic rose curve handles it).
-   */
-  private burstRose(x: number, y: number, batch?: BurstCompletion): void {
-    const burstColors = this.activeColor !== null ? shadesOf(this.activeColor, 4) : pickBurstColors(3 + Math.floor(Math.random() * 3));
-    const texture = getParticleTexture(this.app);
-    const k = 2 + Math.floor(Math.random() * 5);
-    const count = Math.max(20, Math.round(140 * this.densityRatio()));
-    const baseSpeed = (3.4 + Math.random() * 1.6) * this.settings.explosionScale;
-
-    for (let i = 0; i < count; i++) {
-      const theta = (i / count) * Math.PI * 2;
-      const r = Math.cos(k * theta);
-      const speed = r * baseSpeed * (0.9 + Math.random() * 0.2);
-      const color = burstColors[Math.floor(Math.random() * burstColors.length)];
-
-      this.addParticle(
-        this.spawnParticle(texture, {
-          x,
-          y,
-          vx: Math.cos(theta) * speed,
-          vy: Math.sin(theta) * speed,
-          color,
-          size: (7 + Math.random() * 5) * this.glowSizeBoost(),
-          life: (60 + Math.random() * 40) * this.settings.lifespanScale,
-          gravity: 0.08 * this.settings.gravityScale,
-          drag: 0.978,
-          twinkle: Math.random() < 0.25,
-        }),
-        batch,
-      );
-    }
-  }
-
-  /**
-   * Kamuro / Brocade Crown: a huge, dense shower of light, low-drag golden
-   * stars that barely feel gravity and keep emitting glitter continuously,
-   * so they hang and drift down together like an umbrella of falling gold.
-   */
-  private burstKamuro(x: number, y: number, batch?: BurstCompletion): void {
-    const texture = getParticleTexture(this.app);
-    const count = Math.max(20, Math.round((85 + Math.random() * 35) * this.densityRatio()));
-    const baseSpeed = (1.8 + Math.random() * 1.0) * this.settings.explosionScale;
-    const hues = this.activeColor !== null ? shadesOf(this.activeColor, 4) : GOLD_HUES;
-
-    for (let i = 0; i < count; i++) {
-      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.2;
-      const speed = baseSpeed * (0.7 + Math.random() * 0.5);
-      const color = hues[Math.floor(Math.random() * hues.length)];
-
-      this.addParticle(
-        this.spawnParticle(texture, {
-          x,
-          y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          color,
-          size: (9 + Math.random() * 5) * this.glowSizeBoost(),
-          life: (210 + Math.random() * 90) * this.settings.lifespanScale,
-          gravity: 0.045 * this.settings.gravityScale, // light weight: barely falls
-          drag: 0.994, // low air resistance: keeps drifting outward
-          sparkleInterval: 3 + Math.random() * 2, // frequent glitter -> continuous trail
-          onSparkle: (sx, sy) => this.spawnKamuroSparkle(sx, sy, batch),
-        }),
-        batch,
-      );
-    }
-  }
-
-  private spawnKamuroSparkle(x: number, y: number, batch?: BurstCompletion): void {
-    const texture = getParticleTexture(this.app);
-    const hues = this.activeColor !== null ? shadesOf(this.activeColor, 4) : GOLD_HUES;
-    const color = hues[Math.floor(Math.random() * hues.length)];
-
-    this.addParticle(
-      this.spawnParticle(texture, {
-        x: x + (Math.random() - 0.5) * 4,
-        y: y + (Math.random() - 0.5) * 4,
-        vx: (Math.random() - 0.5) * 0.3,
-        vy: 0.12 + Math.random() * 0.2,
-        color,
-        size: (2 + Math.random() * 2) * this.glowSizeBoost(),
-        life: (26 + Math.random() * 22) * this.settings.lifespanScale,
-        gravity: 0.035 * this.settings.gravityScale,
-        drag: 0.975,
-        twinkle: true,
-      }),
-      batch,
-    );
-  }
-
-  /**
-   * Palm Tree Crossette: 5-7 thick arms fired from center like fronds; each
-   * arm trails its own dust and, right at the end of its life, splits into
-   * two sparks fired opposite each other (perpendicular to the arm) instead
-   * of continuing straight.
-   */
-  private burstPalmCrossette(x: number, y: number, batch?: BurstCompletion): void {
-    const burstColors = this.activeColor !== null ? shadesOf(this.activeColor, 3) : pickBurstColors(3);
-    const texture = getParticleTexture(this.app);
-    const armCount = 5 + Math.floor(Math.random() * 3); // 5, 6, or 7
-    const baseSpeed = (3.0 + Math.random() * 1.4) * this.settings.explosionScale;
-
-    for (let i = 0; i < armCount; i++) {
-      const angle = (Math.PI * 2 * i) / armCount + (Math.random() - 0.5) * 0.15;
-      const speed = baseSpeed * (0.85 + Math.random() * 0.3);
-      const color = burstColors[Math.floor(Math.random() * burstColors.length)];
-      const life = (55 + Math.random() * 20) * this.settings.lifespanScale;
-
-      this.addParticle(
-        this.spawnParticle(texture, {
-          x,
-          y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          color,
-          size: (15 + Math.random() * 6) * this.glowSizeBoost(), // thick frond
-          life,
-          gravity: 0.09 * this.settings.gravityScale,
-          drag: 0.99,
-          sparkleInterval: 2 + Math.random() * 2,
-          onSparkle: (sx, sy) => this.spawnPalmArmTrail(sx, sy, color, batch),
-          splitAt: life * 0.94, // right at the tip of the arm's life
-          onSplit: (sx, sy, svx, svy) => this.spawnPalmSplit(sx, sy, svx, svy, color, batch),
-        }),
-        batch,
-      );
-    }
-  }
-
-  private spawnPalmArmTrail(x: number, y: number, color: number, batch?: BurstCompletion): void {
-    this.addParticle(
-      this.spawnParticle(getParticleTexture(this.app), {
-        x: x + (Math.random() - 0.5) * 3,
-        y: y + (Math.random() - 0.5) * 3,
-        vx: (Math.random() - 0.5) * 0.3,
-        vy: 0.1 + Math.random() * 0.2,
-        color,
-        size: 3 + Math.random() * 2,
-        life: (16 + Math.random() * 10) * this.settings.lifespanScale,
-        gravity: 0.03 * this.settings.gravityScale,
-        drag: 0.97,
-      }),
-      batch,
-    );
-  }
-
-  private spawnPalmSplit(x: number, y: number, vx: number, vy: number, color: number, batch?: BurstCompletion): void {
-    const texture = getParticleTexture(this.app);
-    const baseAngle = Math.atan2(vy, vx);
-    const speed = Math.max(Math.hypot(vx, vy) * 0.7, 1.6);
-
-    // Two sparks perpendicular to the arm's own direction — 180° apart from
-    // each other, i.e. genuinely opposite directions.
-    for (const sign of [1, -1]) {
-      const angle = baseAngle + (Math.PI / 2) * sign;
-      this.addParticle(
-        this.spawnParticle(texture, {
-          x,
-          y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          color,
-          size: (6 + Math.random() * 3) * this.glowSizeBoost(),
-          life: (26 + Math.random() * 16) * this.settings.lifespanScale,
-          gravity: 0.12 * this.settings.gravityScale,
-          drag: 0.98,
-          twinkle: true,
-        }),
-        batch,
-      );
-    }
-  }
-
-  /**
-   * Multi-Ring: two flat ellipses expanding from the same center at the
-   * same instant — one squashed vertically ("horizontal" ring), one
-   * squashed horizontally ("vertical" ring) — crossing each other to read
-   * as two intersecting rings, entirely with 2D coordinates (x, y only).
-   */
-  private burstMultiRing(x: number, y: number, batch?: BurstCompletion): void {
-    const texture = getParticleTexture(this.app);
-    const paletteA = randomPalette();
-    const colorA = this.activeColor ?? randomColor(paletteA);
-    const colorB = this.activeColor !== null ? lerpColor(this.activeColor, 0xffffff, 0.4) : randomColor(contrastingPalette(paletteA));
-
-    const count = Math.max(30, Math.round(80 * this.densityRatio()));
-    const speed = (3.6 + Math.random() * 1.2) * this.settings.explosionScale;
-
-    for (let i = 0; i < count; i++) {
-      const theta = (i / count) * Math.PI * 2;
-      this.addParticle(
-        this.spawnParticle(texture, {
-          x,
-          y,
-          vx: Math.cos(theta) * speed,
-          vy: Math.sin(theta) * speed * 0.32,
-          color: colorA,
-          size: (7 + Math.random() * 4) * this.glowSizeBoost(),
-          life: (65 + Math.random() * 30) * this.settings.lifespanScale,
-          gravity: 0.06 * this.settings.gravityScale,
-          drag: 0.99,
-          twinkle: Math.random() < 0.2,
-        }),
-        batch,
-      );
-    }
-
-    for (let i = 0; i < count; i++) {
-      const theta = (i / count) * Math.PI * 2;
-      this.addParticle(
-        this.spawnParticle(texture, {
-          x,
-          y,
-          vx: Math.cos(theta) * speed * 0.32,
-          vy: Math.sin(theta) * speed,
-          color: colorB,
-          size: (7 + Math.random() * 4) * this.glowSizeBoost(),
-          life: (65 + Math.random() * 30) * this.settings.lifespanScale,
-          gravity: 0.06 * this.settings.gravityScale,
-          drag: 0.99,
-          twinkle: Math.random() < 0.2,
-        }),
-        batch,
-      );
-    }
-  }
-
-  /**
-   * Strobe / Glitter Shell: stars that randomly blink fully on/off (not a
-   * smooth twinkle) at varying speeds as they fall, like sparkling diamond
-   * fragments, before finally extinguishing.
-   */
-  private burstStrobe(x: number, y: number, batch?: BurstCompletion): void {
-    const burstColors = this.activeColor !== null ? shadesOf(this.activeColor, 5) : pickBurstColors(4 + Math.floor(Math.random() * 2));
-    const texture = getParticleTexture(this.app);
-    const count = Math.max(10, Math.round((110 + Math.random() * 60) * this.densityRatio()));
-    const baseSpeed = (2.6 + Math.random() * 2.0) * this.settings.explosionScale;
-
-    for (let i = 0; i < count; i++) {
-      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.4;
-      const speed = this.fillSpeed(baseSpeed);
-      const color = burstColors[Math.floor(Math.random() * burstColors.length)];
-
-      this.addParticle(
-        this.spawnParticle(texture, {
-          x,
-          y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          color,
-          size: (6 + Math.random() * 4) * this.glowSizeBoost(),
-          life: (90 + Math.random() * 70) * this.settings.lifespanScale,
-          gravity: 0.11 * this.settings.gravityScale,
-          drag: 0.988,
-          strobe: true,
-        }),
-        batch,
-      );
-    }
   }
 
   private spawnTrailSpark(x: number, y: number, color: number): void {

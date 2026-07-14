@@ -21,6 +21,14 @@ export function randomColor(palette: number[]): number {
   return palette[Math.floor(Math.random() * palette.length)];
 }
 
+/** Picks a random palette guaranteed to differ from `exclude`, for real color contrast (e.g. Peony's outer sphere vs. its pistil core). */
+export function contrastingPalette(exclude: number[]): number[] {
+  let palette = randomPalette();
+  let guard = 0;
+  while (palette === exclude && guard++ < 5) palette = randomPalette();
+  return palette;
+}
+
 const ALL_COLORS = Array.from(new Set(PALETTES.flat()));
 
 /** Picks `count` distinct colors at random across every palette, so a single
