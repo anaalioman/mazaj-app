@@ -3,65 +3,6 @@
   flex-shrink: 0;
 }
 
-/* ---------- Shared field/slider/button styles (used by the planning screen's environment/lab subpanels) ---------- */
-
-.mcp-slider-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-
-.mcp-slider-row label {
-  flex: 0 0 90px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.85);
-}
-
-.mcp-slider-row input[type='range'] {
-  flex: 1;
-  accent-color: #ff9f45;
-}
-
-.mcp-slider-row output {
-  flex: 0 0 30px;
-  text-align: end;
-  font-size: 11px;
-  color: #ffe9b3;
-  font-variant-numeric: tabular-nums;
-}
-
-.mcp-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 6px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.85);
-  min-width: 0;
-}
-
-.mcp-field-row {
-  display: flex;
-  gap: 8px;
-}
-
-.mcp-field-row > .mcp-field {
-  flex: 1;
-  min-width: 0;
-}
-
-.mcp-field input[type='text'],
-.mcp-field select {
-  font-size: 12px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
-  font-family: inherit;
-}
-
 /* Custom file picker: a native <input type="file">'s internal button+label
    is drawn by the browser/WebView itself, not by our CSS, so styling the
    host element directly renders inconsistently (even overlapping) across
@@ -154,21 +95,6 @@
   transform: translateX(-50%) translateY(0);
 }
 
-@keyframes mzj-glow-row-pulse {
-  0%,
-  100% {
-    box-shadow: none;
-  }
-  50% {
-    box-shadow: 0 0 0 3px rgba(255, 159, 69, 0.45);
-  }
-}
-
-.mzj-glow-row-pulse {
-  border-radius: 10px;
-  animation: mzj-glow-row-pulse 0.85s ease-in-out 2;
-}
-
 /* ---------- Camera flash + generic hidden helper ---------- */
 
 #mzj-flash {
@@ -216,52 +142,9 @@
   opacity: 0;
 }
 
-/* Environment/lab controls: a flat bottom sheet that slides up over the
-   reserved empty middle area only while open, so it stays free the rest
-   of the time for the future tap-to-place interaction. */
-.mzj-planning-subpanel {
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  transform: translate(-50%, 100%);
-  width: min(420px, 86vw);
-  max-height: 40vh;
-  overflow-y: auto;
-  box-sizing: border-box;
-  padding: 14px 16px;
-  border-radius: 16px 16px 0 0;
-  background: rgba(255, 255, 255, 0.04);
-  pointer-events: auto;
-  opacity: 0;
-  visibility: hidden;
-  transition: transform 0.22s ease, opacity 0.22s ease;
-}
-
-.mzj-planning-subpanel.open {
-  transform: translate(-50%, 0);
-  opacity: 1;
-  visibility: visible;
-}
-
-.mzj-planning-camera-panel {
-  display: flex;
-  gap: 8px;
-}
-
-/* Flat, borderless choice buttons — same design language as everywhere
-   else, just two side-by-side options instead of an icon+label stack. */
-.mzj-planning-choice-btn {
-  flex: 1;
-  padding: 10px 12px;
-  border: none;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.85);
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
+/* The dimmer/glow/lab/camera bottom-sheet subpanels are no longer DOM/CSS
+   at all — see BottomSheetPanel.ts and PlanningSubpanels.ts (fully Pixi,
+   including the sliders themselves — see PixiSlider.ts). */
 
 /* ---------- Text composer ("T" icon) ---------- */
 

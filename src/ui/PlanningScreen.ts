@@ -6,6 +6,8 @@ import { TextComposer, type TextRevealConfig } from './TextComposer';
 import { ColorPickerPanel } from './ColorPickerPanel';
 import { ShapesPanel } from './ShapesPanel';
 import { PlanningIconColumn, type IconRowSpec } from './PlanningIconColumn';
+import type { BottomSheetPanel } from './BottomSheetPanel';
+import { SliderSheetPanel, CameraPickerPanel } from './PlanningSubpanels';
 
 export type LaunchMode = 'mass' | 'sequential';
 
@@ -27,7 +29,6 @@ export interface PlanningScreenDeps {
 }
 
 interface SliderSpec {
-  id: string;
   label: string;
   min: number;
   max: number;
@@ -36,12 +37,12 @@ interface SliderSpec {
 }
 
 const SLIDERS = {
-  density: { id: 'mzj-density', label: 'كثافة الجسيمات', min: 50, max: 500, step: 1, value: 150 },
-  gravity: { id: 'mzj-gravity', label: 'شدة الجاذبية', min: 0, max: 2, step: 0.05, value: 1 },
-  lifespan: { id: 'mzj-lifespan', label: 'عمر الجسيمات', min: 0.4, max: 2.5, step: 0.05, value: 1 },
-  scale: { id: 'mzj-scale', label: 'اتساع الانفجار', min: 0.5, max: 2, step: 0.05, value: 1 },
-  glow: { id: 'mzj-glow', label: 'توهج الألعاب النارية', min: 0, max: 10, step: 0.5, value: 2 },
-  dimmer: { id: 'mzj-dimmer', label: 'إضاءة الخلفية', min: 0, max: 1, step: 0.01, value: 1 },
+  density: { label: 'كثافة الجسيمات', min: 50, max: 500, step: 1, value: 150 },
+  gravity: { label: 'شدة الجاذبية', min: 0, max: 2, step: 0.05, value: 1 },
+  lifespan: { label: 'عمر الجسيمات', min: 0.4, max: 2.5, step: 0.05, value: 1 },
+  scale: { label: 'اتساع الانفجار', min: 0.5, max: 2, step: 0.05, value: 1 },
+  glow: { label: 'توهج الألعاب النارية', min: 0, max: 10, step: 0.5, value: 2 },
+  dimmer: { label: 'إضاءة الخلفية', min: 0, max: 1, step: 0.01, value: 1 },
 } satisfies Record<string, SliderSpec>;
 
 const HINT_VISIBLE_MS = 2600;
@@ -94,6 +95,10 @@ export class PlanningScreen {
   private readonly iconColumn: PlanningIconColumn;
   private readonly colorPicker: ColorPickerPanel;
   private readonly shapesPanel: ShapesPanel;
+  private readonly dimmerPanel: SliderSheetPanel;
+  private readonly glowPanel: SliderSheetPanel;
+  private readonly labPanel: SliderSheetPanel;
+  private readonly cameraPanel: CameraPickerPanel;
   private mode: LaunchMode = 'mass';
   private readonly massSelection = new Set<BurstType>();
   private activeSequentialShape: BurstType | null = null;
@@ -104,13 +109,6 @@ export class PlanningScreen {
   private autoShowEnabled = false;
   private hintTimer: number | undefined;
 
-  private static readonly SUBPANELS = {
-    camera: { triggerId: 'mzj-planning-open-camera', panelId: 'mzj-planning-camera-panel' },
-    dimmer: { triggerId: 'mzj-planning-open-dimmer', panelId: 'mzj-planning-dimmer-panel' },
-    glow: { triggerId: 'mzj-planning-open-glow', panelId: 'mzj-planning-glow-panel' },
-    lab: { triggerId: 'mzj-planning-open-lab', panelId: 'mzj-planning-lab-panel' },
-  } as const;
-
   constructor(deps: PlanningScreenDeps) {
     this.deps = deps;
 
@@ -119,7 +117,6 @@ export class PlanningScreen {
     this.root.className = 'mzj-hidden';
     this.root.innerHTML = this.template();
     document.body.appendChild(this.root);
-    this.uploadHint = new UploadHint(this.root);
 
     // The right icon column itself is genuine Pixi (see PlanningIconColumn)
     // — must exist before ColorPickerPanel/ShapesPanel below, since their
@@ -147,6 +144,42 @@ export class PlanningScreen {
       () => this.handleToggleMortarMode(),
     );
 
+    // The four bottom-sheet subpanels (see PlanningSubpanels.ts /
+    // BottomSheetPanel) — fully Pixi, no more `.mzj-planning-subpanel` DOM.
+    this.dimmerPanel = new SliderSheetPanel(deps.app, [
+      { ...SLIDERS.dimmer, onChange: (v) => deps.background.setDimmer(v) },
+    ]);
+    this.glowPanel = new SliderSheetPanel(deps.app, [
+      { ...SLIDERS.glow, onChange: (v) => deps.fireworks.updateSettings({ glow: v }) },
+    ]);
+    // Needs glowPanel to already exist — see UploadHint's own doc comment.
+    this.uploadHint = new UploadHint(this.glowPanel);
+    this.labPanel = new SliderSheetPanel(deps.app, [
+      { ...SLIDERS.density, onChange: (v) => deps.fireworks.updateSettings({ particleDensity: v }) },
+      { ...SLIDERS.gravity, onChange: (v) => deps.fireworks.updateSettings({ gravityScale: v }) },
+      { ...SLIDERS.lifespan, onChange: (v) => deps.fireworks.updateSettings({ lifespanScale: v }) },
+      { ...SLIDERS.scale, onChange: (v) => deps.fireworks.updateSettings({ explosionScale: v }) },
+    ]);
+    this.cameraPanel = new CameraPickerPanel(
+      deps.app,
+      () => {
+        this.cameraPanel.setOpen(false);
+        this.query<HTMLInputElement>('#mzj-bg-video').click();
+      },
+      () => {
+        this.cameraPanel.setOpen(false);
+        void deps.background
+          .setLiveCamera()
+          .then(() => {
+            this.liveDocumentationArmed = true;
+            this.iconColumn.setActive('mzj-planning-open-camera', true);
+          })
+          .catch((error) => {
+            console.error('تعذّر تشغيل الكاميرا الحية (تحقّق من إذن الوصول للكاميرا):', error);
+          });
+      },
+    );
+
     // While composing text (input+effects bar, or the position/scale
     // control box), this screen's own icon column steps aside so the
     // composer stays the sole focus — restored once the text is committed.
@@ -164,13 +197,22 @@ export class PlanningScreen {
 
     this.wireMedia();
     this.wireRecording();
-    this.wireSliders();
 
     // The whole screen is a permanent part of the fireworks mood now — no
     // "open" trigger anywhere reveals it, it's just visible the instant the
     // mood boots (see the class doc-comment). hide() still collapses it once
     // "ابدأ العرض" actually fires the show.
     this.show(this.mode);
+  }
+
+  /** Every subpanel that shares the bottom-sheet dock spot, paired with the icon-column trigger row whose active state tracks "is this one open" — `undefined` for the camera trigger, whose active state means something else entirely (see toggleSubpanel's own doc comment). */
+  private subpanelEntries(): { kind: 'camera' | 'dimmer' | 'glow' | 'lab'; panel: BottomSheetPanel; triggerId?: string }[] {
+    return [
+      { kind: 'camera', panel: this.cameraPanel },
+      { kind: 'dimmer', panel: this.dimmerPanel, triggerId: 'mzj-planning-open-dimmer' },
+      { kind: 'glow', panel: this.glowPanel, triggerId: 'mzj-planning-open-glow' },
+      { kind: 'lab', panel: this.labPanel, triggerId: 'mzj-planning-open-lab' },
+    ];
   }
 
   /**
@@ -229,12 +271,13 @@ export class PlanningScreen {
     window.clearTimeout(this.hintTimer);
     this.colorPicker.setOpen(false);
     this.shapesPanel.setOpen(false);
-    for (const el of this.root.querySelectorAll('.mzj-planning-subpanel.open')) el.classList.remove('open');
-    // The camera trigger's `active` means "a video background is set", not
-    // "its panel is open" — it must survive closing/reopening the screen,
-    // so it's excluded from this generic reset (see toggleSubpanel).
-    for (const entry of Object.values(PlanningScreen.SUBPANELS)) {
-      if (entry.triggerId !== PlanningScreen.SUBPANELS.camera.triggerId) this.iconColumn.setActive(entry.triggerId, false);
+    // The camera trigger's active state means "a video background is set",
+    // not "its panel is open" — it must survive closing/reopening the
+    // screen, so it's the one entry below with no triggerId to reset (see
+    // subpanelEntries()' own doc comment).
+    for (const entry of this.subpanelEntries()) {
+      entry.panel.setOpen(false);
+      if (entry.triggerId) this.iconColumn.setActive(entry.triggerId, false);
     }
   }
 
@@ -320,28 +363,28 @@ export class PlanningScreen {
   /**
    * "لون المقذوفة" and "الأشكال": both triggers are rows in the (now fully
    * Pixi) icon column, but each opens a fully canvas-drawn SideDockPanel,
-   * not an HTML subpanel — so each has to close every HTML subpanel *and*
+   * not a bottom-sheet subpanel — so each has to close every subpanel *and*
    * the other canvas panel itself (they'd otherwise stay open underneath
-   * it), and toggleSubpanel() closes both whenever an HTML subpanel opens.
+   * it), and toggleSubpanel() closes both whenever a subpanel opens.
    */
   private toggleColorPicker(): void {
     const willOpen = !this.colorPicker.open;
-    this.closeAllHtmlSubpanels();
+    this.closeAllSubpanels();
     this.shapesPanel.setOpen(false);
     this.colorPicker.setOpen(willOpen);
   }
 
   private toggleShapesPanel(): void {
     const willOpen = !this.shapesPanel.open;
-    this.closeAllHtmlSubpanels();
+    this.closeAllSubpanels();
     this.colorPicker.setOpen(false);
     this.shapesPanel.setOpen(willOpen);
   }
 
-  private closeAllHtmlSubpanels(): void {
-    for (const el of this.root.querySelectorAll('.mzj-planning-subpanel.open')) el.classList.remove('open');
-    for (const entry of Object.values(PlanningScreen.SUBPANELS)) {
-      if (entry.triggerId !== PlanningScreen.SUBPANELS.camera.triggerId) this.iconColumn.setActive(entry.triggerId, false);
+  private closeAllSubpanels(): void {
+    for (const entry of this.subpanelEntries()) {
+      entry.panel.setOpen(false);
+      if (entry.triggerId) this.iconColumn.setActive(entry.triggerId, false);
     }
   }
 
@@ -365,24 +408,17 @@ export class PlanningScreen {
    * left alone here — for it, "active" means "a video background is
    * currently set" (see wireMedia), not "this panel happens to be open".
    */
-  private toggleSubpanel(kind: keyof typeof PlanningScreen.SUBPANELS): void {
-    const entries = Object.entries(PlanningScreen.SUBPANELS) as [
-      keyof typeof PlanningScreen.SUBPANELS,
-      { triggerId: string; panelId: string },
-    ][];
-    const target = PlanningScreen.SUBPANELS[kind];
-    const willOpen = !this.query<HTMLDivElement>(`#${target.panelId}`).classList.contains('open');
+  private toggleSubpanel(kind: 'camera' | 'dimmer' | 'glow' | 'lab'): void {
+    const entries = this.subpanelEntries();
+    const target = entries.find((entry) => entry.kind === kind)!;
+    const willOpen = !target.panel.open;
     this.colorPicker.setOpen(false);
     this.shapesPanel.setOpen(false);
-    for (const [otherKind, entry] of entries) {
-      const isTarget = otherKind === kind;
-      this.query<HTMLDivElement>(`#${entry.panelId}`).classList.toggle('open', isTarget && willOpen);
-      if (otherKind !== 'camera') this.iconColumn.setActive(entry.triggerId, isTarget && willOpen);
+    for (const entry of entries) {
+      const isTarget = entry.kind === kind;
+      entry.panel.setOpen(isTarget && willOpen);
+      if (entry.triggerId) this.iconColumn.setActive(entry.triggerId, isTarget && willOpen);
     }
-  }
-
-  private closeCameraPanel(): void {
-    this.query<HTMLDivElement>('#mzj-planning-camera-panel').classList.remove('open');
   }
 
   /**
@@ -404,12 +440,10 @@ export class PlanningScreen {
       });
     });
 
+    // CameraPickerPanel's "رفع فيديو"/"توثيق مباشر" choice buttons trigger
+    // this same picker (see the panel's own constructor call above) — this
+    // just handles what happens once the OS file dialog it opens resolves.
     const videoInput = this.query<HTMLInputElement>('#mzj-bg-video');
-
-    this.query<HTMLButtonElement>('#mzj-planning-camera-upload').addEventListener('click', () => {
-      this.closeCameraPanel();
-      videoInput.click();
-    });
     videoInput.addEventListener('change', () => {
       const file = videoInput.files?.[0];
       if (!file) return;
@@ -419,60 +453,19 @@ export class PlanningScreen {
         this.iconColumn.setActive('mzj-planning-open-camera', true);
       });
     });
-
-    this.query<HTMLButtonElement>('#mzj-planning-camera-live').addEventListener('click', () => {
-      this.closeCameraPanel();
-      void this.deps.background
-        .setLiveCamera()
-        .then(() => {
-          this.liveDocumentationArmed = true;
-          this.iconColumn.setActive('mzj-planning-open-camera', true);
-        })
-        .catch((error) => {
-          console.error('تعذّر تشغيل الكاميرا الحية (تحقّق من إذن الوصول للكاميرا):', error);
-        });
-    });
   }
 
   /**
-   * "تسجيل فيديو": starts/stops recording the show's actual output (a
-   * distinct concern from "فيديو خلفية حي" right above it, which only picks
-   * the *input* background media) — stays usable at any time, including
-   * mid-show and during plain free-tap play with no plan ever set up.
+   * "تسجيل فيديو"'s own tap is wired directly on its icon-column row (see
+   * buildIconRowSpecs()) — this only handles the unsupported-browser case.
+   * Starts/stops recording the show's actual output, a distinct concern
+   * from "فيديو خلفية حي" right above it, which only picks the *input*
+   * background media — stays usable at any time, including mid-show and
+   * during plain free-tap play with no plan ever set up.
    */
-  /** "تسجيل فيديو"'s own tap is wired directly on its icon-column row (see buildIconRowSpecs()) — this only handles the unsupported-browser case. */
   private wireRecording(): void {
     const canRecord = typeof MediaRecorder !== 'undefined' && typeof this.deps.app.canvas.captureStream === 'function';
     if (!canRecord) this.iconColumn.setDisabled('mzj-planning-record', true);
-  }
-
-  private wireSliders(): void {
-    this.bindSlider(SLIDERS.density.id, (v) => this.deps.fireworks.updateSettings({ particleDensity: v }));
-    this.bindSlider(SLIDERS.gravity.id, (v) => this.deps.fireworks.updateSettings({ gravityScale: v }));
-    this.bindSlider(SLIDERS.lifespan.id, (v) => this.deps.fireworks.updateSettings({ lifespanScale: v }));
-    this.bindSlider(SLIDERS.scale.id, (v) => this.deps.fireworks.updateSettings({ explosionScale: v }));
-    this.bindSlider(SLIDERS.glow.id, (v) => this.deps.fireworks.updateSettings({ glow: v }));
-    this.bindSlider(SLIDERS.dimmer.id, (v) => this.deps.background.setDimmer(v));
-  }
-
-  private bindSlider(id: string, onChange: (value: number) => void): void {
-    const input = this.query<HTMLInputElement>(`#${id}`);
-    const output = this.query<HTMLOutputElement>(`#${id}-out`);
-    input.addEventListener('input', () => {
-      const value = Number(input.value);
-      output.textContent = String(value);
-      onChange(value);
-    });
-  }
-
-  private sliderRow(spec: SliderSpec): string {
-    return `
-      <div class="mcp-slider-row">
-        <label for="${spec.id}">${spec.label}</label>
-        <input type="range" id="${spec.id}" min="${spec.min}" max="${spec.max}" step="${spec.step}" value="${spec.value}" />
-        <output id="${spec.id}-out" for="${spec.id}">${spec.value}</output>
-      </div>
-    `;
   }
 
   private template(): string {
@@ -481,26 +474,6 @@ export class PlanningScreen {
 
       <input type="file" id="mzj-bg-image" accept="image/*" class="mzj-file-input-sr" />
       <input type="file" id="mzj-bg-video" accept="video/*" class="mzj-file-input-sr" />
-
-      <div class="mzj-planning-subpanel mzj-planning-camera-panel" id="mzj-planning-camera-panel">
-        <button type="button" id="mzj-planning-camera-upload" class="mzj-planning-choice-btn">رفع فيديو</button>
-        <button type="button" id="mzj-planning-camera-live" class="mzj-planning-choice-btn">توثيق مباشر</button>
-      </div>
-
-      <div class="mzj-planning-subpanel" id="mzj-planning-dimmer-panel">
-        ${this.sliderRow(SLIDERS.dimmer)}
-      </div>
-
-      <div class="mzj-planning-subpanel" id="mzj-planning-glow-panel">
-        ${this.sliderRow(SLIDERS.glow)}
-      </div>
-
-      <div class="mzj-planning-subpanel" id="mzj-planning-lab-panel">
-        ${this.sliderRow(SLIDERS.density)}
-        ${this.sliderRow(SLIDERS.gravity)}
-        ${this.sliderRow(SLIDERS.lifespan)}
-        ${this.sliderRow(SLIDERS.scale)}
-      </div>
     `;
   }
 }
