@@ -22,9 +22,18 @@ const ROW_GAP = 20;
 const ROW_SPACING = ROW_HEIGHT + ROW_GAP;
 const ICON_SIZE = 22;
 const ICON_SOURCE_SIZE = 44;
-/** Same reasoning as every other control converted so far — a real Pixi hitArea per finger, independent of the visible icon/label's own footprint. */
-const HIT_WIDTH = 64;
-const HIT_HEIGHT = 44;
+/**
+ * Minimum touch target on both axes (Android's own accessibility guideline
+ * is 48dp; 44 matches what the rest of this codebase already standardized
+ * on). Each row's real hitArea is computed from the icon+label's *actual*
+ * rendered bounds (see `computeHitArea()`) — not a flat guess — then padded
+ * out to at least this size so short labels ("قلب") still get a comfortable
+ * target. Longer labels ("توليد عشوائي هجين") can and do exceed this on
+ * their own; the computed hitArea grows with them instead of clipping them.
+ */
+const HIT_MIN_SIZE = 44;
+/** Extra breathing room on every side beyond the tight content bounds, so a finger landing just past a glyph's edge still registers. */
+const HIT_PADDING = 8;
 
 const IDLE_ALPHA = 0.75;
 /** The 14 icon glyphs' unified gold identity — the row labels stay the old CSS's plain white, only the icons themselves carry this. */
@@ -41,6 +50,39 @@ function iconFilters(): (AdvancedBloomFilter | DropShadowFilter)[] {
     new AdvancedBloomFilter({ threshold: 0.3, blur: 3, quality: 4, bloomScale: 1.2, brightness: 1.05 }),
     new DropShadowFilter({ color: 0x000000, alpha: 0.5, blur: 2, offset: { x: 0, y: 2 } }),
   ];
+}
+
+/**
+ * Unions the icon's and label's real rendered footprints (both are direct,
+ * unrotated, unscaled children of the row's own root — center-anchored icon,
+ * top-anchored label — so plain position ± width/2 gives exact local bounds
+ * without needing a full `getBounds()` matrix walk), pads it, then floors it
+ * to `HIT_MIN_SIZE` on both axes. Computed once at row-build time — the
+ * result stays valid forever since these are fixed local offsets; only the
+ * row's own `root.position` (set by `layout()`) ever changes.
+ */
+function computeHitArea(icon: Sprite | Text, label: Text): Rectangle {
+  const iconHalfW = icon.width / 2;
+  const iconHalfH = icon.height / 2;
+  const labelHalfW = label.width / 2;
+
+  let left = Math.min(icon.x - iconHalfW, label.x - labelHalfW) - HIT_PADDING;
+  let right = Math.max(icon.x + iconHalfW, label.x + labelHalfW) + HIT_PADDING;
+  let top = Math.min(icon.y - iconHalfH, label.y) - HIT_PADDING;
+  let bottom = Math.max(icon.y + iconHalfH, label.y + label.height) + HIT_PADDING;
+
+  if (right - left < HIT_MIN_SIZE) {
+    const centerX = (left + right) / 2;
+    left = centerX - HIT_MIN_SIZE / 2;
+    right = centerX + HIT_MIN_SIZE / 2;
+  }
+  if (bottom - top < HIT_MIN_SIZE) {
+    const centerY = (top + bottom) / 2;
+    top = centerY - HIT_MIN_SIZE / 2;
+    bottom = centerY + HIT_MIN_SIZE / 2;
+  }
+
+  return new Rectangle(left, top, right - left, bottom - top);
 }
 
 export interface IconRowSpec {
@@ -139,7 +181,6 @@ export class PlanningIconColumn {
     const root = new Container();
     root.eventMode = 'static';
     root.cursor = 'pointer';
-    root.hitArea = new Rectangle(-HIT_WIDTH / 2, -HIT_HEIGHT / 2, HIT_WIDTH, HIT_HEIGHT);
     this.container.addChild(root);
 
     let iconDisplay: Sprite | Text;
@@ -197,6 +238,16 @@ export class PlanningIconColumn {
     label.anchor.set(0.5, 0);
     label.position.set(0, ICON_SIZE / 2 + 2);
     root.addChild(label);
+
+    // Real hitArea from the icon+label's actual rendered footprint — not a
+    // flat guess. Union both, in root's own local space (both are direct,
+    // unrotated/unscaled children of root, so their own position + width/
+    // height already give exact bounds without needing getBounds()'s full
+    // matrix math), pad it, then floor it to a minimum touch target. Built
+    // from `iconDisplay`/`label` specifically rather than `root.getLocalBounds()`
+    // so the record row's decorative pulse halo (much wider than the icon
+    // itself) never inflates its own tappable area relative to every other row.
+    root.hitArea = computeHitArea(iconDisplay, label);
 
     root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
     root.on('pointertap', (event: FederatedPointerEvent) => {
@@ -263,10 +314,22 @@ export class PlanningIconColumn {
       row.root.position.set(centerX, firstRowCenterY + index * ROW_SPACING);
     });
 
+    // catchAll only needs to be at least as wide/tall as the widest row's
+    // own real hitArea (see computeHitArea()) so no row's own content ever
+    // pokes out past the gap-filling rectangle below — computed from the
+    // rows' actual hitAreas, not a repeated flat guess.
+    let maxHalfWidth = HIT_MIN_SIZE / 2;
+    let maxHalfHeight = HIT_MIN_SIZE / 2;
+    for (const row of this.rows.values()) {
+      const area = row.root.hitArea as Rectangle;
+      maxHalfWidth = Math.max(maxHalfWidth, -area.left, area.right);
+      maxHalfHeight = Math.max(maxHalfHeight, -area.top, area.bottom);
+    }
+
     const lastRowCenterY = firstRowCenterY + (ids.length - 1) * ROW_SPACING;
     this.catchAll
       .clear()
-      .rect(centerX - HIT_WIDTH / 2, firstRowCenterY - HIT_HEIGHT / 2, HIT_WIDTH, lastRowCenterY - firstRowCenterY + HIT_HEIGHT)
+      .rect(centerX - maxHalfWidth, firstRowCenterY - maxHalfHeight, maxHalfWidth * 2, lastRowCenterY - firstRowCenterY + maxHalfHeight * 2)
       .fill({ color: 0x000000, alpha: 0.001 });
   }
 }

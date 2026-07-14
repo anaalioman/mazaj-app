@@ -13,6 +13,11 @@ export { ALL_BURST_TYPES, DEFAULT_BURST_SETTINGS, type BurstSettings, type Burst
 const MIN_LAUNCH_INTERVAL = 0.9;
 const MAX_LAUNCH_INTERVAL = 2.4;
 
+// See launch()'s own doc comment: keeps a burst's ignition point far enough
+// from the screen edge that most of its own radius stays on-screen.
+const EDGE_MARGIN_RATIO = 0.2;
+const EDGE_MARGIN_MAX = 90;
+
 // Particles spawned by one explosion, relative to this, become its "shake
 // intensity" — dense bursts (peony, rose, multi-ring) shake noticeably,
 // thin ones (a handful of crossette arms) don't shake at all.
@@ -168,7 +173,18 @@ export class FireworksSystem {
     const { width, height } = this.app.screen;
     const apex = targetY ?? height * (0.15 + Math.random() * 0.45);
     const color = this.activeColor ?? randomColor(randomPalette());
-    const clampedX = Math.min(Math.max(x, 20), width - 20);
+    // Reads live app.screen.width every call (not a cached value), so this
+    // stays correct across resize/rotation on its own. The margin itself is
+    // proportional to screen width, not a flat 20px: a burst's own radius
+    // (outer sparks travel roughly speed/(1-drag) px before drag exhausts
+    // them — several hundred px for the denser patterns) is large relative
+    // to a phone-width screen, so a shell ignited within a thin 20px strip
+    // of the edge had over half its own burst radius clipped by the canvas
+    // edge. `EDGE_MARGIN_RATIO` keeps the ignition point far enough in that
+    // most of a typical burst's radius lands on-screen, capped so it
+    // doesn't eat the whole width on very narrow devices.
+    const margin = Math.min(width * EDGE_MARGIN_RATIO, EDGE_MARGIN_MAX);
+    const clampedX = Math.min(Math.max(x, margin), width - margin);
 
     const rocket = new Rocket(getParticleTexture(this.app), {
       x: clampedX,
