@@ -3,16 +3,7 @@
   flex-shrink: 0;
 }
 
-/* ---------- Camera flash + generic hidden helper ---------- */
-
-#mzj-flash {
-  position: fixed;
-  inset: 0;
-  background: #ffffff;
-  opacity: 0;
-  pointer-events: none;
-  z-index: 9999;
-}
+/* ---------- Generic hidden helper (still used by the app-shell/home-screen level, outside this file's fireworks-mood-workspace scope — see main.ts/fireworksMood.ts's own container toggling) ---------- */
 
 .mzj-hidden {
   display: none !important;

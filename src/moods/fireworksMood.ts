@@ -1,4 +1,4 @@
-import { Application } from 'pixi.js';
+import { Application, Graphics } from 'pixi.js';
 import { FireworksSystem } from '../fireworks/FireworksSystem';
 import { TextReveal } from '../effects/TextReveal';
 import { MortarField } from '../effects/MortarField';
@@ -238,33 +238,62 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
 
   // --- Camera-style flash + snapshot/recording ---
 
-  const flash = document.createElement('div');
-  flash.id = 'mzj-flash';
-  flash.className = 'mzj-hidden';
-  document.body.appendChild(flash);
+  // A genuine Pixi full-screen white overlay (the old #mzj-flash div's
+  // replacement) — same "one shared Graphics, drive alpha per-frame"
+  // technique as ScreenFlash.ts's rocket-explosion flash, just a single-shot
+  // ease-out fade instead of that one's additive decay. `FLASH_FADE_MS=400`
+  // matches the old `transition: opacity 400ms ease-out` exactly; the eased
+  // cubic curve below is the standard ease-out approximation.
+  const FLASH_FADE_MS = 400;
+  const cameraFlash = new Graphics();
+  cameraFlash.alpha = 0;
+  cameraFlash.eventMode = 'none';
+  app.stage.addChild(cameraFlash);
+  function redrawCameraFlash(): void {
+    const { width, height } = app.screen;
+    cameraFlash.clear().rect(0, 0, width, height).fill({ color: 0xffffff });
+  }
+  redrawCameraFlash();
+  app.renderer.on('resize', () => redrawCameraFlash());
 
   function flashScreen(): void {
-    flash.classList.remove('mzj-hidden');
-    flash.style.transition = 'none';
-    flash.style.opacity = '1';
-    void flash.offsetWidth; // force reflow so the fade-out transition below actually animates
-    flash.style.transition = 'opacity 400ms ease-out';
-    flash.style.opacity = '0';
-
-    window.setTimeout(() => {
-      flash.classList.add('mzj-hidden');
-      flash.style.transition = '';
-    }, 420);
+    cameraFlash.alpha = 1;
+    const startTime = performance.now();
+    const step = (now: number) => {
+      const t = Math.min(1, (now - startTime) / FLASH_FADE_MS);
+      const eased = 1 - (1 - t) ** 3;
+      cameraFlash.alpha = 1 - eased;
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
   }
 
   async function takeSnapshot(): Promise<void> {
     flashScreen();
-    try {
-      const dataUrl = await app.renderer.extract.base64({
-        target: app.stage,
-        resolution: Math.min(app.renderer.resolution * 1.5, 3),
-      });
+    // The flash is genuine UI chrome simulating a camera's own screen flash
+    // — like a real phone camera, it must never appear *in* the photo it
+    // takes. It lived safely outside app.stage as a DOM overlay before; now
+    // that it's a real Pixi child of app.stage (needed to ever render at
+    // all), it's removed from the stage for the single synchronous instant
+    // `extract.base64()` captures, then re-added immediately — not gated on
+    // the returned promise, which also covers PNG *encoding* and can run
+    // for seconds on slow/software-rendered GPUs (measured: several seconds
+    // in this sandbox's software WebGL) — toggling `.visible` around the
+    // whole `await` would leave the flash invisible on-screen for that
+    // entire span. `removeChild`/`addChild` are synchronous, and Pixi's own
+    // render-to-texture capture happens synchronously at call time (only
+    // the encode is genuinely async), so re-adding immediately after
+    // kicking off the promise is safe and never produces a visible gap in
+    // the ticker-driven render loop.
+    app.stage.removeChild(cameraFlash);
+    const extractPromise = app.renderer.extract.base64({
+      target: app.stage,
+      resolution: Math.min(app.renderer.resolution * 1.5, 3),
+    });
+    app.stage.addChild(cameraFlash);
 
+    try {
+      const dataUrl = await extractPromise;
       const link = document.createElement('a');
       link.href = dataUrl;
       link.download = `mazaj-snapshot-${Date.now()}.png`;
