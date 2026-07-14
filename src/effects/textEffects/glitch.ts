@@ -85,6 +85,9 @@ export class GlitchEffect implements TextEffect {
       this.cyanGhost.destroy();
     }
     if (this.text) this.text.alpha = 1;
+    // Settles an interrupted play() instead of leaving its promise hanging
+    // forever — see dissolveCloud.ts's own doc comment on this same pattern.
+    this.resolveFn?.();
     this.resolveFn = null;
   }
 }

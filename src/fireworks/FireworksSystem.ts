@@ -308,6 +308,34 @@ export class FireworksSystem {
     this.applyGlow();
   }
 
+  /**
+   * Instantly kills every in-flight rocket and live particle and resolves
+   * any burst still being watched for completion — used by the exit flow
+   * (see fireworksMood.ts's endShow()) so the sky is genuinely empty the
+   * moment the player leaves, not fading out over the next several seconds.
+   * Killed particles still go through the normal pool (`kill()` + push to
+   * `deadPool`), so the next show reuses them exactly like an ordinary
+   * natural death would.
+   */
+  clearActive(): void {
+    for (const rocket of this.rockets) {
+      this.layer.removeChild(rocket.sprite);
+      rocket.destroy();
+    }
+    this.rockets = [];
+
+    for (const particle of [...this.particles, ...this.pendingSpawns]) {
+      particle.kill();
+      this.deadPool.push(particle);
+      this.resolveWatcher(particle);
+    }
+    this.particles = [];
+    this.pendingSpawns = [];
+
+    for (const fountain of this.fountains) fountain.destroy();
+    this.fountains = [];
+  }
+
   private applyGlow(): void {
     const strength = Math.max(this.settings.glow, 0); // slider range 0-10
     const normalized = Math.min(strength / 10, 1);

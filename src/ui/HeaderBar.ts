@@ -283,6 +283,14 @@ export class HeaderBar {
     this.layoutPill(this.startShowButton, 'بدأ العرض');
   }
 
+  /** Restores "ابدأ العرض" to its pristine, clickable state — used when the player exits a running show and returns to setup, so they can start another one. */
+  resetStartShowButton(): void {
+    this.startShowButton.root.eventMode = 'static';
+    this.startShowButton.root.cursor = 'pointer';
+    this.startShowButton.root.alpha = 1;
+    this.layoutPill(this.startShowButton, 'ابدأ العرض');
+  }
+
   private handleMuteToggle(): void {
     this.muted = this.deps.audio.toggleMute();
     void iconTexture(this.muted ? 'volumeX' : 'volume2', ICON_SOURCE_SIZE, '#ffffff').then((texture) => {

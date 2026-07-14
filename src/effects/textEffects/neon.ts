@@ -83,6 +83,9 @@ export class NeonEffect implements TextEffect {
       this.glow.destroy();
     }
     if (this.text) this.text.tint = SETTLED_TINT;
+    // Settles an interrupted play() instead of leaving its promise hanging
+    // forever — see dissolveCloud.ts's own doc comment on this same pattern.
+    this.resolveFn?.();
     this.resolveFn = null;
   }
 }

@@ -1,4 +1,6 @@
-import { Application, Container, Graphics, Rectangle } from 'pixi.js';
+import { Application, Container, Graphics, Rectangle, Sprite } from 'pixi.js';
+import { BackdropBlurFilter } from 'pixi-filters';
+import { iconTexture } from '../ui/svgIconTexture';
 import { FireworksSystem } from '../fireworks/FireworksSystem';
 import { TextReveal } from '../effects/TextReveal';
 import { MortarField } from '../effects/MortarField';
@@ -250,10 +252,12 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     }
   });
 
-  // "ابدأ العرض" is a one-time, deliberate action (not a setup gate): it
-  // plays the opening phrase reveal, then switches into full immersion.
-  // Pressing it again afterwards is a no-op — the reveal isn't designed to
-  // replay (its smoke/text sprites aren't cleared on a second call).
+  // "ابدأ العرض" plays the opening phrase reveal, then switches into full
+  // immersion. `showStarted` just guards against a double-press while a show
+  // is already running — pressing "ابدأ العرض" again after the player has
+  // actually exited (see endShow() below) is a real, working restart:
+  // endShow() clears the previous reveal's sprites before handing back
+  // control, so a second reveal has a clean slate to play into.
   const FALLBACK_GREETING = 'مبروك';
   let showStarted = false;
 
@@ -330,9 +334,29 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
 
     // Full-immersion: go straight to the completely-hidden state instead of
     // leaving the UI visible for the first idle timeout. The player brings
-    // it back at any moment with the existing tap/move-to-reveal behaviour
-    // (IdleFadeController), same as it works everywhere else.
+    // the header back at any moment with the existing tap/move-to-reveal
+    // behaviour (IdleFadeController); the exit button below is the
+    // deliberate, always-visible way back to the planning/idle state itself.
     idleFade.hideNow();
+    exitButton.visible = true;
+  }
+
+  /**
+   * The show's one deliberate, always-visible way out — the exit button
+   * below calls this directly on tap. Everything happens synchronously, in
+   * the same frame: no setTimeout, no fade-then-cleanup-later, nothing left
+   * to race. Mirrors beginShow()'s setup in reverse, so a player can start
+   * another show immediately after.
+   */
+  function endShow(): void {
+    fireworks.clearActive();
+    if (recording.isRecording) void stopRecording();
+    textReveal.clear();
+    header.resetStartShowButton();
+    idleFade.disarmAndShow();
+    planningScreen.show(planningScreen.getMode());
+    exitButton.visible = false;
+    showStarted = false;
   }
 
   // --- Camera-style flash + snapshot/recording ---
@@ -464,6 +488,76 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // (it had gone silently dead once PlanningIconColumn/PlanningSubpanels/
   // TextComposer all moved off DOM, and was found + fixed in this pass).
   const idleFade = new IdleFadeController([header.container]);
+
+  // --- Exit button: the show's one deliberate, always-visible way back ---
+  //
+  // Once "ابدأ العرض" hides the header/icon column, the only thing that
+  // could ever bring UI back was an incidental touch reviving the header via
+  // IdleFadeController's own reveal-on-activity behaviour — not a real,
+  // discoverable exit, and even then the header's "الرئيسية" button leaves
+  // the whole mood rather than just ending the show. This is a dedicated
+  // control instead: visible only while a show is actually running,
+  // deliberately *not* one of idleFade's targets (unlike the header, it must
+  // never depend on activity to become visible again — see beginShow()/
+  // endShow() above for exactly when it's shown/hidden), positioned clear of
+  // the header row so the two never overlap even if the header happens to be
+  // transiently revealed at the same time.
+  const EXIT_BUTTON_DIAMETER = 36;
+  const EXIT_BUTTON_HIT_SIZE = 44;
+  const EXIT_BUTTON_TOP_INSET = 76;
+  const EXIT_BUTTON_RIGHT_INSET = 10;
+
+  const exitButton = new Container();
+  exitButton.label = 'إنهاء العرض والعودة';
+  exitButton.eventMode = 'static';
+  exitButton.cursor = 'pointer';
+  exitButton.visible = false;
+  exitButton.hitArea = new Rectangle(
+    -EXIT_BUTTON_HIT_SIZE / 2,
+    -EXIT_BUTTON_HIT_SIZE / 2,
+    EXIT_BUTTON_HIT_SIZE,
+    EXIT_BUTTON_HIT_SIZE,
+  );
+
+  const exitButtonBg = new Graphics();
+  exitButtonBg
+    .circle(0, 0, EXIT_BUTTON_DIAMETER / 2)
+    .fill({ color: 0x0f172a, alpha: 0.45 })
+    .stroke({ width: 1, color: 0xffffff, alpha: 0.16 });
+  exitButtonBg.filters = [new BackdropBlurFilter({ strength: 6, quality: 4 })];
+  exitButton.addChild(exitButtonBg);
+
+  const exitButtonIcon = new Sprite();
+  exitButtonIcon.anchor.set(0.5);
+  exitButtonIcon.tint = 0xe5e7eb;
+  exitButtonIcon.width = 16;
+  exitButtonIcon.height = 16;
+  exitButton.addChild(exitButtonIcon);
+  void iconTexture('x', 40, '#ffffff').then((texture) => {
+    exitButtonIcon.texture = texture;
+  });
+
+  uiContainer.addChild(exitButton);
+
+  function layoutExitButton(): void {
+    exitButton.position.set(
+      app.screen.width - EXIT_BUTTON_RIGHT_INSET - EXIT_BUTTON_DIAMETER / 2,
+      EXIT_BUTTON_TOP_INSET + EXIT_BUTTON_DIAMETER / 2,
+    );
+  }
+  layoutExitButton();
+  app.renderer.on('resize', () => layoutExitButton());
+
+  // Same stopPropagation-on-pointerdown-too discipline as HeaderBar.wireTap()
+  // — the stage's own tap-to-fire listener is bound to raw pointerdown, which
+  // fires before pointertap is ever recognized, so pointerdown alone can
+  // launch a rocket underneath this button without it too.
+  exitButton.on('pointerdown', (event) => event.stopPropagation());
+  exitButton.on('pointertap', (event) => {
+    event.stopPropagation();
+    audio.playUiClick();
+    endShow();
+  });
 
   handle = {
     show(): void {

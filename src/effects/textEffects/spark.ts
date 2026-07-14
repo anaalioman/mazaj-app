@@ -91,6 +91,9 @@ export class SparkEffect implements TextEffect {
   clear(): void {
     for (const particle of this.particles) particle.kill();
     this.particles = [];
+    // Settles an interrupted play() instead of leaving its promise hanging
+    // forever — see dissolveCloud.ts's own doc comment on this same pattern.
+    this.resolveFn?.();
     this.resolveFn = null;
     this.trailsContainer?.destroy();
     this.coresContainer?.destroy();

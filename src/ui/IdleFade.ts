@@ -51,6 +51,18 @@ export class IdleFadeController {
     this.resetTimer();
   }
 
+  /**
+   * Un-arms the idle countdown and shows the targets immediately — the
+   * inverse of `hideNow()`, used when the player explicitly exits a show and
+   * returns to the setup/idle state. Until `hideNow()` is called again (the
+   * next show start), targets stay fully visible regardless of activity.
+   */
+  disarmAndShow(): void {
+    this.armed = false;
+    window.clearTimeout(this.timer);
+    this.show();
+  }
+
   private handleActivity = (): void => {
     this.show();
     if (this.armed) this.resetTimer();

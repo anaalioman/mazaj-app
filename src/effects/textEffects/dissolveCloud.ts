@@ -94,6 +94,10 @@ export abstract class DissolveCloudEffect implements TextEffect {
   clear(): void {
     for (const particle of this.particles) particle.kill();
     this.particles = [];
+    // Settles an interrupted play() instead of leaving its promise hanging
+    // forever — e.g. the player exits mid-reveal (see fireworksMood.ts's
+    // endShow()) before `update()` ever reaches REVEAL_DURATION itself.
+    this.resolveFn?.();
     this.resolveFn = null;
     this.trailsContainer?.destroy();
     this.coresContainer?.destroy();
