@@ -172,7 +172,7 @@ export class PlanningScreen {
       { ...SLIDERS.glow, onChange: (v) => deps.fireworks.updateSettings({ glow: v }) },
     ]);
     // Needs glowPanel to already exist — see UploadHint's own doc comment.
-    this.uploadHint = new UploadHint(this.glowPanel);
+    this.uploadHint = new UploadHint(deps.app, this.glowPanel);
     this.labPanel = new SliderSheetPanel(deps.app, [
       { ...SLIDERS.density, onChange: (v) => deps.fireworks.updateSettings({ particleDensity: v }) },
       { ...SLIDERS.gravity, onChange: (v) => deps.fireworks.updateSettings({ gravityScale: v }) },

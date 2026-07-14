@@ -3,36 +3,6 @@
   flex-shrink: 0;
 }
 
-/* ---------- Upload hint toast ---------- */
-
-.mzj-upload-hint {
-  position: fixed;
-  top: 70px;
-  left: 50%;
-  transform: translateX(-50%) translateY(-8px);
-  z-index: 40;
-  max-width: min(360px, 88vw);
-  padding: 10px 18px;
-  border-radius: 999px;
-  background: rgba(10, 12, 20, 0.88);
-  backdrop-filter: blur(10px) saturate(180%);
-  -webkit-backdrop-filter: blur(10px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: #fff;
-  font-size: 13px;
-  text-align: center;
-  line-height: 1.5;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.35s ease, transform 0.35s ease;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
-}
-
-.mzj-upload-hint-visible {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
 /* ---------- Camera flash + generic hidden helper ---------- */
 
 #mzj-flash {
