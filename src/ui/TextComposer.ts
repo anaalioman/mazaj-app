@@ -1,6 +1,6 @@
-import { Application, Container, Graphics, Rectangle, Text, TextStyle, type FederatedPointerEvent } from 'pixi.js';
-import { DropShadowFilter } from 'pixi-filters';
-import { icon } from './icons';
+import { Application, Container, Graphics, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent } from 'pixi.js';
+import { AdvancedBloomFilter, DropShadowFilter } from 'pixi-filters';
+import { iconTexture } from './svgIconTexture';
 import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
 import { TEXT_EFFECTS } from '../effects/textEffects/registry';
 
@@ -22,6 +22,23 @@ export interface TextComposerDeps {
   onComposingChange: (composing: boolean) => void;
 }
 
+/** One effects-bar item: a rounded preview frame (border+fill, gold identity, real bloom+shadow filters) plus its label below it. `border` is redrawn on select/deselect rather than rebuilt. */
+interface EffectFrameObj {
+  effect: TextRevealEffect;
+  root: Container;
+  border: Graphics;
+  label: Text;
+}
+
+/** The composer's own text field, root-centered like every other control in this file: a background pill, the live typed text, a dimmed placeholder shown when empty, and a blinking gold caret — see buildInputField(). */
+interface InputFieldObj {
+  root: Container;
+  bg: Graphics;
+  text: Text;
+  placeholder: Text;
+  cursor: Graphics;
+}
+
 const SAMPLE_PHRASE = 'مبروك';
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 3;
@@ -37,6 +54,81 @@ const PREVIEW_NONE_HOLD_MS = 2000;
 const KONVA_BLUE = 0x00a1ff;
 const BOX_BORDER_WIDTH = 1;
 const BOX_PADDING = 14;
+
+/**
+ * Geometry ported 1:1 from the old `#mzj-text-composer`/`.mzj-text-composer-*`
+ * CSS (measured directly off a live render, same methodology as every other
+ * converted window) — a fixed-width panel pinned to the top-center of the
+ * screen, an RTL topbar (back circle at the right, input filling the rest),
+ * then a flex-wrap grid of effect frames that centers each row exactly the
+ * way `flex-wrap: wrap; justify-content: center` used to.
+ */
+const COMPOSER_TOP_Y = 68;
+const COMPOSER_MAX_WIDTH = 460;
+const COMPOSER_WIDTH_RATIO = 0.94;
+const BACK_DIAMETER = 34;
+const GAP_BACK_INPUT = 8;
+const TOPBAR_HEIGHT = 36;
+const INPUT_HEIGHT = 36;
+const EFFECTS_MARGIN_TOP = 10;
+const PREVIEW_W = 78;
+const PREVIEW_H = 44;
+const PREVIEW_RADIUS = 10;
+const ITEM_GAP_X = 14;
+const ITEM_GAP_Y = 12;
+const LABEL_GAP = 5;
+const LABEL_FONT_SIZE = 10;
+const LABEL_LINE_HEIGHT = 12;
+const ITEM_HEIGHT = PREVIEW_H + LABEL_GAP + LABEL_LINE_HEIGHT;
+/** Real Pixi hitArea per finger — same reasoning as every other control converted this session. Each item's own footprint (78x61) already clears the 44x44 floor. */
+const FRAME_HIT_WIDTH = PREVIEW_W;
+const FRAME_HIT_HEIGHT = ITEM_HEIGHT;
+/** Root is centered on the *border box*, not the whole item — so the hitArea's vertical span is deliberately asymmetric (see buildEffectFrame()): it starts exactly at the box's own top edge (no wasted margin that would creep into the row above) and extends down through the label. */
+const FRAME_HIT_TOP = -PREVIEW_H / 2;
+
+/** The effects bar's unified gold identity — same color/filter recipe as the header and the planning screen's icon column, applied to every frame's border so the whole app reads as one visual language. */
+const EFFECT_GOLD = 0xfff6df;
+const FRAME_BORDER_IDLE_COLOR = 0xffffff;
+const FRAME_BORDER_IDLE_ALPHA = 0.22;
+const FRAME_BORDER_ACTIVE_ALPHA = 0.9;
+const FRAME_FILL_COLOR = 0x080910;
+const FRAME_FILL_ALPHA = 0.55;
+const LABEL_IDLE_COLOR = 0xffffff;
+const LABEL_IDLE_ALPHA = 0.65;
+const LABEL_ACTIVE_COLOR = 0xffffff;
+
+/** Plain glass chrome, matching HeaderBar's own back/home buttons — not part of the gold identity, which belongs to content (the effect frames), not navigation. */
+const BACK_BG_COLOR = 0xffffff;
+const BACK_BG_ALPHA = 0.06;
+const BACK_ICON_TINT = 0xe5e7eb;
+const BACK_ICON_SIZE = 18;
+const BACK_ICON_SOURCE_SIZE = 40;
+
+/**
+ * The input field's genuine Pixi visuals — text, placeholder, and a
+ * blinking gold caret, all real `Text`/`Graphics` on `app.stage`. See
+ * `openGhostInput()` for the invisible keyboard-capture bridge that feeds
+ * `this.text` (and therefore this display) its characters.
+ */
+const INPUT_FONT_SIZE = 15;
+const INPUT_TEXT_COLOR = 0xffe9b3;
+const PLACEHOLDER_TEXT = 'اكتب عبارتك هنا';
+const PLACEHOLDER_COLOR = 0xffffff;
+const PLACEHOLDER_ALPHA = 0.4;
+const CURSOR_WIDTH = 2;
+const CURSOR_HEIGHT = 20;
+const CURSOR_GAP = 3;
+/** Standard OS caret blink interval (matches Chrome/Android's own ~530ms default). */
+const CURSOR_BLINK_MS = 530;
+/** The Pixi hitArea is deliberately taller than the visible 36px pill — same 44px-floor rule as every other tappable control this session. */
+const INPUT_HIT_HEIGHT = 44;
+
+function effectFrameFilters(): (AdvancedBloomFilter | DropShadowFilter)[] {
+  return [
+    new AdvancedBloomFilter({ threshold: 0.3, blur: 3, quality: 4, bloomScale: 1.1, brightness: 1.05 }),
+    new DropShadowFilter({ color: 0x000000, alpha: 0.45, blur: 2, offset: { x: 0, y: 2 } }),
+  ];
+}
 
 /**
  * Two dedicated corner handles replace both the old 4-identical-corners
@@ -66,29 +158,49 @@ function clamp(value: number, min: number, max: number): number {
  * rotation persist in memory for as long as the mood instance lives (see
  * fireworksMood.ts's module doc).
  *
- * `root` (the top input + effects bar) is the one and only DOM element in
- * this class — real keyboard text entry has no Pixi equivalent, so it stays
- * plain HTML, same as every other compose-time toolbar in this app. The
- * control box itself (border + two dedicated corner handles) and the
- * full-screen "tap outside to commit" backdrop are genuine Pixi
- * `Graphics`/`Container` objects living on `app.stage`, positioned/rotated
- * via Pixi's own `position`/`rotation` — never CSS — so they never desync
- * from the WebGL frame the way a DOM overlay can. The border keeps
- * Konva.js's own Transformer border default (1px `rgb(0, 161, 255)`, see
- * the KONVA_BLUE constant); the two handles are their own dedicated
- * multi-function circles, not a generic 4-corner grid — nothing renders
- * outside the box's own rectangle (see HANDLE_* constants above and
- * syncControlBoxTransform() below).
+ * Every visible pixel of this class is genuine Pixi — the back button, the
+ * input field (background pill, live text, placeholder, blinking gold
+ * caret), the effects bar's 7 frames, the control box (border + two
+ * dedicated corner handles), and the full-screen "tap outside to commit"
+ * backdrop are all `Graphics`/`Container`/`Text` objects living on
+ * `app.stage`, positioned via Pixi's own `position`/`rotation` — never CSS
+ * — so they never desync from the WebGL frame the way a DOM overlay can.
+ * The one DOM node this class ever creates is a fully invisible, 1x1px,
+ * off-screen `<input>` inside its own isolated Shadow DOM root — the only
+ * bridge the web platform exposes for summoning a real OS keyboard, since
+ * `<canvas>` cannot receive IME focus (see openGhostInput()'s doc comment
+ * for the full reasoning). It carries zero stylesheet footprint, is built
+ * fresh every time typing starts, and is torn down completely the instant
+ * it loses focus — nothing DOM ever lingers, and no pixel the player
+ * actually sees is DOM. The control box border keeps Konva.js's own
+ * Transformer border default (1px `rgb(0, 161, 255)`, see the KONVA_BLUE
+ * constant); the two handles are their own dedicated multi-function
+ * circles, not a generic 4-corner grid — nothing renders outside the box's
+ * own rectangle (see HANDLE_* constants above and syncControlBoxTransform()
+ * below).
  *
  * The effects bar's demo previews reuse the exact same TextReveal engine as
  * the real final reveal (same particle physics, no CSS/static-image
  * stand-in) via a dedicated instance, cycling through smoke/flame/none one
- * at a time (never more than one running at once) for as long as the input
- * row is open.
+ * at a time (never more than one running at once, a sequential loop rather
+ * than 7 simultaneous animations, for performance) for as long as the input
+ * row is open. `previewMask` clips whichever frame is currently animating to
+ * that frame's own Pixi-computed rectangle, so particles never spill past a
+ * frame's rounded border — the same mask is reused for every frame in turn
+ * since only one is ever live at once.
  */
 export class TextComposer {
-  readonly root: HTMLDivElement;
   private readonly deps: TextComposerDeps;
+  private readonly composerContainer: Container;
+  /** Swallows taps that land in the gaps between buttons/frames — see the constructor's doc comment where it's built. */
+  private readonly catchAll: Graphics;
+  private readonly backButton: { root: Container; bg: Graphics };
+  private readonly inputField: InputFieldObj;
+  private readonly effectFrames: EffectFrameObj[];
+  /** The sole DOM node this class ever creates — see openGhostInput()'s doc comment. Null whenever nothing is focused; never lingers past a blur. */
+  private ghostHost: HTMLDivElement | null = null;
+  private ghostInput: HTMLInputElement | null = null;
+  private cursorBlinkTimer: number | undefined;
   private readonly previewText: Text;
   private readonly baseFontSize: number;
   private readonly previewReveal: TextReveal;
@@ -161,15 +273,38 @@ export class TextComposer {
     deps.app.stage.addChild(this.previewText);
     this.syncPreviewTransform();
 
-    this.root = document.createElement('div');
-    this.root.id = 'mzj-text-composer';
-    this.root.className = 'mzj-hidden';
-    this.root.innerHTML = this.template();
-    document.body.appendChild(this.root);
+    this.composerContainer = new Container();
+    this.composerContainer.visible = false;
+    deps.app.stage.addChild(this.composerContainer);
 
-    for (const type of ['pointerdown', 'click', 'input', 'change'] as const) {
-      this.root.addEventListener(type, (event) => event.stopPropagation());
-    }
+    // A silent catch-all sitting behind every other child: individual
+    // buttons/frames only claim their own hitArea, so the *gaps* between
+    // them (the row/column gaps, the space below the last row) belong to
+    // nobody and would otherwise fall straight through to app.stage's
+    // tap-to-fire rocket listener underneath — the old DOM `#mzj-text-composer`
+    // div never had this problem since a block-level element absorbs every
+    // tap inside its own box by default. This replicates that: real drawn
+    // geometry (Pixi hit-tests a Graphics against its own shape when no
+    // explicit hitArea is set), sized to the composer's full content box in
+    // layoutComposer()/layoutEffectFrames(), doing nothing but swallowing
+    // the tap.
+    this.catchAll = new Graphics();
+    this.catchAll.eventMode = 'static';
+    this.catchAll.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
+    this.composerContainer.addChild(this.catchAll);
+
+    this.inputField = this.buildInputField();
+    this.composerContainer.addChild(this.inputField.root);
+
+    this.backButton = this.buildBackButton();
+    this.composerContainer.addChild(this.backButton.root);
+
+    this.effectFrames = TEXT_EFFECTS.map((entry) => this.buildEffectFrame(entry.id, entry.label));
+    for (const frame of this.effectFrames) this.composerContainer.addChild(frame.root);
+
+    deps.app.renderer.on('resize', () => this.layoutComposer());
+    this.layoutComposer();
+    this.refreshInputVisual();
 
     // Full-screen hit target for "tap outside the box commits it" — a
     // near-zero-alpha fill so it's still real drawn geometry (Pixi hit-tests
@@ -205,7 +340,6 @@ export class TextComposer {
     this.resizeHandle = this.createHandle('nwse-resize');
     this.controlBox.addChild(this.resizeHandle.root);
 
-    this.wireInput();
     this.wireEffectButtons();
     this.wireBack();
     this.wireControlBox();
@@ -250,15 +384,15 @@ export class TextComposer {
     return { root, glow };
   }
 
-  /** Opens the composer pre-filled with whatever text/effect is currently set — used by the T icon and by tapping the committed text. */
+  /** Opens the composer pre-filled with whatever text/effect is currently set — used by the T icon and by tapping the committed text. Auto-focuses the ghost bridge after a short delay (same 50ms the old DOM `.focus()` used) so the keyboard rises as soon as the panel has visually settled. */
   open(): void {
     this.closeControlBox();
     this.previewText.visible = false;
-    this.query<HTMLInputElement>('#mzj-text-composer-input').value = this.text;
-    this.syncEffectButtons();
-    this.root.classList.remove('mzj-hidden');
+    this.refreshInputVisual();
+    this.syncEffectFrames();
+    this.composerContainer.visible = true;
     this.deps.onComposingChange(true);
-    window.setTimeout(() => this.query<HTMLInputElement>('#mzj-text-composer-input').focus(), 50);
+    window.setTimeout(() => this.openGhostInput(), 50);
     this.startPreviewCycle();
   }
 
@@ -273,7 +407,8 @@ export class TextComposer {
     // Defensive: the show can start (via the header's always-available
     // "ابدأ العرض") while the composer or control box is still open.
     this.stopPreviewCycle();
-    this.root.classList.add('mzj-hidden');
+    this.composerContainer.visible = false;
+    this.closeGhostInput();
     this.closeControlBox();
     this.previewText.visible = false;
     if (!this.hasCommittedOnce) return null;
@@ -292,38 +427,46 @@ export class TextComposer {
     });
   }
 
-  private query<T extends HTMLElement>(selector: string): T {
-    return this.root.querySelector<T>(selector)!;
-  }
-
-  private wireInput(): void {
-    const input = this.query<HTMLInputElement>('#mzj-text-composer-input');
-    input.addEventListener('input', () => {
-      this.text = input.value;
-      this.previewText.text = this.text || SAMPLE_PHRASE;
-    });
-  }
-
   private wireEffectButtons(): void {
-    const buttons = Array.from(this.root.querySelectorAll<HTMLButtonElement>('.mzj-text-effect-btn'));
-    for (const btn of buttons) {
-      btn.addEventListener('click', () => {
-        this.effect = btn.dataset.effect as TextRevealEffect;
-        this.syncEffectButtons();
+    for (const frame of this.effectFrames) {
+      frame.root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
+      frame.root.on('pointertap', (event: FederatedPointerEvent) => {
+        event.stopPropagation();
+        this.effect = frame.effect;
+        this.syncEffectFrames();
       });
     }
   }
 
-  private syncEffectButtons(): void {
-    for (const btn of this.root.querySelectorAll<HTMLButtonElement>('.mzj-text-effect-btn')) {
-      btn.classList.toggle('active', btn.dataset.effect === this.effect);
+  private syncEffectFrames(): void {
+    for (const frame of this.effectFrames) {
+      const active = frame.effect === this.effect;
+      frame.border
+        .clear()
+        .roundRect(-PREVIEW_W / 2, -PREVIEW_H / 2, PREVIEW_W, PREVIEW_H, PREVIEW_RADIUS)
+        .fill({ color: FRAME_FILL_COLOR, alpha: FRAME_FILL_ALPHA })
+        .stroke({
+          width: 1.5,
+          color: active ? EFFECT_GOLD : FRAME_BORDER_IDLE_COLOR,
+          alpha: active ? FRAME_BORDER_ACTIVE_ALPHA : FRAME_BORDER_IDLE_ALPHA,
+        });
+      frame.label.style = new TextStyle({
+        fontFamily: 'Tajawal, system-ui, sans-serif',
+        fontSize: LABEL_FONT_SIZE,
+        fontWeight: active ? '700' : '400',
+        fill: active ? LABEL_ACTIVE_COLOR : LABEL_IDLE_COLOR,
+      });
+      frame.label.alpha = active ? 1 : LABEL_IDLE_ALPHA;
     }
   }
 
   private wireBack(): void {
-    this.query<HTMLButtonElement>('#mzj-text-composer-back').addEventListener('click', () => {
+    this.backButton.root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
+    this.backButton.root.on('pointertap', (event: FederatedPointerEvent) => {
+      event.stopPropagation();
       this.stopPreviewCycle();
-      this.root.classList.add('mzj-hidden');
+      this.closeGhostInput();
+      this.composerContainer.visible = false;
       this.text = this.text.trim() ? this.text : SAMPLE_PHRASE;
       this.previewText.text = this.text;
       this.previewText.visible = true;
@@ -348,24 +491,26 @@ export class TextComposer {
   }
 
   /**
-   * Per icon: show "مرحبا" plainly and statically first, hold briefly so
-   * it's clearly read, then (for smoke/flame) run the real dissolve over
-   * it — the exact same TextReveal engine as the final reveal, clipped to
-   * this icon's own slot rectangle so nothing ever escapes it. 'none' just
-   * holds the static word for a comparable beat, since it has no effect to
-   * demonstrate. Advances to the next icon once done, looping forever.
+   * Per frame: show "مرحبا" plainly and statically first, hold briefly so
+   * it's clearly read, then (for smoke/flame/...) run the real dissolve over
+   * it — the exact same TextReveal engine as the final reveal, clipped via
+   * `previewMask` to this frame's own Pixi-computed rectangle (`getGlobalPosition()`
+   * plus the fixed PREVIEW_W/PREVIEW_H — every frame is drawn at that exact
+   * size, see buildEffectFrame()) so nothing ever escapes it. One frame
+   * animates at a time — a sequential loop, not 7 concurrent particle
+   * systems — for performance. 'none' just holds the static word for a
+   * comparable beat, since it has no effect to demonstrate. Advances to the
+   * next frame once done, looping forever.
    */
   private async runPreviewStep(generation: number): Promise<void> {
     if (!this.previewCycleActive || generation !== this.previewGeneration) return;
 
     const effect = PREVIEW_ORDER[this.previewIndex];
-    const slot = this.root.querySelector<HTMLElement>(`.mzj-text-effect-preview[data-effect="${effect}"]`)!;
-    const rect = slot.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    const fontScale = (rect.height * 0.4) / this.baseFontSize;
+    const frame = this.effectFrames.find((f) => f.effect === effect)!;
+    const { x, y } = frame.root.getGlobalPosition();
+    const fontScale = (PREVIEW_H * 0.4) / this.baseFontSize;
 
-    this.previewMask.clear().rect(rect.left, rect.top, rect.width, rect.height).fill(0xffffff);
+    this.previewMask.clear().rect(x - PREVIEW_W / 2, y - PREVIEW_H / 2, PREVIEW_W, PREVIEW_H).fill(0xffffff);
 
     // Static, clearly-readable "مرحبا" first — no effect yet.
     await this.previewReveal.reveal(PREVIEW_PHRASE, { effect: 'none', x, y, fontScale });
@@ -586,24 +731,272 @@ export class TextComposer {
     this.controlBox.rotation = this.rotation;
   }
 
-  private template(): string {
-    return `
-      <div class="mzj-text-composer-topbar">
-        <button type="button" id="mzj-text-composer-back" aria-label="رجوع">${icon('arrowBack', 18)}</button>
-        <input type="text" id="mzj-text-composer-input" class="mzj-text-composer-input" placeholder="اكتب عبارتك هنا" />
-      </div>
-      <div class="mzj-text-composer-effects">
-        ${TEXT_EFFECTS.map((entry) => this.effectButton(entry.id, entry.label)).join('')}
-      </div>
-    `;
+  /**
+   * The text field itself: a glass pill (background matches the old
+   * `.mzj-text-composer-input`'s `rgba(255,255,255,0.08)`), the live typed
+   * text (gold `#ffe9b3`, same as before), a dimmed placeholder shown only
+   * while empty, and a blinking gold caret with the same
+   * `AdvancedBloomFilter`/`DropShadowFilter` recipe as the effects bar's
+   * frames — "مؤشر ذهبي متسق مع الهوية الملكية". Tapping anywhere in the
+   * field's hitArea opens the ghost keyboard bridge (see openGhostInput()).
+   * `hitArea`/`bg` are sized in layoutComposer() once the pill's width is
+   * known; everything here is built root-centered on local (0, 0), same
+   * convention as every other control in this file.
+   */
+  private buildInputField(): InputFieldObj {
+    const root = new Container();
+    root.eventMode = 'static';
+    root.cursor = 'text';
+
+    const bg = new Graphics();
+    root.addChild(bg);
+
+    const placeholder = new Text({
+      text: PLACEHOLDER_TEXT,
+      style: new TextStyle({ fontFamily: 'Tajawal, system-ui, sans-serif', fontSize: INPUT_FONT_SIZE, fontWeight: '700', fill: PLACEHOLDER_COLOR }),
+    });
+    placeholder.anchor.set(0.5);
+    placeholder.alpha = PLACEHOLDER_ALPHA;
+    root.addChild(placeholder);
+
+    const text = new Text({
+      text: '',
+      style: new TextStyle({ fontFamily: 'Tajawal, system-ui, sans-serif', fontSize: INPUT_FONT_SIZE, fontWeight: '700', fill: INPUT_TEXT_COLOR }),
+    });
+    text.anchor.set(0.5);
+    root.addChild(text);
+
+    const cursor = new Graphics().rect(-CURSOR_WIDTH / 2, -CURSOR_HEIGHT / 2, CURSOR_WIDTH, CURSOR_HEIGHT).fill(EFFECT_GOLD);
+    cursor.filters = effectFrameFilters();
+    cursor.visible = false;
+    root.addChild(cursor);
+
+    root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
+    root.on('pointertap', (event: FederatedPointerEvent) => {
+      event.stopPropagation();
+      this.openGhostInput();
+    });
+
+    return { root, bg, text, placeholder, cursor };
   }
 
-  private effectButton(effect: TextRevealEffect, label: string): string {
-    return `
-      <button type="button" class="mzj-text-effect-btn" data-effect="${effect}">
-        <span class="mzj-text-effect-preview" data-effect="${effect}"></span>
-        <span>${label}</span>
-      </button>
-    `;
+  /**
+   * Repaints the field's live text/placeholder/caret from `this.text` —
+   * called on every native `input` event from the ghost bridge (see
+   * openGhostInput()) and once up front so the field never starts blank
+   * when it should show a pre-filled value (e.g. reopening the composer on
+   * previously-committed text). The caret sits at the *leading* edge of the
+   * rendered text block (its left side) because Arabic is RTL — typing
+   * appends new glyphs to the left, so that is where the next character
+   * will actually land, and `-text.width / 2` tracks that precisely as the
+   * string grows or shrinks.
+   */
+  private refreshInputVisual(): void {
+    const hasText = this.text.length > 0;
+    this.inputField.text.text = this.text;
+    this.inputField.text.visible = hasText;
+    this.inputField.placeholder.visible = !hasText;
+
+    const caretX = hasText ? -this.inputField.text.width / 2 - CURSOR_GAP : 0;
+    this.inputField.cursor.position.set(caretX, 0);
+  }
+
+  private startCursorBlink(): void {
+    this.inputField.cursor.visible = true;
+    window.clearInterval(this.cursorBlinkTimer);
+    this.cursorBlinkTimer = window.setInterval(() => {
+      this.inputField.cursor.visible = !this.inputField.cursor.visible;
+    }, CURSOR_BLINK_MS);
+  }
+
+  private stopCursorBlink(): void {
+    window.clearInterval(this.cursorBlinkTimer);
+    this.cursorBlinkTimer = undefined;
+    this.inputField.cursor.visible = false;
+  }
+
+  /**
+   * The one and only DOM this class ever creates: a fully invisible, 1x1px,
+   * off-screen `<input>` inside its own isolated Shadow DOM root. This
+   * exists purely because no web API lets a `<canvas>` receive IME/keyboard
+   * focus — summoning Android/iOS's on-screen keyboard requires a real,
+   * focusable, editable DOM node, full stop; there is no Canvas-only way
+   * around it. Every other canvas-based text editor (Figma, Google's canvas
+   * tools, etc.) bridges this exact same way. What makes this a genuine
+   * "ghost" rather than a disguised text field:
+   *   - Zero stylesheet footprint: every rule below is a direct inline
+   *     `style.*` assignment, never a class, never a `mazajUI.css` rule.
+   *   - Shadow DOM isolation: even if a style rule here were wrong, the
+   *     shadow boundary guarantees it cannot leak onto the rest of the app.
+   *   - Built fresh on every focus, destroyed completely on blur (see
+   *     closeGhostInput()) — nothing DOM ever lingers between keystroke
+   *     sessions.
+   *   - Zero visible pixels: 1×1, `opacity:0`, parked off-screen at
+   *     (-9999, -9999). The player only ever sees the gold Pixi glyphs and
+   *     caret in `inputField`.
+   * The `input` listener below is the actual "receives characters" logic:
+   * every native `input` event (typed key, IME commit, paste, voice
+   * dictation — anything the OS keyboard can produce) copies `ghost.value`
+   * into `this.text` and repaints the Pixi field via refreshInputVisual().
+   */
+  private openGhostInput(): void {
+    if (this.ghostInput) {
+      this.ghostInput.focus();
+      return;
+    }
+
+    const host = document.createElement('div');
+    host.style.position = 'fixed';
+    host.style.left = '-9999px';
+    host.style.top = '-9999px';
+    host.style.width = '1px';
+    host.style.height = '1px';
+    host.style.overflow = 'hidden';
+    const shadow = host.attachShadow({ mode: 'open' });
+
+    const ghost = document.createElement('input');
+    ghost.type = 'text';
+    ghost.value = this.text;
+    ghost.style.width = '1px';
+    ghost.style.height = '1px';
+    ghost.style.opacity = '0';
+    ghost.style.border = 'none';
+    ghost.style.padding = '0';
+    ghost.style.margin = '0';
+    ghost.style.background = 'transparent';
+    ghost.style.caretColor = 'transparent';
+    shadow.appendChild(ghost);
+    document.body.appendChild(host);
+
+    // The actual character-receiving logic: every native `input` event this
+    // ghost fires (keystroke, IME commit, paste, dictation) is mirrored
+    // straight into `this.text`, which repaints the genuine Pixi glyphs and
+    // caret — the ghost's own value is never itself rendered anywhere.
+    ghost.addEventListener('input', () => {
+      this.text = ghost.value;
+      this.refreshInputVisual();
+      this.previewText.text = this.text || SAMPLE_PHRASE;
+    });
+    ghost.addEventListener('blur', () => this.closeGhostInput());
+    for (const type of ['pointerdown', 'click', 'change'] as const) {
+      ghost.addEventListener(type, (event) => event.stopPropagation());
+    }
+
+    this.ghostHost = host;
+    this.ghostInput = ghost;
+    ghost.focus();
+    this.startCursorBlink();
+  }
+
+  /** Tears the ghost bridge down completely — see openGhostInput()'s doc comment for why nothing DOM may linger past a blur. */
+  private closeGhostInput(): void {
+    this.ghostHost?.remove();
+    this.ghostHost = null;
+    this.ghostInput = null;
+    this.stopCursorBlink();
+  }
+
+  /** Plain glass circle, same look as HeaderBar's own back/home buttons — see the BACK_* constants' doc comment for why this one stays outside the gold identity. */
+  private buildBackButton(): { root: Container; bg: Graphics } {
+    const root = new Container();
+    root.eventMode = 'static';
+    root.cursor = 'pointer';
+    root.hitArea = new Rectangle(-HANDLE_HIT_SIZE / 2, -HANDLE_HIT_SIZE / 2, HANDLE_HIT_SIZE, HANDLE_HIT_SIZE);
+
+    const bg = new Graphics().circle(0, 0, BACK_DIAMETER / 2).fill({ color: BACK_BG_COLOR, alpha: BACK_BG_ALPHA });
+    root.addChild(bg);
+
+    const glyph = new Sprite();
+    glyph.anchor.set(0.5);
+    glyph.tint = BACK_ICON_TINT;
+    glyph.width = BACK_ICON_SIZE;
+    glyph.height = BACK_ICON_SIZE;
+    root.addChild(glyph);
+    void iconTexture('arrowBack', BACK_ICON_SOURCE_SIZE, '#ffffff').then((texture) => {
+      glyph.texture = texture;
+    });
+
+    return { root, bg };
+  }
+
+  /**
+   * One effects-bar frame: a rounded, glass-dark box (the "small
+   * rounded-corner rectangle" preview slot) with a gold-identity border —
+   * real `AdvancedBloomFilter` + `DropShadowFilter`, brighter/opaque when
+   * this is the selected effect, dim when it isn't (see syncEffectFrames()) —
+   * plus a plain white label below it (labels stay white across every
+   * converted window, only icon-like marks carry the gold). The animated
+   * preview itself (the dissolving "مرحبا" text/particles) is drawn
+   * separately by the single shared `previewReveal`/`previewMask` pair and
+   * only ever occupies one frame's rectangle at a time — see
+   * runPreviewStep().
+   */
+  private buildEffectFrame(effect: TextRevealEffect, labelText: string): EffectFrameObj {
+    const root = new Container();
+    root.eventMode = 'static';
+    root.cursor = 'pointer';
+    root.hitArea = new Rectangle(-FRAME_HIT_WIDTH / 2, FRAME_HIT_TOP, FRAME_HIT_WIDTH, FRAME_HIT_HEIGHT);
+
+    const border = new Graphics();
+    border.filters = effectFrameFilters();
+    root.addChild(border);
+
+    const label = new Text({ text: labelText, style: new TextStyle({ fontFamily: 'Tajawal, system-ui, sans-serif', fontSize: LABEL_FONT_SIZE, fill: LABEL_IDLE_COLOR }) });
+    label.anchor.set(0.5, 0);
+    label.position.set(0, PREVIEW_H / 2 + LABEL_GAP);
+    root.addChild(label);
+
+    return { effect, root, border, label };
+  }
+
+  /** Recomputes every position from the current screen size — called once at construction and again on every resize, same pattern as PlanningIconColumn.layout(). */
+  private layoutComposer(): void {
+    const screen = this.deps.app.screen;
+    const composerWidth = Math.min(COMPOSER_MAX_WIDTH, screen.width * COMPOSER_WIDTH_RATIO);
+    const composerX = (screen.width - composerWidth) / 2;
+    this.composerContainer.position.set(composerX, COMPOSER_TOP_Y);
+
+    this.backButton.root.position.set(composerWidth - BACK_DIAMETER / 2, TOPBAR_HEIGHT / 2);
+
+    const inputWidth = composerWidth - BACK_DIAMETER - GAP_BACK_INPUT;
+    this.inputField.root.position.set(inputWidth / 2, TOPBAR_HEIGHT / 2);
+    this.inputField.root.hitArea = new Rectangle(-inputWidth / 2, -INPUT_HIT_HEIGHT / 2, inputWidth, INPUT_HIT_HEIGHT);
+    this.inputField.bg
+      .clear()
+      .roundRect(-inputWidth / 2, -INPUT_HEIGHT / 2, inputWidth, INPUT_HEIGHT, 12)
+      .fill({ color: 0xffffff, alpha: 0.08 });
+
+    const contentBottom = this.layoutEffectFrames(composerWidth);
+    this.catchAll.clear().rect(0, 0, composerWidth, contentBottom).fill({ color: 0x000000, alpha: 0.001 });
+  }
+
+  /**
+   * Replicates the old `.mzj-text-composer-effects { display: flex;
+   * flex-wrap: wrap; justify-content: center; gap: 12px 14px; }` in Pixi
+   * coordinates: pack frames into rows of `itemsPerRow` (however many fit
+   * the current composer width, so this reflows exactly like the old flex
+   * grid did on a narrower/wider screen), then center each row and place
+   * its items right-to-left (RTL — the first frame in the array lands at
+   * the row's right edge, matching `TEXT_EFFECTS`' own declared order).
+   */
+  /** Returns the content's bottom y (composer-local) once every row is placed, so layoutComposer() can size the catch-all backdrop to match. */
+  private layoutEffectFrames(composerWidth: number): number {
+    const itemsPerRow = Math.max(1, Math.floor((composerWidth + ITEM_GAP_X) / (PREVIEW_W + ITEM_GAP_X)));
+    let rowTop = TOPBAR_HEIGHT + EFFECTS_MARGIN_TOP;
+
+    for (let start = 0; start < this.effectFrames.length; start += itemsPerRow) {
+      const row = this.effectFrames.slice(start, start + itemsPerRow);
+      const rowContentWidth = row.length * PREVIEW_W + (row.length - 1) * ITEM_GAP_X;
+      let rightEdge = composerWidth / 2 + rowContentWidth / 2;
+
+      for (const frame of row) {
+        frame.root.position.set(rightEdge - PREVIEW_W / 2, rowTop + PREVIEW_H / 2);
+        rightEdge -= PREVIEW_W + ITEM_GAP_X;
+      }
+      rowTop += ITEM_HEIGHT + ITEM_GAP_Y;
+    }
+
+    this.syncEffectFrames();
+    return rowTop - ITEM_GAP_Y;
   }
 }

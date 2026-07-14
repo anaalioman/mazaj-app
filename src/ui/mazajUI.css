@@ -156,98 +156,11 @@
   display: none;
 }
 
-#mzj-text-composer {
-  position: fixed;
-  left: 50%;
-  top: 68px;
-  transform: translateX(-50%);
-  z-index: 40;
-  width: min(460px, 94vw);
-  max-height: calc(100vh - 84px);
-  overflow-y: auto;
-  box-sizing: border-box;
-  pointer-events: auto;
-}
-
-.mzj-text-composer-topbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-#mzj-text-composer-back {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border: none;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #fff;
-  cursor: pointer;
-}
-
-.mzj-text-composer-input {
-  flex: 1;
-  min-width: 0;
-  padding: 9px 14px;
-  border: none;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #ffe9b3;
-  font-family: inherit;
-  font-size: 15px;
-  font-weight: 700;
-  text-align: center;
-}
-
-.mzj-text-composer-effects {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 12px 14px;
-  margin-top: 10px;
-}
-
-.mzj-text-effect-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  background: transparent;
-  border: none;
-  padding: 0;
-  color: rgba(255, 255, 255, 0.65);
-  font-family: inherit;
-  font-size: 10px;
-  cursor: pointer;
-}
-
-.mzj-text-effect-btn.active {
-  color: #fff;
-  font-weight: 700;
-}
-
-.mzj-text-effect-btn.active .mzj-text-effect-preview {
-  border-color: rgba(255, 233, 179, 0.7);
-}
-
-/* A clear, self-contained little frame — a layout/position reference the
-   real PixiJS preview (see TextComposer's preview cycle) renders into,
-   clipped to exactly these bounds via a Pixi mask so nothing ever spills
-   past this box's edges. */
-.mzj-text-effect-preview {
-  display: block;
-  width: 78px;
-  height: 44px;
-  border-radius: 10px;
-  border: 1.5px solid rgba(255, 255, 255, 0.22);
-  background: rgba(8, 9, 16, 0.55);
-}
-
-/* The header bar and the text control box (border, resize handles, rotate
-   handle) are no longer DOM/CSS at all — both are real Pixi
-   Graphics/Container objects on app.stage. See HeaderBar.ts and
-   TextComposer.ts's own class doc comments for the current implementation. */
+/* The header bar, the text control box (border, resize handles, rotate
+   handle), and the text composer's own topbar/effects-bar (back button,
+   input background pill, all 7 effect frames) are no longer DOM/CSS at
+   all — all genuine Pixi Graphics/Container objects on app.stage. The one
+   remaining DOM element in TextComposer.ts is the bare `<input>` itself
+   (real keyboard text entry has no Pixi equivalent), styled entirely via
+   inline `style.*` properties set from TS, not a stylesheet rule. See
+   HeaderBar.ts and TextComposer.ts's own class doc comments. */
