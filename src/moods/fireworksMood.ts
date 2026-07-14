@@ -221,11 +221,16 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
 
   // Free Tap fires exactly where the player touches; Mortar Field snaps the
   // launch x to whichever tube is closest, for a more "grounded" show. Tap-
-  // to-fire is live the instant the mood opens — no separate "start" gate.
-  // While sequential planning is active, PlanningMode's own listeners (see
-  // above) handle every tap instead — this handler steps aside entirely.
+  // to-fire is live the instant the mood opens — no separate "start" gate —
+  // right up until "ابدأ العرض" actually fires the planned show: from then
+  // on every other input is locked (see beginShow()/endShow()) so nothing
+  // interferes with the planned sequence; the exit button is the one
+  // deliberate exception, wired on its own listener with its own
+  // stopPropagation, independent of this handler entirely. While sequential
+  // planning is active, PlanningMode's own listeners (see above) handle
+  // every tap instead — this handler steps aside entirely.
   app.stage.on('pointerdown', (event) => {
-    if (planningMode.isActive) return;
+    if (showStarted || planningMode.isActive) return;
     const { x, y } = event.global;
     const launchX = inputMode === 'mortar' ? mortarField.getNearestX(x) : x;
     fireAt(launchX, y);

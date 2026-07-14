@@ -295,9 +295,13 @@ export class PlanningScreen {
   }
 
   show(mode: LaunchMode): void {
-    this.setMode(mode);
+    this.applyMode(mode);
     this.iconColumn.container.visible = true;
+    this.reshowHint();
+  }
 
+  /** Restarts the hint's visible-then-auto-fade cycle — shared by show() (mood boot / endShow() restore) and setMode() (the player just picked a launch mode and needs guiding to the next step). */
+  private reshowHint(): void {
     this.hintAutoHidden = false;
     this.applyHintVisibility(true);
     window.clearTimeout(this.hintTimer);
@@ -344,13 +348,22 @@ export class PlanningScreen {
     return this.textComposer.consumeForReveal();
   }
 
-  /** Lets the player switch plans — the screen itself is always visible, so this is the only way mode ever changes. */
-  private setMode(mode: LaunchMode): void {
+  /** Icon-highlight + shapesPanel active-set sync only — no panel-opening/hint side effects, safe to call from show()'s mood-boot/endShow-restore path where popping الأشكال open unprompted would be jarring. */
+  private applyMode(mode: LaunchMode): void {
     this.mode = mode;
     this.iconColumn.setActive('mzj-planning-mode-mass', mode === 'mass');
     this.iconColumn.setActive('mzj-planning-mode-sequential', mode === 'sequential');
     this.shapesPanel.setActive(this.computeActiveShapeIds());
     this.deps.onModeChange(mode);
+  }
+
+  /** The player just tapped "إطلاق جماعي"/"إطلاق متتابع" — switches the plan AND immediately opens الأشكال (closing every other panel first, same as toggleShapesPanel()) with the hint re-surfaced, so the very next thing on screen is "now pick a shape". */
+  private setMode(mode: LaunchMode): void {
+    this.applyMode(mode);
+    this.closeAllSubpanels();
+    this.colorPicker.setOpen(false);
+    this.shapesPanel.setOpen(true);
+    this.reshowHint();
   }
 
   private layoutHint(): void {
