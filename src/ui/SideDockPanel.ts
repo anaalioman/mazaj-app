@@ -56,6 +56,13 @@ export abstract class SideDockPanel {
     this.panelBg.eventMode = 'static';
     // Absorbs every tap anywhere on the panel (gaps included) so it never
     // leaks through to the stage's own tap-to-fire handler underneath.
+    // `pointerdown` must be stopped too, not just `pointertap` — the raw
+    // `pointerdown` bubbles to `app.stage` and fires the rocket listener
+    // well before `pointertap` is even recognized on release (see
+    // HeaderBar.wireTap()'s doc comment for the original discovery of this;
+    // confirmed leaking here too via an actual reproduced rocket burst
+    // before this fix).
+    this.panelBg.on('pointerdown', (event) => event.stopPropagation());
     this.panelBg.on('pointertap', (event) => event.stopPropagation());
     this.container.addChild(this.panelBg);
 

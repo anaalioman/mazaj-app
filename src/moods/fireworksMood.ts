@@ -10,7 +10,6 @@ import { RecordingManager, downloadBlob } from '../recording/RecordingManager';
 import { BackgroundLayer } from '../background';
 import { HeaderBar } from '../ui/HeaderBar';
 import { IdleFadeController } from '../ui/IdleFade';
-import { attachTactileFeedback } from '../ui/tactile';
 import { withTimeout } from '../utils/withTimeout';
 import { PlanningMode } from '../ui/PlanningMode';
 import { PlanningScreen, type InputMode } from '../ui/PlanningScreen';
@@ -322,6 +321,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // `fireworks`/`background`.
   const planningScreen = new PlanningScreen({
     app,
+    audio,
     fireworks,
     background,
     onModeChange: (mode) => planningMode.setActive(mode === 'sequential'),
@@ -334,12 +334,15 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   });
 
   // The header is fully visible the instant the mood opens — see the module
-  // doc-comment above for why there's no setup gate anymore. It's a Pixi
-  // Container now (see HeaderBar.ts), not a DOM element — attachTactileFeedback
-  // stays DOM-only for planningScreen.root; the header builds its own
-  // equivalent flash+click feedback directly (see HeaderBar.wireTap()).
+  // doc-comment above for why there's no setup gate anymore. Every
+  // interactive Pixi control in this app now plays its own flash+click
+  // feedback directly (see HeaderBar.wireTap(), PlanningIconColumn's tap
+  // handler, etc.) — the old DOM-delegated attachTactileFeedback() has been
+  // removed entirely, since nothing DOM remains in planningScreen.root for
+  // its `button`/`.mzj-tab`/`[data-tactile]` selector to ever match anymore
+  // (it had gone silently dead once PlanningIconColumn/PlanningSubpanels/
+  // TextComposer all moved off DOM, and was found + fixed in this pass).
   const idleFade = new IdleFadeController([header.container]);
-  attachTactileFeedback(planningScreen.root, audio);
 
   handle = {
     show(): void {

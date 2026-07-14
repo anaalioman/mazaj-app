@@ -3,44 +3,6 @@
   flex-shrink: 0;
 }
 
-/* Custom file picker: a native <input type="file">'s internal button+label
-   is drawn by the browser/WebView itself, not by our CSS, so styling the
-   host element directly renders inconsistently (even overlapping) across
-   Android WebView versions. We hide the native control and drive this plain
-   label from its `change` event instead — see src/ui/filePicker.ts. */
-.mzj-file-picker {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.mzj-file-picker-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: start;
-}
-
-.mzj-file-picker-btn {
-  flex-shrink: 0;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 600;
-}
-
 .mzj-file-input-sr {
   position: absolute;
   width: 1px;
@@ -51,18 +13,6 @@
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
-}
-
-/* ---------- Tactile feedback: cyan flash on any press ---------- */
-
-.mzj-tactile-target,
-#mzj-planning-screen button {
-  transition: box-shadow 0.15s ease, border-color 0.15s ease;
-}
-
-.mzj-flash {
-  box-shadow: 0 0 15px #06b6d4 !important;
-  border-color: #06b6d4 !important;
 }
 
 /* ---------- Upload hint toast ---------- */

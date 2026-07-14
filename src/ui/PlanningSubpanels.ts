@@ -1,6 +1,7 @@
 import { Application, Container, Graphics, Rectangle, Text, TextStyle } from 'pixi.js';
 import { BottomSheetPanel } from './BottomSheetPanel';
 import { PixiSlider } from './PixiSlider';
+import type { AudioManager } from '../audio/AudioManager';
 
 export interface SliderSpec {
   label: string;
@@ -48,8 +49,11 @@ const CHOICE_GAP = 8;
 
 /** "فيديو خلفية حي"'s picker: two side-by-side choice buttons, the Pixi equivalent of the old `.mzj-planning-choice-btn` pair. */
 export class CameraPickerPanel extends BottomSheetPanel {
-  constructor(app: Application, onUpload: () => void, onLive: () => void) {
+  private readonly audio: AudioManager;
+
+  constructor(app: Application, audio: AudioManager, onUpload: () => void, onLive: () => void) {
     super(app);
+    this.audio = audio;
     const origin = this.contentOrigin;
     const buttonWidth = (this.contentWidth - CHOICE_GAP) / 2;
 
@@ -84,6 +88,7 @@ export class CameraPickerPanel extends BottomSheetPanel {
     root.on('pointerdown', (event) => event.stopPropagation());
     root.on('pointertap', (event) => {
       event.stopPropagation();
+      this.audio.playUiClick();
       onTap();
     });
     return root;

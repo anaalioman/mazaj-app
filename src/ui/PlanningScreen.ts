@@ -1,6 +1,7 @@
 import type { Application } from 'pixi.js';
 import { type BurstType, type FireworksSystem } from '../fireworks/FireworksSystem';
 import type { BackgroundLayer } from '../background';
+import type { AudioManager } from '../audio/AudioManager';
 import { UploadHint } from './UploadHint';
 import { TextComposer, type TextRevealConfig } from './TextComposer';
 import { ColorPickerPanel } from './ColorPickerPanel';
@@ -16,6 +17,7 @@ export type InputMode = 'tap' | 'mortar';
 
 export interface PlanningScreenDeps {
   app: Application;
+  audio: AudioManager;
   fireworks: FireworksSystem;
   background: BackgroundLayer;
   /** Lets PlanningMode arm/disarm itself in sync — active only during 'sequential'. */
@@ -121,7 +123,7 @@ export class PlanningScreen {
     // The right icon column itself is genuine Pixi (see PlanningIconColumn)
     // — must exist before ColorPickerPanel/ShapesPanel below, since their
     // own constructors call `getLeftBoundary` synchronously while docking.
-    this.iconColumn = new PlanningIconColumn(deps.app, this.buildIconRowSpecs());
+    this.iconColumn = new PlanningIconColumn(deps.app, deps.audio, this.buildIconRowSpecs());
 
     // Canvas-drawn (no HTML/CSS) glowing swatch panel — see ColorPickerPanel.
     // It docks just left of the right icon column's live on-screen edge, so
@@ -162,6 +164,7 @@ export class PlanningScreen {
     ]);
     this.cameraPanel = new CameraPickerPanel(
       deps.app,
+      deps.audio,
       () => {
         this.cameraPanel.setOpen(false);
         this.query<HTMLInputElement>('#mzj-bg-video').click();
@@ -185,6 +188,7 @@ export class PlanningScreen {
     // composer stays the sole focus — restored once the text is committed.
     this.textComposer = new TextComposer({
       app: deps.app,
+      audio: deps.audio,
       onComposingChange: (composing) => {
         this.root.classList.toggle('mzj-planning-composing', composing);
         this.iconColumn.container.visible = !composing;

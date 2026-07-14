@@ -121,6 +121,10 @@ export class ShapesPanel extends SideDockPanel {
       .fill({ color: 0xffffff, alpha: 0.001 });
     group.addChild(hitArea);
 
+    // `pointerdown` must be stopped independently of `pointertap` — see
+    // SideDockPanel's own doc comment for why (raw `pointerdown` bubbles to
+    // `app.stage`'s rocket-fire listener before `pointertap` even fires).
+    group.on('pointerdown', (event) => event.stopPropagation());
     group.on('pointertap', (event) => {
       event.stopPropagation();
       this.pick(entry);

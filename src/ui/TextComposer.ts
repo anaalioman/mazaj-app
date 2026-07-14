@@ -3,6 +3,7 @@ import { AdvancedBloomFilter, DropShadowFilter } from 'pixi-filters';
 import { iconTexture } from './svgIconTexture';
 import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
 import { TEXT_EFFECTS } from '../effects/textEffects/registry';
+import type { AudioManager } from '../audio/AudioManager';
 
 export type { TextRevealEffect };
 
@@ -18,6 +19,7 @@ export interface TextRevealConfig {
 
 export interface TextComposerDeps {
   app: Application;
+  audio: AudioManager;
   /** True while the input+effects bar OR the control box is open — lets the caller hide whatever else is on screen (e.g. the planning screen's own icon columns) so this stays the sole focus. */
   onComposingChange: (composing: boolean) => void;
 }
@@ -432,6 +434,7 @@ export class TextComposer {
       frame.root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
       frame.root.on('pointertap', (event: FederatedPointerEvent) => {
         event.stopPropagation();
+        this.deps.audio.playUiClick();
         this.effect = frame.effect;
         this.syncEffectFrames();
       });
@@ -464,6 +467,7 @@ export class TextComposer {
     this.backButton.root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
     this.backButton.root.on('pointertap', (event: FederatedPointerEvent) => {
       event.stopPropagation();
+      this.deps.audio.playUiClick();
       this.stopPreviewCycle();
       this.closeGhostInput();
       this.composerContainer.visible = false;

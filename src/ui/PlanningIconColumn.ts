@@ -2,6 +2,7 @@ import { Application, Container, Graphics, Rectangle, Sprite, Text, TextStyle, t
 import { AdvancedBloomFilter, DropShadowFilter } from 'pixi-filters';
 import { iconTexture } from './svgIconTexture';
 import type { IconName } from './icons';
+import type { AudioManager } from '../audio/AudioManager';
 
 /**
  * Geometry ported 1:1 from the old `.mzj-planning-side-right` CSS (a
@@ -71,12 +72,31 @@ interface Row {
 export class PlanningIconColumn {
   readonly container: Container;
   private readonly app: Application;
+  private readonly audio: AudioManager;
   private readonly rows = new Map<string, Row>();
+  /**
+   * Each row only claims its own 64x44 hitArea — the 14px vertical gap
+   * between adjacent rows' hit boxes (ROW_SPACING=58 vs HIT_HEIGHT=44)
+   * belonged to nobody, so a tap landing exactly between two rows fell
+   * straight through this column to `app.stage`'s tap-to-fire rocket
+   * listener. Confirmed via an actual reproduced rocket burst (three, from
+   * three gap taps) before this fix — same bug class as TextComposer's
+   * effects-bar gaps, just found later via a full-column audit. Added as
+   * the column's first child so real rows (added after) still win their
+   * own bounds; this only ever catches genuinely empty space.
+   */
+  private readonly catchAll: Graphics;
 
-  constructor(app: Application, specs: IconRowSpec[]) {
+  constructor(app: Application, audio: AudioManager, specs: IconRowSpec[]) {
     this.app = app;
+    this.audio = audio;
     this.container = new Container();
     app.stage.addChild(this.container);
+
+    this.catchAll = new Graphics();
+    this.catchAll.eventMode = 'static';
+    this.catchAll.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
+    this.container.addChild(this.catchAll);
 
     for (const spec of specs) {
       this.rows.set(spec.id, this.buildRow(spec));
@@ -181,6 +201,7 @@ export class PlanningIconColumn {
     root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
     root.on('pointertap', (event: FederatedPointerEvent) => {
       event.stopPropagation();
+      this.audio.playUiClick();
       this.flash(root);
       spec.onTap();
     });
@@ -241,5 +262,11 @@ export class PlanningIconColumn {
       const row = this.rows.get(id)!;
       row.root.position.set(centerX, firstRowCenterY + index * ROW_SPACING);
     });
+
+    const lastRowCenterY = firstRowCenterY + (ids.length - 1) * ROW_SPACING;
+    this.catchAll
+      .clear()
+      .rect(centerX - HIT_WIDTH / 2, firstRowCenterY - HIT_HEIGHT / 2, HIT_WIDTH, lastRowCenterY - firstRowCenterY + HIT_HEIGHT)
+      .fill({ color: 0x000000, alpha: 0.001 });
   }
 }
