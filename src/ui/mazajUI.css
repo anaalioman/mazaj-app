@@ -3,18 +3,6 @@
   flex-shrink: 0;
 }
 
-.mzj-file-input-sr {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 /* ---------- Upload hint toast ---------- */
 
 .mzj-upload-hint {
@@ -62,55 +50,15 @@
 
 /* ---------- Planning screen ---------- */
 
-#mzj-planning-screen {
-  position: fixed;
-  inset: 0;
-  z-index: 25;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 76px 16px 24px;
-  box-sizing: border-box;
-  pointer-events: none;
-}
-
-.mzj-planning-hint {
-  position: absolute;
-  left: 50%;
-  bottom: 96px;
-  transform: translateX(-50%);
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 15px;
-  font-weight: 600;
-  text-align: center;
-  white-space: nowrap;
-  pointer-events: none;
-  transition: opacity 0.5s ease;
-}
-
-.mzj-planning-hint-hidden {
-  opacity: 0;
-}
-
-/* The dimmer/glow/lab/camera bottom-sheet subpanels are no longer DOM/CSS
-   at all — see BottomSheetPanel.ts and PlanningSubpanels.ts (fully Pixi,
-   including the sliders themselves — see PixiSlider.ts). */
-
-/* ---------- Text composer ("T" icon) ---------- */
-
-/* While composing (input+effects bar, or the position/scale control box),
-   the planning screen's own hint steps aside — see PlanningScreen's
-   onComposingChange wiring. The icon column itself is Pixi now, hidden via
-   `iconColumn.container.visible`, not this CSS rule. */
-#mzj-planning-screen.mzj-planning-composing .mzj-planning-hint {
-  display: none;
-}
-
-/* The header bar, the text control box (border, resize handles, rotate
-   handle), and the text composer's own topbar/effects-bar (back button,
-   input background pill, all 7 effect frames) are no longer DOM/CSS at
-   all — all genuine Pixi Graphics/Container objects on app.stage. The one
-   remaining DOM element in TextComposer.ts is the bare `<input>` itself
-   (real keyboard text entry has no Pixi equivalent), styled entirely via
-   inline `style.*` properties set from TS, not a stylesheet rule. See
-   HeaderBar.ts and TextComposer.ts's own class doc comments. */
+/* PlanningScreen.ts has no DOM root at all anymore: the icon column, every
+   subpanel, the color/shapes side panels, the bottom hint text, and the
+   text composer are all genuine Pixi Graphics/Container/Text objects on
+   app.stage — see PlanningScreen.ts, PlanningIconColumn.ts,
+   BottomSheetPanel.ts, SideDockPanel.ts, TextComposer.ts. The two file
+   inputs it still creates (`#mzj-bg-image`/`#mzj-bg-video`'s successors)
+   are real DOM `<input type="file">` elements — the one remaining hard
+   constraint (see PROGRESS.md) — but styled entirely via inline `style.*`
+   properties set from TS, never a stylesheet rule; same for TextComposer's
+   own ghost keyboard-bridge `<input>`. See HeaderBar.ts and
+   TextComposer.ts's own class doc comments for the rest of this app's
+   Pixi-only architecture. */

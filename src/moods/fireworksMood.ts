@@ -338,8 +338,8 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // interactive Pixi control in this app now plays its own flash+click
   // feedback directly (see HeaderBar.wireTap(), PlanningIconColumn's tap
   // handler, etc.) — the old DOM-delegated attachTactileFeedback() has been
-  // removed entirely, since nothing DOM remains in planningScreen.root for
-  // its `button`/`.mzj-tab`/`[data-tactile]` selector to ever match anymore
+  // removed entirely, since PlanningScreen no longer has a DOM root at all
+  // for its `button`/`.mzj-tab`/`[data-tactile]` selector to ever match
   // (it had gone silently dead once PlanningIconColumn/PlanningSubpanels/
   // TextComposer all moved off DOM, and was found + fixed in this pass).
   const idleFade = new IdleFadeController([header.container]);

@@ -1,4 +1,4 @@
-import type { Application } from 'pixi.js';
+import { Text, TextStyle, type Application } from 'pixi.js';
 import { type BurstType, type FireworksSystem } from '../fireworks/FireworksSystem';
 import type { BackgroundLayer } from '../background';
 import type { AudioManager } from '../audio/AudioManager';
@@ -48,6 +48,10 @@ const SLIDERS = {
 } satisfies Record<string, SliderSpec>;
 
 const HINT_VISIBLE_MS = 2600;
+const HINT_TEXT = 'اختر الشكل وحدد موقعه';
+const HINT_BOTTOM_INSET = 96;
+/** Matches the old `.mzj-planning-hint { transition: opacity 0.5s ease }`. */
+const HINT_FADE_MS = 500;
 
 /**
  * Full-screen planning layout — a permanent part of the fireworks mood, not
@@ -90,7 +94,6 @@ const HINT_VISIBLE_MS = 2600;
  * opens the full text-composing flow — see TextComposer.
  */
 export class PlanningScreen {
-  readonly root: HTMLDivElement;
   private readonly deps: PlanningScreenDeps;
   private readonly uploadHint: UploadHint;
   private readonly textComposer: TextComposer;
@@ -101,6 +104,10 @@ export class PlanningScreen {
   private readonly glowPanel: SliderSheetPanel;
   private readonly labPanel: SliderSheetPanel;
   private readonly cameraPanel: CameraPickerPanel;
+  private readonly hintText: Text;
+  /** The two file-picker bridges — see PROGRESS.md's remaining hard constraint: only a real `<input type="file">` can raise the OS's native file/photo picker, there is no Canvas API for it. Zero stylesheet footprint (inline `style.*` only, same rigor as TextComposer's ghost keyboard bridge); unlike that bridge these stay permanently mounted (not built/destroyed per use) since they're triggered via plain `.click()` calls from Pixi row taps rather than needing to hold IME/keyboard focus. */
+  private readonly bgImageInput: HTMLInputElement;
+  private readonly bgVideoInput: HTMLInputElement;
   private mode: LaunchMode = 'mass';
   private readonly massSelection = new Set<BurstType>();
   private activeSequentialShape: BurstType | null = null;
@@ -110,15 +117,25 @@ export class PlanningScreen {
   private randomModeEnabled = false;
   private autoShowEnabled = false;
   private hintTimer: number | undefined;
+  private hintComposing = false;
+  private hintAutoHidden = true;
 
   constructor(deps: PlanningScreenDeps) {
     this.deps = deps;
 
-    this.root = document.createElement('div');
-    this.root.id = 'mzj-planning-screen';
-    this.root.className = 'mzj-hidden';
-    this.root.innerHTML = this.template();
-    document.body.appendChild(this.root);
+    this.bgImageInput = this.buildFileInput('image/*');
+    this.bgVideoInput = this.buildFileInput('video/*');
+
+    this.hintText = new Text({
+      text: HINT_TEXT,
+      style: new TextStyle({ fontFamily: 'Tajawal, system-ui, sans-serif', fontSize: 15, fontWeight: '600', fill: 0xffffff }),
+    });
+    this.hintText.anchor.set(0.5, 1);
+    this.hintText.alpha = 0;
+    this.hintText.eventMode = 'none';
+    deps.app.stage.addChild(this.hintText);
+    deps.app.renderer.on('resize', () => this.layoutHint());
+    this.layoutHint();
 
     // The right icon column itself is genuine Pixi (see PlanningIconColumn)
     // — must exist before ColorPickerPanel/ShapesPanel below, since their
@@ -167,7 +184,7 @@ export class PlanningScreen {
       deps.audio,
       () => {
         this.cameraPanel.setOpen(false);
-        this.query<HTMLInputElement>('#mzj-bg-video').click();
+        this.bgVideoInput.click();
       },
       () => {
         this.cameraPanel.setOpen(false);
@@ -190,14 +207,11 @@ export class PlanningScreen {
       app: deps.app,
       audio: deps.audio,
       onComposingChange: (composing) => {
-        this.root.classList.toggle('mzj-planning-composing', composing);
+        this.hintComposing = composing;
+        this.applyHintVisibility(false);
         this.iconColumn.container.visible = !composing;
       },
     });
-
-    for (const type of ['pointerdown', 'click', 'input', 'change'] as const) {
-      this.root.addEventListener(type, (event) => event.stopPropagation());
-    }
 
     this.wireMedia();
     this.wireRecording();
@@ -244,9 +258,9 @@ export class PlanningScreen {
         icon: 'image',
         label: 'صورة خلفية',
         // The one and only trigger for the native OS file picker — see
-        // PROGRESS.md's "hard constraints" section for why `#mzj-bg-image`
-        // must stay a real (if invisible) DOM `<input type="file">`.
-        onTap: () => this.query<HTMLInputElement>('#mzj-bg-image').click(),
+        // PROGRESS.md's remaining hard constraint for why this stays a real
+        // (if invisible) DOM `<input type="file">`.
+        onTap: () => this.bgImageInput.click(),
       },
       { id: 'mzj-planning-open-glow', icon: 'gem', label: 'توهج الألعاب النارية', onTap: () => this.toggleSubpanel('glow') },
       { id: 'mzj-planning-open-color', icon: 'droplet', label: 'لون المقذوفة', onTap: () => this.toggleColorPicker() },
@@ -260,18 +274,20 @@ export class PlanningScreen {
 
   show(mode: LaunchMode): void {
     this.setMode(mode);
-    this.root.classList.remove('mzj-hidden');
     this.iconColumn.container.visible = true;
 
-    const hint = this.root.querySelector<HTMLDivElement>('#mzj-planning-hint')!;
-    hint.classList.remove('mzj-planning-hint-hidden');
+    this.hintAutoHidden = false;
+    this.applyHintVisibility(true);
     window.clearTimeout(this.hintTimer);
-    this.hintTimer = window.setTimeout(() => hint.classList.add('mzj-planning-hint-hidden'), HINT_VISIBLE_MS);
+    this.hintTimer = window.setTimeout(() => {
+      this.hintAutoHidden = true;
+      this.applyHintVisibility(true);
+    }, HINT_VISIBLE_MS);
   }
 
   hide(): void {
-    this.root.classList.add('mzj-hidden');
     this.iconColumn.container.visible = false;
+    this.hintText.alpha = 0;
     window.clearTimeout(this.hintTimer);
     this.colorPicker.setOpen(false);
     this.shapesPanel.setOpen(false);
@@ -308,15 +324,53 @@ export class PlanningScreen {
   /** Lets the player switch plans — the screen itself is always visible, so this is the only way mode ever changes. */
   private setMode(mode: LaunchMode): void {
     this.mode = mode;
-    this.root.dataset.mode = mode;
     this.iconColumn.setActive('mzj-planning-mode-mass', mode === 'mass');
     this.iconColumn.setActive('mzj-planning-mode-sequential', mode === 'sequential');
     this.shapesPanel.setActive(this.computeActiveShapeIds());
     this.deps.onModeChange(mode);
   }
 
-  private query<T extends HTMLElement>(selector: string): T {
-    return this.root.querySelector<T>(selector)!;
+  private layoutHint(): void {
+    const screen = this.deps.app.screen;
+    this.hintText.position.set(screen.width / 2, screen.height - HINT_BOTTOM_INSET);
+  }
+
+  /** Composing snaps instantly (matches the old `display:none` rule, no transition); the auto-hide timer fades (matches the old `transition: opacity 0.5s ease`). */
+  private applyHintVisibility(animate: boolean): void {
+    const visible = !this.hintComposing && !this.hintAutoHidden;
+    if (animate) this.fadeHint(visible);
+    else this.hintText.alpha = visible ? 1 : 0;
+  }
+
+  private fadeHint(visible: boolean): void {
+    const target = visible ? 1 : 0;
+    const start = this.hintText.alpha;
+    if (start === target) return;
+    const startTime = performance.now();
+    const step = (now: number) => {
+      const t = Math.min(1, (now - startTime) / HINT_FADE_MS);
+      this.hintText.alpha = start + (target - start) * t;
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  /** The two file-picker bridges' shared build logic — see the class field's own doc comment for why this DOM node is unavoidable. Zero CSS: every property below is a direct inline `style.*` assignment, matching TextComposer's ghost-input rigor. */
+  private buildFileInput(accept: string): HTMLInputElement {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.style.position = 'fixed';
+    input.style.left = '-9999px';
+    input.style.top = '-9999px';
+    input.style.width = '1px';
+    input.style.height = '1px';
+    input.style.opacity = '0';
+    for (const type of ['pointerdown', 'click', 'change'] as const) {
+      input.addEventListener(type, (event) => event.stopPropagation());
+    }
+    document.body.appendChild(input);
+    return input;
   }
 
   /**
@@ -434,9 +488,8 @@ export class PlanningScreen {
   private wireMedia(): void {
     // "صورة خلفية"'s own tap (opening the native file picker) is wired
     // directly on its icon-column row — see buildIconRowSpecs().
-    const imageInput = this.query<HTMLInputElement>('#mzj-bg-image');
-    imageInput.addEventListener('change', () => {
-      const file = imageInput.files?.[0];
+    this.bgImageInput.addEventListener('change', () => {
+      const file = this.bgImageInput.files?.[0];
       if (!file) return;
       void this.deps.background.setImage(file).then(() => {
         this.uploadHint.show('image');
@@ -447,9 +500,8 @@ export class PlanningScreen {
     // CameraPickerPanel's "رفع فيديو"/"توثيق مباشر" choice buttons trigger
     // this same picker (see the panel's own constructor call above) — this
     // just handles what happens once the OS file dialog it opens resolves.
-    const videoInput = this.query<HTMLInputElement>('#mzj-bg-video');
-    videoInput.addEventListener('change', () => {
-      const file = videoInput.files?.[0];
+    this.bgVideoInput.addEventListener('change', () => {
+      const file = this.bgVideoInput.files?.[0];
       if (!file) return;
       void this.deps.background.setVideo(file).then(() => {
         this.liveDocumentationArmed = false;
@@ -470,14 +522,5 @@ export class PlanningScreen {
   private wireRecording(): void {
     const canRecord = typeof MediaRecorder !== 'undefined' && typeof this.deps.app.canvas.captureStream === 'function';
     if (!canRecord) this.iconColumn.setDisabled('mzj-planning-record', true);
-  }
-
-  private template(): string {
-    return `
-      <div class="mzj-planning-hint" id="mzj-planning-hint">اختر الشكل وحدد موقعه</div>
-
-      <input type="file" id="mzj-bg-image" accept="image/*" class="mzj-file-input-sr" />
-      <input type="file" id="mzj-bg-video" accept="video/*" class="mzj-file-input-sr" />
-    `;
   }
 }
