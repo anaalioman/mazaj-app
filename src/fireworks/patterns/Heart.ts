@@ -26,6 +26,15 @@ function heartCurvePoint(t: number): { x: number; y: number } {
  * lines whose silhouette, a fraction of a second after ignition, traces a
  * heart shape — computed fresh every explosion in the ticker-driven spawn
  * loop below, not a static asset.
+ *
+ * Speed deliberately stays in a *narrow* band around `baseSpeed` (matching
+ * Rose.ts's own `(0.9 + Math.random() * 0.2)`, not Peony/Kamuro/Strobe's
+ * `ctx.fillSpeed()`), which samples the *full* 0..max range to fill a
+ * sphere's interior with depth. That's correct for a circularly-symmetric
+ * bloom, but wrong for a shape whose entire identity is its outline: filling
+ * the heart's interior with particles at random, short radii just paints a
+ * formless core blob that swamps the curve's silhouette. A thin shell keeps
+ * every spark close to the actual curve, so the heart reads as a heart.
  */
 export function burstHeart(x: number, y: number, ctx: BurstContext): void {
   const burstColors = ctx.activeColor !== null ? shadesOf(ctx.activeColor, 4) : pickBurstColors(3 + Math.floor(Math.random() * 2));
@@ -38,7 +47,7 @@ export function burstHeart(x: number, y: number, ctx: BurstContext): void {
     const magnitude = Math.hypot(point.x, point.y) || 1;
     const dirX = point.x / magnitude;
     const dirY = point.y / magnitude;
-    const speed = ctx.fillSpeed(baseSpeed);
+    const speed = baseSpeed * (0.92 + Math.random() * 0.16);
     const color = burstColors[Math.floor(Math.random() * burstColors.length)];
 
     ctx.spawn({
