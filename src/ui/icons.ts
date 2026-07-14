@@ -60,10 +60,6 @@ const PATHS = {
 
 export type IconName = keyof typeof PATHS;
 
-export function icon(name: IconName, size = 20): string {
-  return `<svg class="mzj-icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PATHS[name]}</svg>`;
-}
-
 /**
  * A self-contained SVG document (own xmlns + a literal color instead of
  * `currentColor`, which only resolves via a CSS cascade the inline `icon()`

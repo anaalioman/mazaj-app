@@ -1,4 +1,4 @@
-import type { Application } from 'pixi.js';
+import type { Application, Container } from 'pixi.js';
 import { ShockwaveFilter } from 'pixi-filters';
 
 const DURATION_SECONDS = 0.5;
@@ -13,16 +13,24 @@ interface ActiveWave {
 
 /**
  * Shockwave Distortion: a light, fast-expanding ring of refraction fired
- * from each rocket's main explosion point. Applied as a stage-level filter
+ * from each rocket's main explosion point. Applied as a filter on
+ * `worldContainer` (see fireworksMood.ts's own container-tree doc comment)
  * so it visually bends the background, stars, and surrounding particles as
- * it passes over them, fading out (amplitude -> 0) as it expands outward.
+ * it passes over them, fading out (amplitude -> 0) as it expands outward —
+ * deliberately never the header/icon-column/panels sitting in the sibling
+ * `uiContainer`, matching this class's own original intent (a distortion
+ * of the *scene*, not the controls drawn on top of it). This also means
+ * the effect is visible to the secondary worldContainer-only renderer used
+ * for video recording, without any extra wiring.
  */
 export class ShockwaveManager {
   private readonly app: Application;
+  private readonly worldContainer: Container;
   private active: ActiveWave[] = [];
 
-  constructor(app: Application) {
+  constructor(app: Application, worldContainer: Container) {
     this.app = app;
+    this.worldContainer = worldContainer;
   }
 
   /** Call once per rocket's main explosion (not for secondary splits/glitter). */
@@ -58,6 +66,6 @@ export class ShockwaveManager {
   }
 
   private syncFilters(): void {
-    this.app.stage.filters = this.active.length > 0 ? this.active.map((wave) => wave.filter) : null;
+    this.worldContainer.filters = this.active.length > 0 ? this.active.map((wave) => wave.filter) : null;
   }
 }

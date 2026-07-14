@@ -1,4 +1,4 @@
-import { Application, Container, Graphics } from 'pixi.js';
+import { Application, Container, Graphics, Rectangle } from 'pixi.js';
 import { FireworksSystem } from '../fireworks/FireworksSystem';
 import { TextReveal } from '../effects/TextReveal';
 import { MortarField } from '../effects/MortarField';
@@ -75,14 +75,11 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   //     belongs here, not in worldContainer — see flashScreen() below).
   //
   // `canvas.captureStream()`-based video recording (see RecordingManager)
-  // reads raw canvas pixels below Pixi's scene graph entirely, so this
-  // split cannot exclude UI chrome from *recordings* the way it does for
-  // snapshots — recording still captures uiContainer too. Fixing that needs
-  // a second, separate WebGL surface rendering worldContainer alone (its
-  // own renderer/canvas, fed to captureStream instead of the main canvas),
-  // which is a materially different, larger change than a container split
-  // and hasn't been attempted here — flagged in PROGRESS.md as follow-up
-  // work rather than silently left unfixed.
+  // reads raw canvas pixels below Pixi's scene graph entirely, so this split
+  // alone cannot exclude UI chrome from *recordings* the way it does for
+  // snapshots — that needs its own worldContainer-only pixel source, fed to
+  // captureStream instead of the main canvas. See the `recordCanvas` block
+  // below for the (non-obvious) way that's actually done safely.
   const worldContainer = new Container();
   app.stage.addChild(worldContainer);
   // `isRenderGroup: true` — uiContainer's own subtree (header, icon column,
@@ -94,6 +91,48 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // something inside uiContainer itself actually changes.
   const uiContainer = new Container({ isRenderGroup: true });
   app.stage.addChild(uiContainer);
+
+  // --- A worldContainer-only pixel source for video recording ---
+  //
+  // `canvas.captureStream()` (RecordingManager, see startRecording() below)
+  // reads raw pixels from whatever canvas it's given, below Pixi's scene
+  // graph entirely — the worldContainer/uiContainer split above cannot
+  // exclude anything from it the way it does for takeSnapshot()'s
+  // `extract.base64({target: worldContainer})`.
+  //
+  // A second, independent `autoDetectRenderer()`/WebGL-context surface was
+  // tried first and rejected: Pixi v8's per-object GPU resource caches
+  // (geometry/texture bindings, filter render-textures) are built against
+  // whichever renderer first touches a given display object, so handing the
+  // *same* worldContainer instances to a second, separate WebGLRenderer
+  // silently produced a blank canvas — proven via a debug hook that read
+  // recordCanvas pixels directly (bypassing MediaRecorder/webm entirely): a
+  // bare, never-before-rendered Graphics rendered fine on the second
+  // renderer, but every real worldContainer child (already rendered every
+  // frame by `app.renderer`) came back solid black, with no thrown error.
+  //
+  // The fix that's actually safe is to stay on the *same* renderer/context
+  // `app.renderer` already uses for the main canvas — the exact code path
+  // `takeSnapshot()` already proved clean of UI chrome — and blit its output
+  // onto a plain 2D `recordCanvas` every frame while a recording is running
+  // (see the app.ticker callback below). `renderer.extract.canvas()` is
+  // documented as "relatively expensive" per-call, but it only ever runs
+  // while the player has explicitly started a recording, so that cost is
+  // scoped to exactly when it's needed.
+  const recordCanvas = document.createElement('canvas');
+  recordCanvas.width = app.screen.width * app.renderer.resolution;
+  recordCanvas.height = app.screen.height * app.renderer.resolution;
+  const recordCtx = recordCanvas.getContext('2d')!;
+  // A fixed viewport rect, not the default tight bounding box around
+  // worldContainer's current contents — particles/background constantly
+  // move, so an auto-fit frame would resize/shift every single extracted
+  // frame instead of producing a stable video.
+  let worldExtractFrame = new Rectangle(0, 0, app.screen.width, app.screen.height);
+  app.renderer.on('resize', () => {
+    recordCanvas.width = app.screen.width * app.renderer.resolution;
+    recordCanvas.height = app.screen.height * app.renderer.resolution;
+    worldExtractFrame = new Rectangle(0, 0, app.screen.width, app.screen.height);
+  });
 
   const background = new BackgroundLayer(app, worldContainer);
 
@@ -110,8 +149,8 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   worldContainer.addChild(mortarField.container);
   const explosionFlash = new ScreenFlash(app);
   worldContainer.addChild(explosionFlash.graphics);
-  const shockwave = new ShockwaveManager(app);
-  const screenShake = new ScreenShakeManager(app);
+  const shockwave = new ShockwaveManager(app, worldContainer);
+  const screenShake = new ScreenShakeManager(worldContainer);
 
   let inputMode: InputMode = 'tap';
 
@@ -132,7 +171,10 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
 
   const textReveal = new TextReveal(app);
   worldContainer.addChild(textReveal.container);
-  const recording = new RecordingManager(app.canvas as HTMLCanvasElement, audio.getRecordingStream());
+  // recordCanvas, not app.canvas — see this file's own "worldContainer-only
+  // pixel source" doc comment above for why the recorded stream must come
+  // from the world-only extraction instead of the main (world+UI) canvas.
+  const recording = new RecordingManager(recordCanvas, audio.getRecordingStream());
 
   /** What a tap normally does: aerial burst, or a Ground Fountain if that mode is active. */
   function fireAt(x: number, y: number): void {
@@ -194,6 +236,18 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     explosionFlash.update(ticker.deltaMS / 1000);
     shockwave.update(ticker.deltaMS / 1000);
     screenShake.update(ticker.deltaMS / 1000);
+    // Only while a recording is actually running — extracting worldContainer
+    // a second time every frame is real, avoidable GPU/CPU cost, so it stays
+    // off during ordinary play. See recordCanvas's own doc comment above.
+    if (recording.isRecording) {
+      const frame = app.renderer.extract.canvas({
+        target: worldContainer,
+        frame: worldExtractFrame,
+        resolution: app.renderer.resolution,
+      });
+      recordCtx.clearRect(0, 0, recordCanvas.width, recordCanvas.height);
+      recordCtx.drawImage(frame as unknown as CanvasImageSource, 0, 0);
+    }
   });
 
   // "ابدأ العرض" is a one-time, deliberate action (not a setup gate): it
@@ -413,12 +467,12 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
 
   handle = {
     show(): void {
-      container.classList.remove('mzj-hidden');
+      container.style.display = 'block';
       header.container.visible = true;
       app.ticker.start();
     },
     hide(): void {
-      container.classList.add('mzj-hidden');
+      container.style.display = 'none';
       header.container.visible = false;
       app.ticker.stop();
     },

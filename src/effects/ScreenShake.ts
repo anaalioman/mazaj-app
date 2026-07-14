@@ -1,4 +1,4 @@
-import type { Application } from 'pixi.js';
+import type { Container } from 'pixi.js';
 
 // Below this burst intensity nothing shakes at all — only large/dense
 // explosions (peony, rose, multi-ring, big hybrids) should punch the camera;
@@ -8,18 +8,24 @@ const MAX_OFFSET_PX = 10;
 const BASE_DURATION_SECONDS = 0.28;
 
 /**
- * A tiny, cheap camera-shake: nudges `app.stage.position` with a decaying
- * random offset for a fraction of a second, then snaps back to (0, 0).
- * O(1) per frame, no extra sprites/textures — safe on mid-range Android.
+ * A tiny, cheap camera-shake: nudges `worldContainer.position` (see
+ * fireworksMood.ts's own container-tree doc comment) with a decaying random
+ * offset for a fraction of a second, then snaps back to (0, 0). Targeting
+ * `worldContainer` instead of `app.stage` keeps the header/icon-column/
+ * panels in the sibling `uiContainer` perfectly steady during a shake (a
+ * random nudge mid-tap on a small icon is bad UX, not "juice"), and means
+ * the shake is visible to the secondary worldContainer-only renderer used
+ * for video recording. O(1) per frame, no extra sprites/textures — safe on
+ * mid-range Android.
  */
 export class ScreenShakeManager {
-  private readonly app: Application;
+  private readonly worldContainer: Container;
   private age = 0;
   private duration = 0;
   private magnitude = 0;
 
-  constructor(app: Application) {
-    this.app = app;
+  constructor(worldContainer: Container) {
+    this.worldContainer = worldContainer;
   }
 
   /** `intensity` is roughly 0-1.5 (see FireworksSystem's onExplode). */
@@ -39,15 +45,15 @@ export class ScreenShakeManager {
 
   update(deltaSeconds: number): void {
     if (this.age >= this.duration) {
-      if (this.app.stage.position.x !== 0 || this.app.stage.position.y !== 0) {
-        this.app.stage.position.set(0, 0);
+      if (this.worldContainer.position.x !== 0 || this.worldContainer.position.y !== 0) {
+        this.worldContainer.position.set(0, 0);
       }
       return;
     }
 
     this.age += deltaSeconds;
     if (this.age >= this.duration) {
-      this.app.stage.position.set(0, 0);
+      this.worldContainer.position.set(0, 0);
       return;
     }
 
@@ -55,6 +61,6 @@ export class ScreenShakeManager {
     const eased = remaining * remaining; // ease-out: sharp punch, quick settle
     const currentMagnitude = this.magnitude * eased;
     const angle = Math.random() * Math.PI * 2;
-    this.app.stage.position.set(Math.cos(angle) * currentMagnitude, Math.sin(angle) * currentMagnitude);
+    this.worldContainer.position.set(Math.cos(angle) * currentMagnitude, Math.sin(angle) * currentMagnitude);
   }
 }

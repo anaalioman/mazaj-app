@@ -13,7 +13,14 @@ body {
   font-family: 'Tajawal', system-ui, 'Segoe UI', Roboto, sans-serif;
 }
 
-#app {
+/* Document-shell mount points — every canvas-based screen (home hub,
+   fireworks mood) needs its host div sized to the full viewport and its
+   canvas rendered as a block-level box; there is no Pixi/canvas-internal
+   equivalent for `position: fixed` document layout or a `<canvas>`
+   element's own box model, so this stays real CSS regardless of how much
+   of the app's own UI is Pixi. */
+#app,
+#home-screen {
   position: fixed;
   inset: 0;
   width: 100%;
@@ -21,7 +28,8 @@ body {
   cursor: crosshair;
 }
 
-#app canvas {
+#app canvas,
+#home-screen canvas {
   display: block;
   width: 100%;
   height: 100%;

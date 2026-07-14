@@ -1,7 +1,5 @@
 import './fonts.css';
 import './style.css';
-import './ui/mazajUI.css';
-import './home/homeScreen.css';
 import { HomeScreen, type MoodId } from './home/HomeScreen';
 import type { FireworksMoodHandle } from './moods/fireworksMood';
 import { initializeMonetization } from './services';
@@ -21,11 +19,11 @@ let fireworksHandle: FireworksMoodHandle | null = null;
 let fireworksLoading: Promise<FireworksMoodHandle> | null = null;
 
 function goHome(): void {
-  homeScreenEl.classList.remove('mzj-hidden');
+  homeScreenEl.style.display = 'block';
 }
 
 async function enterFireworks(): Promise<void> {
-  homeScreenEl.classList.add('mzj-hidden');
+  homeScreenEl.style.display = 'none';
 
   if (fireworksHandle) {
     fireworksHandle.show();
@@ -43,7 +41,7 @@ async function enterFireworks(): Promise<void> {
   fireworksHandle = await fireworksLoading;
 }
 
-new HomeScreen(homeScreenEl, {
+void HomeScreen.create(homeScreenEl, {
   onSelect: (mood: MoodId) => {
     if (mood === 'fireworks') void enterFireworks();
   },
