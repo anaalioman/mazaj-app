@@ -1,4 +1,4 @@
-import { Application, Container, ParticleContainer, type Texture } from 'pixi.js';
+import { Application, Container, ParticleContainer, Rectangle, type Texture } from 'pixi.js';
 import { AdvancedBloomFilter } from 'pixi-filters';
 import { Particle, type ParticleOptions } from './Particle';
 import { Rocket } from './Rocket';
@@ -163,6 +163,21 @@ export class FireworksSystem {
     // drop it further if a real device shows an FPS hit.
     this.glowFilter = new AdvancedBloomFilter({ threshold: 0.4, blur: 6, quality: 4, bloomScale: 1.2, brightness: 1 });
     this.applyGlow();
+
+    // Pixi's own docs are explicit about why this matters: without a fixed
+    // `filterArea`, a filtered container's processing region is *recomputed
+    // from its own display-object bounds every single frame* — and `layer`'s
+    // bounds are exactly as volatile as the particles inside it, growing and
+    // shrinking continuously through every burst. A fixed rect matching the
+    // screen (their own documented example) makes the bloom filter's
+    // intermediate render target a stable size/position every frame instead
+    // — a real device screenshot showed a rectangular tonal artifact
+    // tracking the live particle bounds, consistent with exactly this
+    // per-frame-bounds-recompute behavior.
+    this.layer.filterArea = new Rectangle(0, 0, app.screen.width, app.screen.height);
+    app.renderer.on('resize', () => {
+      this.layer.filterArea = new Rectangle(0, 0, app.screen.width, app.screen.height);
+    });
 
     this.autoLaunchEnabled = options.autoLaunch ?? true;
     this.timeToNextAutoLaunch = this.randomLaunchDelay();
