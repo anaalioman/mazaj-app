@@ -1,10 +1,16 @@
+import type { Container } from 'pixi.js';
+
 const DEFAULT_IDLE_MS = 5000;
+/** Matches the old CSS `.mzj-fade-target` rule's `transition: opacity 0.18s ease` — fading back in still eases over this long; hiding is instant (the old rule's `display: none` never animated either, since CSS doesn't tween to/from `display: none`). */
+const FADE_IN_MS = 180;
 
 /**
- * Fades a set of UI roots out after a period of no pointer activity anywhere
- * on the page, and instantly brings them back on the next movement/tap.
- * CSS (see mazajUI.css) gives the fade-in a fast transition and the fade-out
- * a slower one via the `.mzj-idle` class.
+ * Fades a set of Pixi containers out after a period of no pointer activity
+ * anywhere on the page, and instantly brings them back on the next
+ * movement/tap. Hiding sets `visible = false` immediately (matching the old
+ * CSS `.mzj-idle` rule's `display: none !important` — a genuinely zero-cost,
+ * zero-hit-testable hide, not just alpha 0); showing tweens `alpha` back up
+ * over `FADE_IN_MS` via `requestAnimationFrame`.
  *
  * The idle countdown is disarmed until `arm()` (or `hideNow()`) is called.
  * Before that, targets are shown unconditionally and never auto-hide — the
@@ -13,16 +19,15 @@ const DEFAULT_IDLE_MS = 5000;
  * starts should idling be able to hide anything.
  */
 export class IdleFadeController {
-  private readonly targets: HTMLElement[];
+  private readonly targets: Container[];
   private readonly idleMs: number;
   private timer: number | undefined;
+  private fadeRaf: number | undefined;
   private armed = false;
 
-  constructor(targets: HTMLElement[], idleMs: number = DEFAULT_IDLE_MS) {
+  constructor(targets: Container[], idleMs: number = DEFAULT_IDLE_MS) {
     this.targets = targets;
     this.idleMs = idleMs;
-
-    for (const target of targets) target.classList.add('mzj-fade-target');
 
     window.addEventListener('pointermove', this.handleActivity);
     window.addEventListener('pointerdown', this.handleActivity);
@@ -58,10 +63,28 @@ export class IdleFadeController {
   }
 
   private show(): void {
-    for (const target of this.targets) target.classList.remove('mzj-idle');
+    if (this.fadeRaf !== undefined) cancelAnimationFrame(this.fadeRaf);
+    const startAlphas = this.targets.map((target) => {
+      target.visible = true;
+      return target.alpha;
+    });
+    const start = performance.now();
+
+    const tick = (now: number): void => {
+      const t = Math.min(1, (now - start) / FADE_IN_MS);
+      this.targets.forEach((target, i) => {
+        target.alpha = startAlphas[i] + (1 - startAlphas[i]) * t;
+      });
+      if (t < 1) this.fadeRaf = requestAnimationFrame(tick);
+    };
+    this.fadeRaf = requestAnimationFrame(tick);
   }
 
   private hide(): void {
-    for (const target of this.targets) target.classList.add('mzj-idle');
+    if (this.fadeRaf !== undefined) cancelAnimationFrame(this.fadeRaf);
+    for (const target of this.targets) {
+      target.visible = false;
+      target.alpha = 0;
+    }
   }
 }

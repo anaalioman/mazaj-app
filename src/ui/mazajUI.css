@@ -1,94 +1,6 @@
-/* ---------- Header bar ---------- */
-
-#mzj-header {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  box-sizing: border-box;
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 18px;
-  background: transparent;
-  pointer-events: none;
-}
-
-#mzj-header > * {
-  pointer-events: auto;
-}
-
-.mzj-header-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
 .mzj-icon {
   display: block;
   flex-shrink: 0;
-}
-
-.mzj-fps {
-  flex-shrink: 0;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: rgba(255, 255, 255, 0.55);
-  background: rgba(15, 23, 42, 0.45);
-  backdrop-filter: blur(10px) saturate(180%);
-  -webkit-backdrop-filter: blur(10px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px;
-  padding: 4px 9px;
-}
-
-.mzj-mode-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  color: #e5e7eb;
-  background: rgba(15, 23, 42, 0.45);
-  backdrop-filter: blur(10px) saturate(180%);
-  -webkit-backdrop-filter: blur(10px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 999px;
-  padding: 7px 14px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: border-color 0.15s ease, color 0.15s ease;
-}
-
-.mzj-mode-toggle:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-#mzj-header .mzj-header-left button,
-#mzj-home {
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(15, 23, 42, 0.45);
-  backdrop-filter: blur(10px) saturate(180%);
-  -webkit-backdrop-filter: blur(10px) saturate(180%);
-  color: #e5e7eb;
-  cursor: pointer;
-}
-
-#mzj-header .mzj-header-left button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 #mzj-planning-record.mzj-recording {
@@ -215,23 +127,9 @@
   border: 0;
 }
 
-/* ---------- Idle sensing fade ---------- */
-
-.mzj-fade-target {
-  opacity: 1;
-  transition: opacity 0.18s ease;
-}
-
-.mzj-fade-target.mzj-idle {
-  /* Full immersion: the UI must occupy zero footprint while a show is
-     running, not just sit at opacity:0 on top of the canvas. */
-  display: none !important;
-}
-
 /* ---------- Tactile feedback: cyan flash on any press ---------- */
 
 .mzj-tactile-target,
-#mzj-header button,
 #mzj-planning-screen button {
   transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
@@ -520,13 +418,7 @@
   background: rgba(8, 9, 16, 0.55);
 }
 
-/* The text control box (border, resize handles, rotate handle + stalk) is
-   no longer DOM/CSS at all — it's drawn as real Pixi Graphics/Container
-   objects on app.stage. See TextComposer.ts's class doc comment and
-   syncControlBoxTransform() for the current implementation. */
-
-@media (max-width: 640px) {
-  #mzj-header {
-    padding: 8px 10px;
-  }
-}
+/* The header bar and the text control box (border, resize handles, rotate
+   handle) are no longer DOM/CSS at all — both are real Pixi
+   Graphics/Container objects on app.stage. See HeaderBar.ts and
+   TextComposer.ts's own class doc comments for the current implementation. */

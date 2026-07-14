@@ -334,20 +334,22 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   });
 
   // The header is fully visible the instant the mood opens — see the module
-  // doc-comment above for why there's no setup gate anymore.
-  const idleFade = new IdleFadeController([header.root]);
-  attachTactileFeedback(header.root, audio);
+  // doc-comment above for why there's no setup gate anymore. It's a Pixi
+  // Container now (see HeaderBar.ts), not a DOM element — attachTactileFeedback
+  // stays DOM-only for planningScreen.root; the header builds its own
+  // equivalent flash+click feedback directly (see HeaderBar.wireTap()).
+  const idleFade = new IdleFadeController([header.container]);
   attachTactileFeedback(planningScreen.root, audio);
 
   handle = {
     show(): void {
       container.classList.remove('mzj-hidden');
-      header.root.classList.remove('mzj-hidden');
+      header.container.visible = true;
       app.ticker.start();
     },
     hide(): void {
       container.classList.add('mzj-hidden');
-      header.root.classList.add('mzj-hidden');
+      header.container.visible = false;
       app.ticker.stop();
     },
   };
