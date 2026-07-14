@@ -125,6 +125,7 @@ export class PlanningScreen {
   private randomModeEnabled = false;
   private autoShowEnabled = false;
   private hintTimer: number | undefined;
+  private hintFadeRaf: number | undefined;
   private hintComposing = false;
   private hintAutoHidden = true;
 
@@ -308,6 +309,7 @@ export class PlanningScreen {
 
   hide(): void {
     this.iconColumn.container.visible = false;
+    if (this.hintFadeRaf !== undefined) cancelAnimationFrame(this.hintFadeRaf);
     this.hintText.alpha = 0;
     window.clearTimeout(this.hintTimer);
     this.colorPicker.setOpen(false);
@@ -364,6 +366,7 @@ export class PlanningScreen {
   }
 
   private fadeHint(visible: boolean): void {
+    if (this.hintFadeRaf !== undefined) cancelAnimationFrame(this.hintFadeRaf);
     const target = visible ? 1 : 0;
     const start = this.hintText.alpha;
     if (start === target) return;
@@ -371,9 +374,9 @@ export class PlanningScreen {
     const step = (now: number) => {
       const t = Math.min(1, (now - startTime) / HINT_FADE_MS);
       this.hintText.alpha = start + (target - start) * t;
-      if (t < 1) requestAnimationFrame(step);
+      this.hintFadeRaf = t < 1 ? requestAnimationFrame(step) : undefined;
     };
-    requestAnimationFrame(step);
+    this.hintFadeRaf = requestAnimationFrame(step);
   }
 
   /** The two file-picker bridges' shared build logic — see the class field's own doc comment for why this DOM node is unavoidable. Zero CSS: every property below is a direct inline `style.*` assignment, matching TextComposer's ghost-input rigor. */
