@@ -31,6 +31,8 @@ export interface PlanningScreenDeps {
   onSnapshot: () => void;
   /** "مدفع" (inside ShapesPanel now, moved from the header): fires with the new mode every time the player toggles it. */
   onInputModeChange: (mode: InputMode) => void;
+  /** "العرض التلقائي" toggled on/off — lets fireworksMood.ts treat continuous auto-launching as a third "launch screen" alongside متتابع/جماعي, showing the exit button for it too (see disableAutoShow()). */
+  onAutoShowChange: (enabled: boolean) => void;
 }
 
 interface SliderSpec {
@@ -491,10 +493,19 @@ export class PlanningScreen {
   }
 
   private toggleAutoShow(): void {
-    const enabled = !this.autoShowEnabled;
+    this.setAutoShow(!this.autoShowEnabled);
+  }
+
+  private setAutoShow(enabled: boolean): void {
     this.autoShowEnabled = enabled;
     this.deps.fireworks.setAutoLaunch(enabled);
     this.iconColumn.setActive('mzj-planning-auto-show', enabled);
+    this.deps.onAutoShowChange(enabled);
+  }
+
+  /** External off-switch for "العرض التلقائي" — the exit button (see fireworksMood.ts's endShow()) must be able to fully stop it too, not just the icon-column toggle: it now governs every launch screen (متتابع/جماعي/عشوائي), not only the planned-show flow. A no-op if it's already off. */
+  disableAutoShow(): void {
+    if (this.autoShowEnabled) this.setAutoShow(false);
   }
 
   /**

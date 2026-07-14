@@ -65,6 +65,10 @@ export class PlanningMode {
   readonly layer: Container;
   private pins: Pin[] = [];
   private active = false;
+  // launch()'s staggered per-pin setTimeout ids — tracked so a show that's
+  // exited mid-sequence (see cancelPending()) can't keep popping rockets
+  // after the player has already left it.
+  private pendingLaunchTimers: number[] = [];
 
   private pressTimer: number | undefined;
   private pressTargetIndex: number | null = null;
@@ -150,6 +154,9 @@ export class PlanningMode {
     }
     const pins = [...this.pins];
     this.clear();
+    // Any timers from a previous launch() have either already fired or were
+    // already cancelled by then — safe to drop before scheduling this one's.
+    this.pendingLaunchTimers = [];
     const fullHeight = this.app.screen.height;
 
     let remaining = pins.length;
@@ -161,11 +168,24 @@ export class PlanningMode {
       : undefined;
 
     pins.forEach((pin, i) => {
-      window.setTimeout(
+      const timer = window.setTimeout(
         () => this.onLaunchPin(pin.x, this.rescaleY(pin, fullHeight), pin.type, markOneDone),
         i * SEQUENTIAL_DELAY_MS,
       );
+      this.pendingLaunchTimers.push(timer);
     });
+  }
+
+  /**
+   * Cancels every not-yet-fired staggered launch from the most recent
+   * launch() call — the real fix for a genuine leak a field test caught:
+   * pressing exit mid-sequence used to leave those `setTimeout`s running,
+   * so rockets kept firing on the idle/planning screen well after the
+   * player had already left it. Wired into fireworksMood.ts's endShow().
+   */
+  cancelPending(): void {
+    for (const timer of this.pendingLaunchTimers) window.clearTimeout(timer);
+    this.pendingLaunchTimers = [];
   }
 
   /** Maps a pin's y from the reachable strip it was placed in (proportionally) up to the full screen height in effect now. */

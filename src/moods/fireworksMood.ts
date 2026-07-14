@@ -265,6 +265,10 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // control, so a second reveal has a clean slate to play into.
   const FALLBACK_GREETING = 'مبروك';
   let showStarted = false;
+  // Mirrors PlanningScreen's own "العرض التلقائي" state — the exit button
+  // must stay visible for this continuous-launch screen too, not just the
+  // planned-show flow (see updateExitButtonVisibility() below).
+  let autoShowActive = false;
 
   // Neither mode icon in the planning screen fires anything itself — this is
   // the one and only trigger, per the confirmed spec: mass launches every
@@ -343,7 +347,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     // behaviour (IdleFadeController); the exit button below is the
     // deliberate, always-visible way back to the planning/idle state itself.
     idleFade.hideNow();
-    exitButton.visible = true;
+    updateExitButtonVisibility();
   }
 
   /**
@@ -351,17 +355,27 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
    * below calls this directly on tap. Everything happens synchronously, in
    * the same frame: no setTimeout, no fade-then-cleanup-later, nothing left
    * to race. Mirrors beginShow()'s setup in reverse, so a player can start
-   * another show immediately after.
+   * another show immediately after. Also the one control that governs every
+   * launch screen (متتابع/جماعي/عشوائي, not just the planned-show flow) —
+   * see updateExitButtonVisibility()'s own doc comment.
    */
   function endShow(): void {
     fireworks.clearActive();
+    // A sequential show's staggered per-pin setTimeouts (see PlanningMode's
+    // own doc comment) keep running past this point otherwise — a real leak
+    // a field test caught: rockets kept firing on the idle screen after the
+    // player had already exited.
+    planningMode.cancelPending();
     if (recording.isRecording) void stopRecording();
     textReveal.clear();
     header.resetStartShowButton();
     idleFade.disarmAndShow();
     planningScreen.show(planningScreen.getMode());
-    exitButton.visible = false;
+    // Exit is the one control governing every launch screen now, not just
+    // the planned-show flow — pressing it stops عشوائي too.
+    planningScreen.disableAutoShow();
     showStarted = false;
+    updateExitButtonVisibility();
   }
 
   // --- Camera-style flash + snapshot/recording ---
@@ -481,6 +495,13 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     onInputModeChange: (mode) => {
       inputMode = mode;
     },
+    // "العرض التلقائي" is a third continuous-launch screen, alongside
+    // متتابع/جماعي — the exit button (below) governs it too now, not just
+    // the planned-show flow.
+    onAutoShowChange: (enabled) => {
+      autoShowActive = enabled;
+      updateExitButtonVisibility();
+    },
   });
 
   // The header is fully visible the instant the mood opens — see the module
@@ -563,6 +584,18 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     audio.playUiClick();
     endShow();
   });
+
+  /**
+   * Visible whenever *any* continuous-launch screen is active — the planned
+   * show (متتابع/جماعي via "ابدأ العرض", full immersion, UI hidden) or
+   * "العرض التلقائي" (continuous random launching, setup screen stays
+   * visible/usable while it runs). Different states, same need: a single,
+   * reliable, always-in-the-same-place way back to a fully idle screen
+   * instead of hunting for whichever toggle started it.
+   */
+  function updateExitButtonVisibility(): void {
+    exitButton.visible = showStarted || autoShowActive;
+  }
 
   handle = {
     show(): void {
