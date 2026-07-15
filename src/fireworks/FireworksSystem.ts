@@ -306,6 +306,36 @@ export class FireworksSystem {
     this.activeColor = hex;
   }
 
+  /**
+   * A small, decorative sparkle burst at an arbitrary point — no rocket, no
+   * shell/burst-pattern selection, not tracked by any onComplete batch.
+   * Reuses the exact same Particle/pooling machinery as every real burst
+   * (spawnParticle/addParticle), just with a smaller/shorter-lived spawn
+   * loop. Used by CharacterReveal.ts for the "a letter has just settled
+   * into its final position" moment.
+   */
+  spawnSettleSparkle(x: number, y: number, color?: number): void {
+    const texture = getParticleTexture(this.app);
+    const burstColor = color ?? this.activeColor ?? randomColor(randomPalette());
+    const count = 16;
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
+      const speed = (1.4 + Math.random() * 1.2) * this.settings.explosionScale;
+      const particle = this.spawnParticle(texture, {
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        color: burstColor,
+        size: (5 + Math.random() * 3) * this.glowSizeBoost(),
+        life: (40 + Math.random() * 20) * this.settings.lifespanScale,
+        gravity: 0.08 * this.settings.gravityScale,
+        drag: 0.985,
+      });
+      this.addParticle(particle);
+    }
+  }
+
   /** Live-tunable physics/visuals; every subsequent burst reads the merged values. */
   updateSettings(partial: Partial<BurstSettings>): void {
     Object.assign(this.settings, partial);
