@@ -1,30 +1,17 @@
 import { Capacitor } from '@capacitor/core';
-import { Media } from '@capacitor-community/media';
+import { GalleryStore } from './GalleryStorePlugin';
 
-// A dedicated album keeps every exported shot together in the device's own
-// gallery app instead of scattering into a generic "Downloads"/"Pictures"
-// bucket — and critically, savePhoto() to an app-created album needs zero
-// storage permissions on Android (the plugin only requests broader access
-// when `androidGalleryMode` is turned on in capacitor.config.ts, which this
-// app deliberately never does — it only ever needs to *write* its own
-// shots, never read the rest of the device's photos).
-const ALBUM_NAME = 'مزاج';
+// Writes directly into the public Pictures/مزاج MediaStore album via a
+// small custom native plugin (see GalleryStorePlugin.java) — a real system
+// gallery location that survives the app being uninstalled, unlike
+// @capacitor-community/media's fixed Android/media/<package>/ path (an
+// app-scoped directory the system wipes on uninstall same as private
+// storage). No storage permission is requested on Android 10+ (scoped
+// storage lets any app insert its own new MediaStore content for free);
+// only this app's minSdkVersion floor (24-28) needs one, handled inside the
+// native plugin itself.
 
-let albumIdentifierPromise: Promise<string> | null = null;
-
-async function getOrCreateAlbum(): Promise<string> {
-  const { albums } = await Media.getAlbums();
-  const existing = albums.find((album) => album.name === ALBUM_NAME);
-  if (existing) return existing.identifier;
-
-  await Media.createAlbum({ name: ALBUM_NAME });
-  const { albums: refreshed } = await Media.getAlbums();
-  const created = refreshed.find((album) => album.name === ALBUM_NAME);
-  if (!created) throw new Error(`تعذّر إنشاء ألبوم "${ALBUM_NAME}"`);
-  return created.identifier;
-}
-
-/** True only inside the real Android/iOS app — savePhoto() has no web implementation, see saveSnapshotToGallery()'s own doc comment for the browser fallback this gates. */
+/** True only inside the real Android/iOS app — GalleryStore has no web implementation, see saveSnapshotToGallery()'s own doc comment for the browser fallback this gates. */
 export function canSaveToGallery(): boolean {
   return Capacitor.isNativePlatform();
 }
@@ -35,19 +22,9 @@ export function canSaveToGallery(): boolean {
  * prompt, no file-picker, no "Downloads" folder detour. Only call this
  * behind `canSaveToGallery()`; the underlying plugin has no web
  * implementation at all (fireworksMood.ts's takeSnapshot() falls back to
- * the ordinary `<a download>` browser pattern there instead, since a
- * plain web page has no OS gallery to write into in the first place).
+ * the ordinary `<a download>` browser pattern there instead, since a plain
+ * web page has no OS gallery to write into in the first place).
  */
 export async function saveSnapshotToGallery(dataUrl: string): Promise<void> {
-  albumIdentifierPromise ??= getOrCreateAlbum();
-  try {
-    const albumIdentifier = await albumIdentifierPromise;
-    await Media.savePhoto({ path: dataUrl, albumIdentifier, fileName: `mazaj-${Date.now()}` });
-  } catch (error) {
-    // Don't let one failed attempt (e.g. a transient permission hiccup)
-    // permanently wedge every future snapshot on an already-rejected
-    // promise — the next tap gets a clean retry instead.
-    albumIdentifierPromise = null;
-    throw error;
-  }
+  await GalleryStore.savePhoto({ dataUrl, fileName: `mazaj-${Date.now()}` });
 }

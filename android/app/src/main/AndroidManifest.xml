@@ -44,4 +44,9 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Only needed on Android 9 and older (pre-scoped-storage). On Android
+         10+ inserting a brand-new MediaStore item needs no permission at
+         all, so this is capped at API 28 rather than requested broadly. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 </manifest>
