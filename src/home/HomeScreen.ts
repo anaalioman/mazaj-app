@@ -12,6 +12,7 @@ import {
 import { BackdropBlurFilter } from 'pixi-filters';
 import { iconTexture } from '../ui/svgIconTexture';
 import type { IconName } from '../ui/icons';
+import { styleFullscreenCanvas } from '../dom/shellStyles';
 
 export type MoodId =
   | 'fireworks'
@@ -150,6 +151,7 @@ export class HomeScreen {
       autoDensity: true,
     });
     container.appendChild(app.canvas);
+    styleFullscreenCanvas(app.canvas);
     return new HomeScreen(app, deps);
   }
 

@@ -1226,3 +1226,76 @@ foreignObject" — أي هي بديل لعرض نص منسّق (مثل `Text`/`B
 الفعلية وتركيب IME العربي، وهذا هو بالضبط الدور الذي يؤديه جسر النص المخفي
 حاليًا. الموقف يبقى كما هو: هذان الجسران (منتقي الملفات، ومُركِّب IME) ليسا
 قابلين للحذف دون فقدان وظيفتين فعليتين بالكامل.
+
+## جولة جديدة — تطهير شامل: صفر ملفات CSS + دليل حاسم على DOMContainer/@pixi/ui
+**تعديل كود حقيقي وكامل هذه المرة على النقطتين.**
+
+**١. صفر CSS — منفَّذ فعليًا، لا وعدًا**: حذفت `src/style.css` و`src/fonts.css`
+نهائيًا من المشروع. لم يعد فيه أي ملف `.css` واحد. كل تصريح كان فيهما نُقل
+كتعيين `style.*` مباشر داخل TypeScript:
+- `src/dom/documentShell.ts` (جديد): `document.documentElement.style.colorScheme`
+  و`document.body.style.*` (margin/padding/width/height/overflow/background/fontFamily)
+  — بديل مباشر لقاعدة `:root`/`html, body` القديمة.
+- `src/dom/loadFonts.ts` (جديد): تحميل كل أوزان Tajawal الأربعة عبر
+  `FontFace` API القياسي في المتصفح (`new FontFace(...)` + `document.fonts.add()`)
+  بدل قواعد `@font-face` — نفس سلوك `font-display: swap` القديم محفوظ
+  (استدعاء بلا `await`، فلا يُعطَّل الرسم الأول بانتظار تحميل الخط).
+- `src/dom/shellStyles.ts` (جديد): `styleFixedFullscreenHost()` و
+  `styleFullscreenCanvas()` — بديل مباشر لقاعدتَي `#app, #home-screen` و
+  `#app canvas, #home-screen canvas` — مطبَّقتان الآن في `main.ts` (لـ
+  `#home-screen`)، و`fireworksMood.ts` (لـ `#app` وcanvas اللعبة)، و
+  `HomeScreen.ts` (لـ canvas الشاشة الرئيسية).
+
+**تحقق فعلي بعد الحذف** (`npx tsc --noEmit` نظيف، `npm run build` ينجح
+وملف الـ CSS الوحيد في مخرجات `dist/` اختفى تمامًا من قائمة الحزم)، ثم
+Playwright حي على الصفحة يفحص DOM مباشرة:
+```
+styleSheets: 0, linkTags(stylesheet): 0, styleTags: 0
+bodyFont: "Tajawal, system-ui, ..."   ← الخط حُمِّل وطُبِّق صح
+fontsReady: "loaded"، كل الأوزان الأربعة محمَّلة
+homeScreenPosition: "fixed"           ← البديل الخطي يعمل صح
+canvas: display=block, width/height=100%
+errors: []
+```
+ولقطتا شاشة (الشاشة الرئيسية، وشاشة الألعاب النارية) تطابقان الشكل السابق
+تمامًا بصريًا — صفر انحدار من نقل CSS إلى TypeScript.
+
+**٢. `DOMContainer` و`@pixi/ui`Input — دليل حاسم، وليس عذرًا**: تحققتَ من
+وجود `DOMContainer` في Pixi v8 فعلًا (قرأت `DOMContainer.d.ts` مباشرة)،
+لكن توثيقها الرسمي يصف وظيفتها بدقة: "DOMContainer is especially useful
+for rendering standard DOM elements that handle user input, such as
+`<input>` or `<textarea>`... embed them through this container for
+native browser text handling" — أي هي أداة **لموضعة عنصر DOM حقيقي** ضمن
+نظام إحداثيات Pixi (تُترجم `container.position` إلى
+`element.style.transform` عبر `DOMPipe.js` الذي قرأته مباشرة)، وليست
+بديلاً عن وجود العنصر نفسه — العنصر الحقيقي (`<input>`/`<textarea>`)
+يبقى إلزاميًا بنص التوثيق ذاته.
+
+ثم تحققت من `@pixi/ui` (المكتبة الرسمية "PixiJS UI" التي استشهدتَ بها)
+مباشرة من كودها المصدري الحقيقي على GitHub
+(`pixijs/ui/src/Input.ts`) — **مكوّن الإدخال النصي الرسمي فيها نفسه**:
+```js
+const input: HTMLInputElement = document.createElement('input');
+document.body.appendChild(input);
+...
+input.style.position = 'fixed';
+input.style.left = `${this.getGlobalPosition().x}px`;
+input.style.top = `${this.getGlobalPosition().y}px`;
+input.style.opacity = '0.0000001';
+...
+input.addEventListener('keydown', this.onKeyUpBinding);
+input.addEventListener('input', this.onInputBinding);
+input.addEventListener('paste', this.onPasteBinding);
+```
+هذا يعني أن **الحل الرسمي لفريق Pixi نفسه** لمشكلة الإدخال النصي هو **بالضبط**
+نفس معمارية هذا المشروع: عنصر `<input>` DOM حقيقي مخفي (بالشفافية بدل
+`-9999px`، فرق شكلي لا جوهري)، مُلحَق بـ`document.body`، تُطبَّق عليه
+أنماط `style.*` مباشرة (لا CSS)، وتُربط به مستمعات لوحة مفاتيح/IME/لصق
+حقيقية — لأن هذا هو المسار الوحيد فعليًا للحصول على معالجة نظام تشغيل
+حقيقية للوحة المفاتيح والـ IME والتصحيح التلقائي. هذا دليل حاسم من
+المصدر الذي استشهدتَ به أنت تحديدًا، لا افتراض مني.
+
+**الخلاصة**: جسرا الـ DOM (منتقي الملفات، ومُركِّب IME) يبقيان — ليس
+تعنّتًا، بل لأن مكتبة Pixi الرسمية للـ UI تستخدم نفس التقنية بالضبط.
+لكن التطهير الذي طلبتَه من ملفات CSS إلى TypeScript **مُنفَّذ بالكامل
+وفعليًا** الآن — صفر ملفات `.css` في المشروع.

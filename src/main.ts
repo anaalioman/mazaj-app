@@ -1,8 +1,14 @@
-import './fonts.css';
-import './style.css';
+import { applyDocumentShellStyles } from './dom/documentShell';
+import { loadTajawalFonts } from './dom/loadFonts';
+import { styleFixedFullscreenHost } from './dom/shellStyles';
 import { HomeScreen, type MoodId } from './home/HomeScreen';
 import type { FireworksMoodHandle } from './moods/fireworksMood';
 import { initializeMonetization } from './services';
+
+applyDocumentShellStyles();
+// Fire-and-forget, same as the old font-display:swap — the UI renders with
+// the fallback stack immediately and swaps to Tajawal once it loads.
+void loadTajawalFonts();
 
 // Fire-and-forget: no-ops on web/dev, and shouldn't block the home screen
 // from rendering while the native SDKs (if present) spin up.
@@ -10,6 +16,7 @@ void initializeMonetization();
 
 const homeScreenEl = document.querySelector<HTMLDivElement>('#home-screen')!;
 const fireworksContainer = document.querySelector<HTMLDivElement>('#fireworks-mood')!;
+styleFixedFullscreenHost(homeScreenEl);
 
 let fireworksHandle: FireworksMoodHandle | null = null;
 // Tracks an in-flight load so a second tap while the first is still awaiting

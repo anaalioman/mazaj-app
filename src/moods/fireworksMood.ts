@@ -16,6 +16,7 @@ import { withTimeout } from '../utils/withTimeout';
 import { PlanningMode } from '../ui/PlanningMode';
 import { PlanningScreen, type InputMode } from '../ui/PlanningScreen';
 import { canSaveToGallery, saveSnapshotToGallery } from '../media/GallerySaver';
+import { styleFixedFullscreenHost, styleFullscreenCanvas } from '../dom/shellStyles';
 
 export interface FireworksMoodHandle {
   show(): void;
@@ -40,6 +41,7 @@ const ROYAL_BLACK = '#040406';
  */
 export async function startFireworksMood(container: HTMLElement, onBackToHome: () => void): Promise<FireworksMoodHandle> {
   const appContainer = container.querySelector<HTMLDivElement>('#app')!;
+  styleFixedFullscreenHost(appContainer);
 
   const app = new Application();
 
@@ -57,6 +59,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   });
 
   appContainer.appendChild(app.canvas);
+  styleFullscreenCanvas(app.canvas);
 
   // --- Container tree: worldContainer (captured content) vs. uiContainer (chrome) ---
   //
