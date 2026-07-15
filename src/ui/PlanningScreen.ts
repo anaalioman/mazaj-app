@@ -27,8 +27,6 @@ export interface PlanningScreenDeps {
   onModeChange: (mode: LaunchMode) => void;
   /** "تسجيل فيديو": starts/stops recording the show's output (distinct from "فيديو خلفية حي" right above it, which picks the *input* background media, not the output). */
   onToggleRecording: () => void;
-  /** "لقطة": captures a single high-resolution still of the current frame. */
-  onSnapshot: () => void;
   /** "مدفع" (inside ShapesPanel now, moved from the header): fires with the new mode every time the player toggles it. */
   onInputModeChange: (mode: InputMode) => void;
   /** "العرض التلقائي" toggled on/off — lets fireworksMood.ts treat continuous auto-launching as a third "launch screen" alongside متتابع/جماعي, showing the exit button for it too (see disableAutoShow()). */
@@ -278,13 +276,13 @@ export class PlanningScreen {
       { id: 'mzj-planning-open-shapes', icon: 'shapes', label: 'الأشكال', onTap: () => this.toggleShapesPanel() },
       { id: 'mzj-planning-open-camera', icon: 'camera', label: 'فيديو خلفية حي', onTap: () => this.toggleSubpanel('camera') },
       { id: 'mzj-planning-record', icon: 'recordDot', label: 'تسجيل فيديو', onTap: () => this.deps.onToggleRecording() },
-      // A distinct "aperture" glyph, deliberately different from the
-      // "camera"-bodied "فيديو خلفية حي" row above — the two used to share
-      // one icon, which is a plausible reason a real-device tap on one can
-      // land on the other. Its own camera-shutter sound plays inside
-      // takeSnapshot() itself — see IconRowSpec.skipDefaultClickSound's own
-      // doc comment for why.
-      { id: 'mzj-planning-snapshot', icon: 'aperture', label: 'لقطة', onTap: () => this.deps.onSnapshot(), skipDefaultClickSound: true },
+      // No "لقطة" row here anymore — it used to sit right next to
+      // "صورة خلفية" and share its icon with "فيديو خلفية حي" above, a real
+      // mis-tap risk on a real device (a tap meant for the snapshot could
+      // land on the native file/photo picker instead). The floating red
+      // shutter button (fireworksMood.ts, visible only during a running
+      // show) is now the one and only way to snapshot — no adjacent control
+      // it can be confused with.
       {
         id: 'mzj-planning-bg-image',
         icon: 'image',

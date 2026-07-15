@@ -728,7 +728,6 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
       updateExitButtonVisibility();
     },
     onToggleRecording: () => void toggleRecording(),
-    onSnapshot: () => void takeSnapshot(),
     // "مدفع" moved from the header into ShapesPanel — see its own doc-comment.
     onInputModeChange: (mode) => {
       inputMode = mode;

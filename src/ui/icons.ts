@@ -14,11 +14,6 @@ const PATHS = {
   volumeX: '<path d="M4 9.2v5.6h3.6l4.6 3.7V5.5L7.6 9.2H4Z"/><path d="M15.5 9.3l4.8 5.4M20.3 9.3l-4.8 5.4"/>',
   camera:
     '<path d="M4 8.2h2.3l1.2-1.9h8.4l1.2 1.9H20a1 1 0 0 1 1 1V18a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.2a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13.6" r="3.1"/>',
-  // A camera-aperture ring (six angled blades around the center) — used only
-  // for "لقطة" so it never shares a glyph with the "camera"-bodied "فيديو
-  // خلفية حي" row right above it in the same icon column.
-  aperture:
-    '<circle cx="12" cy="12" r="9"/><path d="M12 3v5.2M19.8 7.5l-4.5 2.6M19.8 16.5l-4.5-2.6M12 21v-5.2M4.2 16.5l4.5-2.6M4.2 7.5l4.5 2.6"/>',
   recordDot: '<circle cx="12" cy="12" r="6.8" fill="currentColor" stroke="none"/>',
   squareStop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor" stroke="none"/>',
   shuffle:

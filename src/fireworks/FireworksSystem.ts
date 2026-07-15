@@ -1,4 +1,4 @@
-import { Application, Container, ParticleContainer, Rectangle, type Texture } from 'pixi.js';
+import { Application, ColorMatrixFilter, Container, ParticleContainer, Rectangle, type Texture } from 'pixi.js';
 import { AdvancedBloomFilter } from 'pixi-filters';
 import { Particle, type ParticleOptions } from './Particle';
 import { Rocket } from './Rocket';
@@ -71,6 +71,8 @@ export class FireworksSystem {
   /** The white-hot leading-tip particles — see `trailsContainer` above. */
   private readonly coresContainer: ParticleContainer;
   private readonly glowFilter: AdvancedBloomFilter;
+  /** Counteracts bloom's own tendency to bleed very bright, saturated bursts toward white in their hottest core — a native `pixi.js` filter (not `pixi-filters`), always active regardless of the glow slider. */
+  private readonly colorFilter: ColorMatrixFilter;
   private readonly onLaunch?: (x: number) => void;
   private readonly onExplode?: (x: number, y: number, intensity: number) => void;
 
@@ -162,6 +164,8 @@ export class FireworksSystem {
     // deliberate mid-range-Android compromise (KawaseBlur's default is 4);
     // drop it further if a real device shows an FPS hit.
     this.glowFilter = new AdvancedBloomFilter({ threshold: 0.4, blur: 6, quality: 4, bloomScale: 1.2, brightness: 1 });
+    this.colorFilter = new ColorMatrixFilter();
+    this.colorFilter.saturate(0.35, false);
     this.applyGlow();
 
     // Pixi's own docs are explicit about why this matters: without a fixed
@@ -344,7 +348,9 @@ export class FireworksSystem {
     // at the default, scaling up to a stronger halo at the slider's max.
     this.glowFilter.bloomScale = 0.9 + normalized * 1.3;
     this.glowFilter.blur = 4 + normalized * 8;
-    this.layer.filters = strength > 0.05 ? [this.glowFilter] : [];
+    // colorFilter stays applied regardless of the glow slider — it's a
+    // baseline saturation boost, not part of the glow effect itself.
+    this.layer.filters = strength > 0.05 ? [this.glowFilter, this.colorFilter] : [this.colorFilter];
   }
 
   /** Every burst pattern constructs particles through here — reuses a dead pooled instance when one's available (see `deadPool`'s own doc comment), only ever allocating a fresh `Particle` on a genuine pool miss. */
