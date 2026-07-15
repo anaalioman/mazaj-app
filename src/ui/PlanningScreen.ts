@@ -33,6 +33,8 @@ export interface PlanningScreenDeps {
   onInputModeChange: (mode: InputMode) => void;
   /** "العرض التلقائي" toggled on/off — lets fireworksMood.ts treat continuous auto-launching as a third "launch screen" alongside متتابع/جماعي, showing the exit button for it too (see disableAutoShow()). */
   onAutoShowChange: (enabled: boolean) => void;
+  /** Fires whenever the 'mass' selection changes (a shape queued/unqueued), passing the new hasMassSelection() value directly — lets fireworksMood.ts track it in a local flag instead of calling back into this class, since onModeChange (below) can run synchronously during this very constructor, before fireworksMood.ts's own `const planningScreen = new PlanningScreen(...)` has finished assigning. */
+  onMassSelectionChange: (hasSelection: boolean) => void;
 }
 
 interface SliderSpec {
@@ -276,7 +278,9 @@ export class PlanningScreen {
       { id: 'mzj-planning-open-shapes', icon: 'shapes', label: 'الأشكال', onTap: () => this.toggleShapesPanel() },
       { id: 'mzj-planning-open-camera', icon: 'camera', label: 'فيديو خلفية حي', onTap: () => this.toggleSubpanel('camera') },
       { id: 'mzj-planning-record', icon: 'recordDot', label: 'تسجيل فيديو', onTap: () => this.deps.onToggleRecording() },
-      { id: 'mzj-planning-snapshot', icon: 'camera', label: 'لقطة', onTap: () => this.deps.onSnapshot() },
+      // Its own camera-shutter sound plays inside takeSnapshot() itself — see
+      // IconRowSpec.skipDefaultClickSound's own doc comment for why.
+      { id: 'mzj-planning-snapshot', icon: 'camera', label: 'لقطة', onTap: () => this.deps.onSnapshot(), skipDefaultClickSound: true },
       {
         id: 'mzj-planning-bg-image',
         icon: 'image',
@@ -426,6 +430,32 @@ export class PlanningScreen {
       this.activeSequentialShape = type;
     }
     this.shapesPanel.setActive(this.computeActiveShapeIds());
+    // Re-surfaces the "اختر الشكل وحدد موقعه" reminder on every pick, not
+    // just the initial mode tap — same treatment setMode() gives it.
+    this.reshowHint();
+    this.deps.onMassSelectionChange(this.hasMassSelection());
+  }
+
+  /** Abandons whatever plan hasn't fired yet — the exit button calls this (via fireworksMood.ts's endShow()) when it's cancelling a pending mass selection rather than ending an already-fired show, so a forgotten queued shape can't silently carry over into a later, unrelated "ابدأ العرض" press. */
+  clearPendingSelection(): void {
+    this.massSelection.clear();
+    this.activeSequentialShape = null;
+    this.shapesPanel.setActive(this.computeActiveShapeIds());
+  }
+
+  /**
+   * True once 'mass' mode has at least one shape queued for launch-
+   * together. Sequential mode's own equivalent lock already lives in
+   * PlanningMode.isActive (armed the instant that mode is chosen, even
+   * before a shape/pin exists) — this covers the one real gap: mass mode
+   * had no lock at all, so a stray tap after queuing a shape fired an
+   * ordinary, unrelated free rocket instead of respecting the plan the
+   * player was actively building. Used by fireworksMood.ts's stage tap
+   * handler to suspend free-tap-fire until "ابدأ العرض" actually launches
+   * the queued shapes (or the plan is abandoned via the exit button).
+   */
+  hasMassSelection(): boolean {
+    return this.mode === 'mass' && this.massSelection.size > 0;
   }
 
   private handleToggleGroundFountain(): void {

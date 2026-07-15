@@ -91,6 +91,8 @@ export interface IconRowSpec {
   icon: IconName | 'T';
   label: string;
   onTap: () => void;
+  /** Opts out of the generic UI-click tick — for rows whose own onTap already plays a more specific sound (e.g. "لقطة"'s camera shutter) that a second, generic blip on top of would just muddy. */
+  skipDefaultClickSound?: boolean;
 }
 
 interface Row {
@@ -252,7 +254,7 @@ export class PlanningIconColumn {
     root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
     root.on('pointertap', (event: FederatedPointerEvent) => {
       event.stopPropagation();
-      this.audio.playUiClick();
+      if (!spec.skipDefaultClickSound) this.audio.playUiClick();
       this.flash(root);
       spec.onTap();
     });

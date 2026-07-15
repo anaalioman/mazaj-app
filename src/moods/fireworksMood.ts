@@ -222,15 +222,18 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // Free Tap fires exactly where the player touches; Mortar Field snaps the
   // launch x to whichever tube is closest, for a more "grounded" show. Tap-
   // to-fire is live the instant the mood opens — no separate "start" gate —
-  // right up until "ابدأ العرض" actually fires the planned show: from then
-  // on every other input is locked (see beginShow()/endShow()) so nothing
-  // interferes with the planned sequence; the exit button is the one
-  // deliberate exception, wired on its own listener with its own
-  // stopPropagation, independent of this handler entirely. While sequential
-  // planning is active, PlanningMode's own listeners (see above) handle
-  // every tap instead — this handler steps aside entirely.
+  // right up until either "ابدأ العرض" actually fires the planned show
+  // (showStarted) or the player has started actively building one
+  // (planningMode.isActive the moment sequential mode is chosen;
+  // planningScreen.hasMassSelection() the moment a mass shape is queued):
+  // from then on every other input is locked so a stray tap can't fire an
+  // unrelated free rocket instead of respecting the plan being built. The
+  // exit button is the one deliberate exception, wired on its own listener
+  // with its own stopPropagation, independent of this handler entirely.
+  // While sequential planning is active, PlanningMode's own listeners (see
+  // above) handle every tap instead — this handler steps aside entirely.
   app.stage.on('pointerdown', (event) => {
-    if (showStarted || planningMode.isActive) return;
+    if (showStarted || planningMode.isActive || planningScreen.hasMassSelection()) return;
     const { x, y } = event.global;
     const launchX = inputMode === 'mortar' ? mortarField.getNearestX(x) : x;
     fireAt(launchX, y);
@@ -269,6 +272,12 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // must stay visible for this continuous-launch screen too, not just the
   // planned-show flow (see updateExitButtonVisibility() below).
   let autoShowActive = false;
+  // Mirrors PlanningScreen.hasMassSelection() — tracked locally rather than
+  // queried from planningScreen directly, since onModeChange (passed into
+  // PlanningScreen's own constructor below) calls updateExitButtonVisibility()
+  // synchronously as part of that very construction, before the `const
+  // planningScreen = new PlanningScreen(...)` assignment has finished.
+  let massSelectionActive = false;
 
   // Neither mode icon in the planning screen fires anything itself — this is
   // the one and only trigger, per the confirmed spec: mass launches every
@@ -360,6 +369,10 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
    * see updateExitButtonVisibility()'s own doc comment.
    */
   function endShow(): void {
+    // A show that had actually started (fired via "ابدأ العرض") keeps its
+    // mass selection afterward, so the same plan can be repeated — only a
+    // *pending*, never-fired selection gets abandoned below.
+    const wasShowRunning = showStarted;
     fireworks.clearActive();
     // A sequential show's staggered per-pin setTimeouts (see PlanningMode's
     // own doc comment) keep running past this point otherwise — a real leak
@@ -374,6 +387,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     // Exit is the one control governing every launch screen now, not just
     // the planned-show flow — pressing it stops عشوائي too.
     planningScreen.disableAutoShow();
+    if (!wasShowRunning) planningScreen.clearPendingSelection();
     showStarted = false;
     updateExitButtonVisibility();
   }
@@ -417,11 +431,14 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
 
   async function takeSnapshot(): Promise<void> {
     flashScreen();
+    audio.playCameraShutter();
     try {
       // Targets worldContainer exclusively — see this file's own
       // container-tree doc comment. Every UI control (including the flash
       // above) lives in the sibling uiContainer and is structurally
-      // invisible to this capture.
+      // invisible to this capture. `extract.base64()` is `extract.canvas()`
+      // plus a PNG data-URI encode in one call — same pure-worldContainer
+      // capture, already saved as an actual .png file below.
       const dataUrl = await app.renderer.extract.base64({
         target: worldContainer,
         resolution: Math.min(app.renderer.resolution * 1.5, 3),
@@ -466,68 +483,28 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // until after this function has finished setting everything up.
   let handle!: FireworksMoodHandle;
 
-  const header = new HeaderBar({
-    app,
-    audio,
-    onStartShow: () => beginShow(),
-    onBackToHome: () => {
-      handle.hide();
-      onBackToHome();
-    },
-  });
-  uiContainer.addChild(header.container);
-
-  // Always visible the instant the mood boots — see PlanningScreen's own
-  // doc-comment for the full architecture. Every control that has a real,
-  // already-built function behind it is wired directly here to
-  // `fireworks`/`background`.
-  const planningScreen = new PlanningScreen({
-    app,
-    audio,
-    worldContainer,
-    uiContainer,
-    fireworks,
-    background,
-    onModeChange: (mode) => planningMode.setActive(mode === 'sequential'),
-    onToggleRecording: () => void toggleRecording(),
-    onSnapshot: () => void takeSnapshot(),
-    // "مدفع" moved from the header into ShapesPanel — see its own doc-comment.
-    onInputModeChange: (mode) => {
-      inputMode = mode;
-    },
-    // "العرض التلقائي" is a third continuous-launch screen, alongside
-    // متتابع/جماعي — the exit button (below) governs it too now, not just
-    // the planned-show flow.
-    onAutoShowChange: (enabled) => {
-      autoShowActive = enabled;
-      updateExitButtonVisibility();
-    },
-  });
-
-  // The header is fully visible the instant the mood opens — see the module
-  // doc-comment above for why there's no setup gate anymore. Every
-  // interactive Pixi control in this app now plays its own flash+click
-  // feedback directly (see HeaderBar.wireTap(), PlanningIconColumn's tap
-  // handler, etc.) — the old DOM-delegated attachTactileFeedback() has been
-  // removed entirely, since PlanningScreen no longer has a DOM root at all
-  // for its `button`/`.mzj-tab`/`[data-tactile]` selector to ever match
-  // (it had gone silently dead once PlanningIconColumn/PlanningSubpanels/
-  // TextComposer all moved off DOM, and was found + fixed in this pass).
-  const idleFade = new IdleFadeController([header.container]);
-
   // --- Exit button: the show's one deliberate, always-visible way back ---
+  //
+  // Built *before* PlanningScreen below, deliberately: PlanningScreen's own
+  // constructor calls onModeChange synchronously as part of its own setup
+  // (see its show()/applyMode()), and onModeChange calls
+  // updateExitButtonVisibility() — which reads exitButton itself. Declaring
+  // exitButton after planningScreen crashed with a real "before
+  // initialization" error the very first time sequential mode was touched,
+  // since that synchronous call landed mid-construction, before `const
+  // exitButton = ...` had even run.
   //
   // Once "ابدأ العرض" hides the header/icon column, the only thing that
   // could ever bring UI back was an incidental touch reviving the header via
   // IdleFadeController's own reveal-on-activity behaviour — not a real,
   // discoverable exit, and even then the header's "الرئيسية" button leaves
   // the whole mood rather than just ending the show. This is a dedicated
-  // control instead: visible only while a show is actually running,
-  // deliberately *not* one of idleFade's targets (unlike the header, it must
-  // never depend on activity to become visible again — see beginShow()/
-  // endShow() above for exactly when it's shown/hidden), positioned clear of
-  // the header row so the two never overlap even if the header happens to be
-  // transiently revealed at the same time.
+  // control instead: visible only while some launch state is active (see
+  // updateExitButtonVisibility() below), deliberately *not* one of
+  // idleFade's targets (unlike the header, it must never depend on activity
+  // to become visible again), positioned clear of the header row so the two
+  // never overlap even if the header happens to be transiently revealed at
+  // the same time.
   const EXIT_BUTTON_DIAMETER = 36;
   const EXIT_BUTTON_HIT_SIZE = 44;
   const EXIT_BUTTON_TOP_INSET = 76;
@@ -586,16 +563,93 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   });
 
   /**
-   * Visible whenever *any* continuous-launch screen is active — the planned
-   * show (متتابع/جماعي via "ابدأ العرض", full immersion, UI hidden) or
+   * Visible whenever *any* launch state is active — the planned show
+   * (متتابع/جماعي via "ابدأ العرض", full immersion, UI hidden),
    * "العرض التلقائي" (continuous random launching, setup screen stays
-   * visible/usable while it runs). Different states, same need: a single,
-   * reliable, always-in-the-same-place way back to a fully idle screen
-   * instead of hunting for whichever toggle started it.
+   * visible/usable while it runs), sequential mode simply being chosen
+   * (planningMode.isActive, armed before any pin even exists — free-tap
+   * already can't do anything while it's on), or a pending 'mass' selection
+   * (a shape queued but "ابدأ العرض" not pressed yet — free-tap is locked
+   * for that too, see the stage pointerdown handler below). Different
+   * states, same need: a single, reliable, always-in-the-same-place way
+   * back to a fully idle screen instead of hunting for whichever toggle/
+   * selection started it. Reads only local flags/planningMode, never
+   * planningScreen directly — see massSelectionActive's own doc comment for
+   * why that matters here specifically.
    */
   function updateExitButtonVisibility(): void {
-    exitButton.visible = showStarted || autoShowActive;
+    exitButton.visible = showStarted || autoShowActive || massSelectionActive || planningMode.isActive;
   }
+
+  const header = new HeaderBar({
+    app,
+    audio,
+    onStartShow: () => beginShow(),
+    onBackToHome: () => {
+      handle.hide();
+      onBackToHome();
+    },
+  });
+  uiContainer.addChild(header.container);
+
+  // Always visible the instant the mood boots — see PlanningScreen's own
+  // doc-comment for the full architecture. Every control that has a real,
+  // already-built function behind it is wired directly here to
+  // `fireworks`/`background`.
+  const planningScreen = new PlanningScreen({
+    app,
+    audio,
+    worldContainer,
+    uiContainer,
+    fireworks,
+    background,
+    onModeChange: (mode) => {
+      planningMode.setActive(mode === 'sequential');
+      updateExitButtonVisibility();
+    },
+    onToggleRecording: () => void toggleRecording(),
+    onSnapshot: () => void takeSnapshot(),
+    // "مدفع" moved from the header into ShapesPanel — see its own doc-comment.
+    onInputModeChange: (mode) => {
+      inputMode = mode;
+    },
+    // "العرض التلقائي" is a third continuous-launch screen, alongside
+    // متتابع/جماعي — the exit button (below) governs it too now, not just
+    // the planned-show flow.
+    onAutoShowChange: (enabled) => {
+      autoShowActive = enabled;
+      updateExitButtonVisibility();
+    },
+    // A mass shape was queued/unqueued — re-check whether the exit button
+    // should show (see massSelectionActive's own doc comment).
+    onMassSelectionChange: (hasSelection) => {
+      massSelectionActive = hasSelection;
+      updateExitButtonVisibility();
+    },
+  });
+
+  // The header is fully visible the instant the mood opens — see the module
+  // doc-comment above for why there's no setup gate anymore. Every
+  // interactive Pixi control in this app now plays its own flash+click
+  // feedback directly (see HeaderBar.wireTap(), PlanningIconColumn's tap
+  // handler, etc.) — the old DOM-delegated attachTactileFeedback() has been
+  // removed entirely, since PlanningScreen no longer has a DOM root at all
+  // for its `button`/`.mzj-tab`/`[data-tactile]` selector to ever match
+  // (it had gone silently dead once PlanningIconColumn/PlanningSubpanels/
+  // TextComposer all moved off DOM, and was found + fixed in this pass).
+  const idleFade = new IdleFadeController([header.container]);
+
+  // Pixi paints/hit-tests a container's children in add order (last added =
+  // topmost) — exitButton had to be *constructed* before header/planningScreen
+  // above (see its own doc comment on the TDZ crash that forced that), which
+  // left it painted *underneath* the icon column added afterward. Re-adding
+  // an already-added child moves it to the end instead of duplicating it
+  // (documented Pixi behavior), which is exactly what's needed here: bring
+  // it back to the top so its taps are never swallowed by an icon row whose
+  // hitArea happens to overlap it (confirmed with a real tap test — a press
+  // square on the exit button's own coordinates was landing on "إضاءة
+  // الخلفية" instead before this fix).
+  uiContainer.addChild(exitButton);
 
   handle = {
     show(): void {

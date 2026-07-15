@@ -202,6 +202,45 @@ export class AudioManager {
     osc.stop(now + 0.05);
   }
 
+  /**
+   * A real two-part mechanical shutter click (a sharp high tick immediately
+   * followed by a lower, softer "clack") — distinct from playUiClick()'s
+   * generic single-tone button press, so "لقطة" reads as an actual camera
+   * shutter instead of the same blip every other icon makes. Synthesized,
+   * same reasoning as playUiClick(): no audio file needed.
+   */
+  playCameraShutter(): void {
+    if (this.muted) return;
+    const now = this.context.currentTime;
+
+    const tick = this.context.createOscillator();
+    tick.type = 'square';
+    tick.frequency.setValueAtTime(2400, now);
+    tick.frequency.exponentialRampToValueAtTime(1800, now + 0.015);
+    const tickGain = this.context.createGain();
+    tickGain.gain.setValueAtTime(0.22, now);
+    tickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.02);
+    tick.connect(tickGain);
+    tickGain.connect(this.context.destination);
+    tickGain.connect(this.destination);
+    tick.start(now);
+    tick.stop(now + 0.025);
+
+    const clackStart = now + 0.02;
+    const clack = this.context.createOscillator();
+    clack.type = 'square';
+    clack.frequency.setValueAtTime(400, clackStart);
+    clack.frequency.exponentialRampToValueAtTime(180, clackStart + 0.05);
+    const clackGain = this.context.createGain();
+    clackGain.gain.setValueAtTime(0.28, clackStart);
+    clackGain.gain.exponentialRampToValueAtTime(0.001, clackStart + 0.07);
+    clack.connect(clackGain);
+    clackGain.connect(this.context.destination);
+    clackGain.connect(this.destination);
+    clack.start(clackStart);
+    clack.stop(clackStart + 0.08);
+  }
+
   private async load(name: SoundName): Promise<void> {
     try {
       const response = await fetch(SOUND_FILES[name]);
