@@ -15,7 +15,11 @@ import type { AudioManager } from '../audio/AudioManager';
  * not a per-row calculation.
  */
 const PADDING_TOP = 76;
-const PADDING_BOTTOM = 24;
+// Bumped from 24: a real, reproduced bug on short screens had the column's
+// tail rows (glow, "لون المقذوفة") render past app.screen.height entirely —
+// see layout()'s own doc comment for the actual fix. This margin is the
+// bottom safe-area clearance off the screen edge (system nav bars etc.).
+const PADDING_BOTTOM = 60;
 const COLUMN_RIGHT_INSET = 56;
 const ROW_HEIGHT = 38;
 const ROW_GAP = 20;
@@ -306,14 +310,33 @@ export class PlanningIconColumn {
 
   private layout(): void {
     const ids = Array.from(this.rows.keys());
-    const contentHeight = (ids.length - 1) * ROW_SPACING + ROW_HEIGHT;
+    const rowCount = ids.length;
+    const naturalContentHeight = (rowCount - 1) * ROW_SPACING + ROW_HEIGHT;
     const availableHeight = this.app.screen.height - PADDING_TOP - PADDING_BOTTOM;
+
+    // Real, reproduced bug on short screens: centering used to clamp its
+    // offset to zero once the column's natural height didn't fit, but never
+    // actually shrank anything — so the tail rows (glow, then "لون
+    // المقذوفة", the very last row) rendered past app.screen.height
+    // entirely, sunk below the visible screen and completely unreachable.
+    // Compress the *gap* between rows first — each row's own icon/label/
+    // hitArea size never changes, so the 44px minimum touch target
+    // (HIT_MIN_SIZE) is never at risk — down to zero gap if needed. Only
+    // past that point (an extremely short viewport) does spacing hit its
+    // floor at ROW_HEIGHT itself, which still keeps every row's *center*
+    // within the safe area even if adjacent rows start to visually overlap
+    // — a graceful-degradation tradeoff, not a row silently disappearing.
+    const rowSpacing =
+      naturalContentHeight <= availableHeight
+        ? ROW_SPACING
+        : Math.max(ROW_HEIGHT, (availableHeight - ROW_HEIGHT) / Math.max(rowCount - 1, 1));
+    const contentHeight = (rowCount - 1) * rowSpacing + ROW_HEIGHT;
     const firstRowCenterY = PADDING_TOP + Math.max(0, (availableHeight - contentHeight) / 2) + ROW_HEIGHT / 2;
     const centerX = this.app.screen.width - COLUMN_RIGHT_INSET;
 
     ids.forEach((id, index) => {
       const row = this.rows.get(id)!;
-      row.root.position.set(centerX, firstRowCenterY + index * ROW_SPACING);
+      row.root.position.set(centerX, firstRowCenterY + index * rowSpacing);
     });
 
     // catchAll only needs to be at least as wide/tall as the widest row's
@@ -328,7 +351,7 @@ export class PlanningIconColumn {
       maxHalfHeight = Math.max(maxHalfHeight, -area.top, area.bottom);
     }
 
-    const lastRowCenterY = firstRowCenterY + (ids.length - 1) * ROW_SPACING;
+    const lastRowCenterY = firstRowCenterY + (ids.length - 1) * rowSpacing;
     this.catchAll
       .clear()
       .rect(centerX - maxHalfWidth, firstRowCenterY - maxHalfHeight, maxHalfWidth * 2, lastRowCenterY - firstRowCenterY + maxHalfHeight * 2)

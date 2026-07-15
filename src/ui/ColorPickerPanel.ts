@@ -5,7 +5,16 @@ import type { FireworksSystem } from '../fireworks/FireworksSystem';
 import { SideDockPanel } from './SideDockPanel';
 
 const SWATCH_RADIUS = 13;
-const SWATCH_GAP = 10;
+// A real gap against the app's own 44px minimum-touch-target standard
+// (PlanningIconColumn.HIT_MIN_SIZE): SWATCH_RADIUS * 1.5 alone gives a
+// 39px hitArea diameter, just under it.
+const SWATCH_HIT_RADIUS = 22;
+// Bumped from 10: with SWATCH_HIT_RADIUS raised to close the 44px gap
+// above, the old gap would have made adjacent swatches' circular hitAreas
+// overlap (2 * 22 = 44 > the old 26 + 10 = 36 vertical spacing) — whichever
+// swatch happened to be on top in z-order would then swallow taps meant
+// for its neighbor. 18 keeps them just touching, not overlapping.
+const SWATCH_GAP = 18;
 // Wider than the swatch column itself needs — the title wraps across a
 // couple of lines within this width instead of overflowing sideways past
 // the panel (it's docked at the screen's right edge, so an unwrapped line
@@ -93,7 +102,7 @@ export class ColorPickerPanel extends SideDockPanel {
     ring.blendMode = 'add';
     group.addChild(ring);
 
-    const hitArea = new Graphics().circle(0, 0, SWATCH_RADIUS * 1.5).fill({ color: 0xffffff, alpha: 0.001 });
+    const hitArea = new Graphics().circle(0, 0, SWATCH_HIT_RADIUS).fill({ color: 0xffffff, alpha: 0.001 });
     group.addChild(hitArea);
 
     // `pointerdown` must be stopped independently of `pointertap` — see

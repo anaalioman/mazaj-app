@@ -7,6 +7,12 @@ const TITLE_AREA = 56;
 // Gap kept clear between the panel's own edge and the icon column it docks
 // beside, so it never touches/overlaps the icons themselves.
 const DOCK_GAP = 14;
+// Bottom safe-area clearance (system nav bars etc.) — matches
+// PlanningIconColumn's own PADDING_BOTTOM. Centering alone used to only
+// floor the panel's *top* edge on short screens, so a tall panel's bottom
+// could still extend past app.screen.height entirely — see reflow()'s own
+// doc comment for the real, reproduced case this fixes.
+const SAFE_BOTTOM_MARGIN = 60;
 
 /**
  * Shared "docks beside the planning screen's right icon column" canvas
@@ -127,8 +133,16 @@ export abstract class SideDockPanel {
 
   private reflow(): void {
     // Vertically centered on screen, matching how the icon column beside it
-    // is centered (see .mzj-planning-side's justify-content: center).
-    this.container.y = Math.max(8, (this.app.screen.height - this.panelHeight) / 2);
+    // is centered (see .mzj-planning-side's justify-content: center) — but
+    // never past either safe-area edge. Previously only the top was ever
+    // floored (Math.max(8, ...)); on a short enough screen relative to this
+    // panel's own content height, the centered position still let the
+    // bottom edge render past app.screen.height entirely. Cap it so the
+    // panel's bottom never crosses SAFE_BOTTOM_MARGIN from the screen edge,
+    // even if that means giving up perfect centering on a short screen.
+    const centeredY = Math.max(8, (this.app.screen.height - this.panelHeight) / 2);
+    const maxY = Math.max(8, this.app.screen.height - SAFE_BOTTOM_MARGIN - this.panelHeight);
+    this.container.y = Math.min(centeredY, maxY);
     this.applyPosition();
   }
 
