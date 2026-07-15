@@ -1,4 +1,4 @@
-import { Application, Circle, Container, Graphics, Rectangle, Sprite } from 'pixi.js';
+import { Application, Circle, Container, Graphics, Rectangle, Sprite, Text, TextStyle } from 'pixi.js';
 import { BackdropBlurFilter } from 'pixi-filters';
 import { iconTexture } from '../ui/svgIconTexture';
 import { FireworksSystem } from '../fireworks/FireworksSystem';
@@ -432,6 +432,46 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     requestAnimationFrame(step);
   }
 
+  // A snapshot failure used to be visible only in console.error — invisible
+  // in a shipped APK without USB debugging attached, so a real-device field
+  // test had no way to report anything more specific than "it doesn't show
+  // up". This surfaces the actual error text on screen for a few seconds
+  // instead, directly below the shutter button so it reads as belonging to
+  // that action.
+  const SNAPSHOT_ERROR_VISIBLE_MS = 4000;
+  const snapshotErrorText = new Text({
+    text: '',
+    style: new TextStyle({
+      fontFamily: 'Tajawal, system-ui, sans-serif',
+      fontSize: 12,
+      fontWeight: '600',
+      fill: 0xff6b6b,
+      align: 'center',
+      wordWrap: true,
+    }),
+  });
+  snapshotErrorText.anchor.set(0.5, 0);
+  snapshotErrorText.alpha = 0;
+  snapshotErrorText.eventMode = 'none';
+  uiContainer.addChild(snapshotErrorText);
+  let snapshotErrorHideTimer: number | undefined;
+
+  function layoutSnapshotErrorText(): void {
+    snapshotErrorText.style.wordWrapWidth = Math.min(320, app.screen.width * 0.8);
+    snapshotErrorText.position.set(app.screen.width / 2, app.screen.height - 24);
+  }
+  layoutSnapshotErrorText();
+  app.renderer.on('resize', () => layoutSnapshotErrorText());
+
+  function showSnapshotError(message: string): void {
+    snapshotErrorText.text = `تعذّر حفظ اللقطة: ${message}`;
+    snapshotErrorText.alpha = 1;
+    window.clearTimeout(snapshotErrorHideTimer);
+    snapshotErrorHideTimer = window.setTimeout(() => {
+      snapshotErrorText.alpha = 0;
+    }, SNAPSHOT_ERROR_VISIBLE_MS);
+  }
+
   async function takeSnapshot(): Promise<void> {
     flashScreen();
     audio.playCameraShutter();
@@ -460,7 +500,14 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
         link.click();
       }
     } catch (error) {
+      // console.error alone is invisible in a shipped APK without USB
+      // debugging attached — a field test that fails silently here gives
+      // no way to tell "it failed" from "it worked but I didn't check the
+      // gallery yet". showSnapshotError() surfaces the real error message
+      // on screen so a real-device test actually reports something
+      // actionable back, instead of just "it doesn't show up".
       console.error('تعذّر التقاط اللقطة:', error);
+      showSnapshotError(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -710,16 +757,20 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   const idleFade = new IdleFadeController([header.container]);
 
   // Pixi paints/hit-tests a container's children in add order (last added =
-  // topmost) — exitButton had to be *constructed* before header/planningScreen
-  // above (see its own doc comment on the TDZ crash that forced that), which
-  // left it painted *underneath* the icon column added afterward. Re-adding
-  // an already-added child moves it to the end instead of duplicating it
-  // (documented Pixi behavior), which is exactly what's needed here: bring
-  // it back to the top so its taps are never swallowed by an icon row whose
-  // hitArea happens to overlap it (confirmed with a real tap test — a press
-  // square on the exit button's own coordinates was landing on "إضاءة
-  // الخلفية" instead before this fix).
+  // topmost) — exitButton/shutterButton/snapshotErrorText had to be
+  // *constructed* before header/planningScreen above (see exitButton's own
+  // doc comment on the TDZ crash that forced that), which left them painted
+  // *underneath* the icon column added afterward. Re-adding an already-added
+  // child moves it to the end instead of duplicating it (documented Pixi
+  // behavior), which is exactly what's needed here: this is the single
+  // place that deliberately guarantees the show's whole floating HUD — exit
+  // button, shutter button, and its own error text — paints on top of every
+  // other uiContainer child, verified rather than assumed (a real tap test
+  // once caught exitButton's taps landing on "إضاءة الخلفية" instead,
+  // before this exact fix was applied to it).
   uiContainer.addChild(exitButton);
+  uiContainer.addChild(shutterButton);
+  uiContainer.addChild(snapshotErrorText);
 
   handle = {
     show(): void {
