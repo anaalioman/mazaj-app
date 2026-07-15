@@ -698,7 +698,15 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   });
 
   function updateShutterButtonVisibility(): void {
-    shutterButton.visible = showStarted;
+    // "العرض التلقائي" genuinely launches real rockets on its own timer —
+    // see FireworksSystem.update()'s autoLaunchEnabled branch — independent
+    // of "ابدأ العرض", so it counts as "a show is actually running" for the
+    // capture button exactly like showStarted does. "توليد عشوائي هجين"
+    // does *not* belong here: setRandomMode() only flags which burst
+    // patterns get used by whatever launches next — it never calls
+    // launch() itself, so toggling it alone produces no scene worth
+    // capturing yet.
+    shutterButton.visible = showStarted || autoShowActive;
   }
 
   const header = new HeaderBar({
@@ -734,10 +742,21 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     },
     // "العرض التلقائي" is a third continuous-launch screen, alongside
     // متتابع/جماعي — the exit button (below) governs it too now, not just
-    // the planned-show flow.
+    // the planned-show flow. Unlike them it actually starts firing real
+    // rockets the instant it's toggled on (no "ابدأ العرض" gate — see
+    // FireworksSystem.setAutoLaunch()), so it gets the same full-immersion
+    // treatment beginShow() gives the planned flow: panel hidden, shutter
+    // button up. Only the exit button can bring the panel back afterward
+    // (endShow() already calls disableAutoShow() + planningScreen.show()),
+    // exactly like every other launch screen.
     onAutoShowChange: (enabled) => {
       autoShowActive = enabled;
+      if (enabled) {
+        idleFade.hideNow();
+        planningScreen.hide();
+      }
       updateExitButtonVisibility();
+      updateShutterButtonVisibility();
     },
     // A mass shape was queued/unqueued — re-check whether the exit button
     // should show (see massSelectionActive's own doc comment).
