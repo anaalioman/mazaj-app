@@ -1,4 +1,4 @@
-import { Application, Circle, Container, Graphics, Rectangle, Sprite, Text, TextStyle, type Texture } from 'pixi.js';
+import { Application, Circle, Container, Graphics, Rectangle, Sprite, Text, TextStyle, type Texture, type Ticker } from 'pixi.js';
 import { BackdropBlurFilter } from 'pixi-filters';
 import { iconTexture } from '../ui/svgIconTexture';
 import { FireworksSystem } from '../fireworks/FireworksSystem';
@@ -535,19 +535,21 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     // starting to lift, not with the (silent, camera-flash-only) capture
     // moment a beat earlier.
     let shutterSoundPlayed = false;
+    let elapsedMs = 0;
 
-    const startTime = performance.now();
-    const step = (now: number) => {
-      const elapsed = now - startTime;
-      if (elapsed < LIFT_HOLD_MS) {
-        requestAnimationFrame(step);
-        return;
-      }
+    // Driven by app.ticker — the same 60fps-synced loop every other moving
+    // piece in this file (fireworks, mortars, text reveal, shockwave,
+    // screen shake) already runs on, rather than a separate raw
+    // requestAnimationFrame call. `ticker.deltaMS` accounts for real frame
+    // spacing the same way those updates do.
+    const tick = (ticker: Ticker): void => {
+      elapsedMs += ticker.deltaMS;
+      if (elapsedMs < LIFT_HOLD_MS) return;
       if (!shutterSoundPlayed) {
         shutterSoundPlayed = true;
         audio.playCameraShutter();
       }
-      const t = Math.min(1, (elapsed - LIFT_HOLD_MS) / LIFT_MOVE_MS);
+      const t = Math.min(1, (elapsedMs - LIFT_HOLD_MS) / LIFT_MOVE_MS);
       const eased = 1 - (1 - t) ** 3;
       const y = centerY - LIFT_RISE_DISTANCE * eased;
       const alpha = 1 - eased;
@@ -558,21 +560,22 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
       thumb.position.y = y;
       thumb.alpha = alpha;
       thumb.scale.set(thumbBaseScaleX * scale, thumbBaseScaleY * scale);
-      if (t < 1) {
-        requestAnimationFrame(step);
-        return;
-      }
+      if (t < 1) return;
+
+      app.ticker.remove(tick);
       app.stage.removeChild(frame);
       app.stage.removeChild(thumb);
       frame.destroy();
-      thumb.destroy();
-      // Extracted solely for this animation + the save below — not cached
-      // or referenced anywhere else, so it's safe (and necessary, to avoid
-      // leaking GPU memory across repeated snapshots) to destroy once both
-      // are done with it.
-      texture.destroy(true);
+      // `texture` (the shared extracted GPU texture both frame's fill and
+      // thumb's Sprite ultimately depend on for their draw call) is only
+      // ever referenced here and in takeSnapshot()'s own base64() read,
+      // which has always finished by this point — destroying it via
+      // thumb's own texture:true teardown, right as alpha reaches zero, is
+      // both correct and sufficient; a second explicit texture.destroy()
+      // call after this would double-free the same GPU resource.
+      thumb.destroy({ texture: true, textureSource: true });
     };
-    requestAnimationFrame(step);
+    app.ticker.add(tick);
   }
 
   async function takeSnapshot(): Promise<void> {
