@@ -1,4 +1,4 @@
-import { Application, Circle, Container, Graphics, Rectangle, Sprite, Text, TextStyle } from 'pixi.js';
+import { Application, Circle, Container, Graphics, Rectangle, Sprite, Text, TextStyle, type Texture } from 'pixi.js';
 import { BackdropBlurFilter } from 'pixi-filters';
 import { iconTexture } from '../ui/svgIconTexture';
 import { FireworksSystem } from '../fireworks/FireworksSystem';
@@ -475,19 +475,139 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     }, SNAPSHOT_ERROR_VISIBLE_MS);
   }
 
+  // --- "Lift-up" thumbnail: the photo-flies-to-the-gallery confirmation ---
+  //
+  // Pure Pixi — a Sprite built from the same extracted Texture takeSnapshot()
+  // saves, never a DOM <img>. Lives in uiContainer, added at the moment of
+  // capture (after every persistent HUD element was already added during
+  // setup), so it paints on top of everything, including the fireworks,
+  // without needing the usual "re-append to force top z-order" dance those
+  // persistent elements need.
+  const LIFT_THUMB_WIDTH_RATIO = 0.38;
+  const LIFT_HOLD_MS = 180;
+  const LIFT_MOVE_MS = 550;
+  const LIFT_RISE_DISTANCE = 160;
+  const LIFT_END_SCALE = 0.62;
+
+  function playSnapshotLiftUp(texture: Texture): void {
+    const frameWidth = Math.min(app.screen.width, app.screen.height) * LIFT_THUMB_WIDTH_RATIO;
+    const frameHeight = (texture.height / texture.width) * frameWidth;
+    const centerX = app.screen.width / 2;
+    const centerY = app.screen.height / 2;
+
+    // Two flat siblings on app.stage — deliberately *not* nested inside a
+    // wrapper Container. While debugging this in a sandboxed headless
+    // browser (software-WebGL, not representative of a real GPU), a
+    // wrapper Container with its own `.position` holding these as children
+    // sometimes failed to render after an `extract.texture()`/
+    // `extract.base64()` call — but later isolation attempts gave
+    // inconsistent results for identical code, pointing at a flaky test
+    // environment rather than a deterministic bug. Kept flat anyway since
+    // it's no more complex and removes that variable entirely; this should
+    // be re-verified on a real device build rather than trusted from this
+    // sandbox alone.
+    const frame = new Graphics()
+      .roundRect(-frameWidth / 2 - 5, -frameHeight / 2 - 5, frameWidth + 10, frameHeight + 10, 10)
+      .fill({ color: 0xffffff })
+      .stroke({ width: 1, color: 0x000000, alpha: 0.12 });
+    frame.eventMode = 'none';
+    frame.position.set(centerX, centerY);
+    app.stage.addChild(frame);
+
+    const thumb = new Sprite(texture);
+    thumb.eventMode = 'none';
+    thumb.anchor.set(0.5);
+    thumb.width = frameWidth;
+    thumb.height = frameHeight;
+    thumb.position.set(centerX, centerY);
+    // The .width/.height setters above already computed the scale needed
+    // to fit the extracted (much larger) texture into the thumbnail size —
+    // the animation below must multiply against *this* base, not overwrite
+    // it, or the sprite would snap back to its full, unscaled texture size
+    // the instant the rise animation's own scale factor is first applied.
+    const thumbBaseScaleX = thumb.scale.x;
+    const thumbBaseScaleY = thumb.scale.y;
+    app.stage.addChild(thumb);
+
+    // Fires the instant the rise motion actually begins (not at tap-time —
+    // see takeSnapshot(), which deliberately does *not* play this sound
+    // itself anymore), so the click is heard in sync with the photo
+    // starting to lift, not with the (silent, camera-flash-only) capture
+    // moment a beat earlier.
+    let shutterSoundPlayed = false;
+
+    const startTime = performance.now();
+    const step = (now: number) => {
+      const elapsed = now - startTime;
+      if (elapsed < LIFT_HOLD_MS) {
+        requestAnimationFrame(step);
+        return;
+      }
+      if (!shutterSoundPlayed) {
+        shutterSoundPlayed = true;
+        audio.playCameraShutter();
+      }
+      const t = Math.min(1, (elapsed - LIFT_HOLD_MS) / LIFT_MOVE_MS);
+      const eased = 1 - (1 - t) ** 3;
+      const y = centerY - LIFT_RISE_DISTANCE * eased;
+      const alpha = 1 - eased;
+      const scale = 1 - (1 - LIFT_END_SCALE) * eased;
+      frame.position.y = y;
+      frame.alpha = alpha;
+      frame.scale.set(scale);
+      thumb.position.y = y;
+      thumb.alpha = alpha;
+      thumb.scale.set(thumbBaseScaleX * scale, thumbBaseScaleY * scale);
+      if (t < 1) {
+        requestAnimationFrame(step);
+        return;
+      }
+      app.stage.removeChild(frame);
+      app.stage.removeChild(thumb);
+      frame.destroy();
+      thumb.destroy();
+      // Extracted solely for this animation + the save below — not cached
+      // or referenced anywhere else, so it's safe (and necessary, to avoid
+      // leaking GPU memory across repeated snapshots) to destroy once both
+      // are done with it.
+      texture.destroy(true);
+    };
+    requestAnimationFrame(step);
+  }
+
   async function takeSnapshot(): Promise<void> {
+    // Extracted once as a Texture (not base64 directly) so the lift-up
+    // thumbnail and the actually-saved photo are guaranteed to be the exact
+    // same frame — fireworks animate every tick, so extracting twice could
+    // otherwise show the player a thumbnail that doesn't match what landed
+    // in their gallery.
+    const texture = app.renderer.extract.texture({
+      target: worldContainer,
+      resolution: Math.min(app.renderer.resolution * 1.5, 3),
+    });
+
     flashScreen();
-    audio.playCameraShutter();
+    // The shutter sound itself fires from inside playSnapshotLiftUp(),
+    // synced to the exact frame the thumbnail starts rising — see its own
+    // doc comment.
+    playSnapshotLiftUp(texture);
+    // `extract.base64()` reads pixels back from the GPU via a canvas
+    // readback. While debugging in this sandbox's headless/software-WebGL
+    // browser, new display objects sometimes stopped rendering after this
+    // call ran — results were inconsistent across repeated identical runs,
+    // more consistent with a flaky sandbox test environment than a
+    // deterministic engine bug, but unresolved either way. Waiting for one
+    // real rendered frame here before calling base64() is a cheap,
+    // harmless precaution regardless of the root cause; this whole
+    // sequence still needs verification on a real device build.
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
     try {
       // Targets worldContainer exclusively — see this file's own
       // container-tree doc comment. Every UI control (including the flash
-      // above) lives in the sibling uiContainer and is structurally
-      // invisible to this capture. `extract.base64()` is `extract.canvas()`
-      // plus a PNG data-URI encode in one call.
-      const dataUrl = await app.renderer.extract.base64({
-        target: worldContainer,
-        resolution: Math.min(app.renderer.resolution * 1.5, 3),
-      });
+      // and the lift-up thumbnail itself) lives in the sibling uiContainer
+      // and is structurally invisible to this capture.
+      const dataUrl = await app.renderer.extract.base64(texture);
       // "لقطة" ≠ "تنزيل": on the real app, this must land straight in the
       // device's own photo gallery, never a file-download prompt — see
       // GallerySaver's own doc comment. The `<a download>` browser pattern
