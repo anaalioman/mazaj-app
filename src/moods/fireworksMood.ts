@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Rectangle, Sprite } from 'pixi.js';
+import { Application, Circle, Container, Graphics, Rectangle, Sprite } from 'pixi.js';
 import { BackdropBlurFilter } from 'pixi-filters';
 import { iconTexture } from '../ui/svgIconTexture';
 import { FireworksSystem } from '../fireworks/FireworksSystem';
@@ -15,6 +15,7 @@ import { IdleFadeController } from '../ui/IdleFade';
 import { withTimeout } from '../utils/withTimeout';
 import { PlanningMode } from '../ui/PlanningMode';
 import { PlanningScreen, type InputMode } from '../ui/PlanningScreen';
+import { canSaveToGallery, saveSnapshotToGallery } from '../media/GallerySaver';
 
 export interface FireworksMoodHandle {
   show(): void;
@@ -357,6 +358,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     // deliberate, always-visible way back to the planning/idle state itself.
     idleFade.hideNow();
     updateExitButtonVisibility();
+    updateShutterButtonVisibility();
   }
 
   /**
@@ -390,6 +392,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     if (!wasShowRunning) planningScreen.clearPendingSelection();
     showStarted = false;
     updateExitButtonVisibility();
+    updateShutterButtonVisibility();
   }
 
   // --- Camera-style flash + snapshot/recording ---
@@ -437,16 +440,25 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
       // container-tree doc comment. Every UI control (including the flash
       // above) lives in the sibling uiContainer and is structurally
       // invisible to this capture. `extract.base64()` is `extract.canvas()`
-      // plus a PNG data-URI encode in one call — same pure-worldContainer
-      // capture, already saved as an actual .png file below.
+      // plus a PNG data-URI encode in one call.
       const dataUrl = await app.renderer.extract.base64({
         target: worldContainer,
         resolution: Math.min(app.renderer.resolution * 1.5, 3),
       });
-      const link = document.createElement('a');
-      link.href = dataUrl;
-      link.download = `mazaj-snapshot-${Date.now()}.png`;
-      link.click();
+      // "لقطة" ≠ "تنزيل": on the real app, this must land straight in the
+      // device's own photo gallery, never a file-download prompt — see
+      // GallerySaver's own doc comment. The `<a download>` browser pattern
+      // only runs as a fallback where there's no OS gallery to write into
+      // at all (this file previewed in a plain browser tab, e.g. during
+      // this project's own sandboxed development/testing).
+      if (canSaveToGallery()) {
+        await saveSnapshotToGallery(dataUrl);
+      } else {
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        link.download = `mazaj-snapshot-${Date.now()}.png`;
+        link.click();
+      }
     } catch (error) {
       console.error('تعذّر التقاط اللقطة:', error);
     }
@@ -579,6 +591,64 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
    */
   function updateExitButtonVisibility(): void {
     exitButton.visible = showStarted || autoShowActive || massSelectionActive || planningMode.isActive;
+  }
+
+  // --- Floating shutter button: capture stays reachable during the show ---
+  //
+  // "لقطة" in the icon column becomes completely unreachable the instant
+  // "ابدأ العرض" hides it — this is the show's own dedicated capture
+  // trigger instead, visible only for exactly as long as showStarted is
+  // true (set in beginShow()/endShow()/updateShutterButtonVisibility()
+  // below), same lifecycle as the exit button but scoped tighter: العرض
+  // التلقائي and a pending mass selection still leave the icon column (and
+  // its own "لقطة" row) reachable, so this one stays hidden for those.
+  // Genuinely circular hitArea via Pixi's Circle shape (not a squared-off
+  // Rectangle standing in for one), sized well past the 44px minimum to
+  // read as the primary action it is — matches real camera-app shutter
+  // buttons in both look and touch-target size.
+  const SHUTTER_BUTTON_RADIUS = 32;
+  const SHUTTER_BUTTON_BOTTOM_INSET = 40;
+
+  const shutterButton = new Container();
+  shutterButton.label = 'التقاط لقطة';
+  shutterButton.eventMode = 'static';
+  shutterButton.cursor = 'pointer';
+  shutterButton.visible = false;
+  shutterButton.hitArea = new Circle(0, 0, SHUTTER_BUTTON_RADIUS);
+
+  const shutterRing = new Graphics()
+    .circle(0, 0, SHUTTER_BUTTON_RADIUS)
+    .fill({ color: 0xffffff, alpha: 0.9 })
+    .circle(0, 0, SHUTTER_BUTTON_RADIUS - 5)
+    .cut();
+  shutterButton.addChild(shutterRing);
+
+  const shutterCore = new Graphics().circle(0, 0, SHUTTER_BUTTON_RADIUS - 8).fill({ color: 0xe11d2f });
+  shutterButton.addChild(shutterCore);
+
+  uiContainer.addChild(shutterButton);
+
+  function layoutShutterButton(): void {
+    shutterButton.position.set(app.screen.width / 2, app.screen.height - SHUTTER_BUTTON_BOTTOM_INSET - SHUTTER_BUTTON_RADIUS);
+  }
+  layoutShutterButton();
+  app.renderer.on('resize', () => layoutShutterButton());
+
+  // No audio.playUiClick() here — takeSnapshot() plays its own dedicated
+  // camera-shutter sound (playCameraShutter()), and stacking the generic
+  // click tone underneath it would muddy exactly the "professional shutter
+  // sound" this button exists to trigger. Same stopPropagation-on-
+  // pointerdown discipline as every other Pixi button here — see
+  // exitButton's own wiring above for why pointerdown needs it too, not
+  // just pointertap.
+  shutterButton.on('pointerdown', (event) => event.stopPropagation());
+  shutterButton.on('pointertap', (event) => {
+    event.stopPropagation();
+    void takeSnapshot();
+  });
+
+  function updateShutterButtonVisibility(): void {
+    shutterButton.visible = showStarted;
   }
 
   const header = new HeaderBar({
