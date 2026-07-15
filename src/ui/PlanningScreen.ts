@@ -278,9 +278,13 @@ export class PlanningScreen {
       { id: 'mzj-planning-open-shapes', icon: 'shapes', label: 'الأشكال', onTap: () => this.toggleShapesPanel() },
       { id: 'mzj-planning-open-camera', icon: 'camera', label: 'فيديو خلفية حي', onTap: () => this.toggleSubpanel('camera') },
       { id: 'mzj-planning-record', icon: 'recordDot', label: 'تسجيل فيديو', onTap: () => this.deps.onToggleRecording() },
-      // Its own camera-shutter sound plays inside takeSnapshot() itself — see
-      // IconRowSpec.skipDefaultClickSound's own doc comment for why.
-      { id: 'mzj-planning-snapshot', icon: 'camera', label: 'لقطة', onTap: () => this.deps.onSnapshot(), skipDefaultClickSound: true },
+      // A distinct "aperture" glyph, deliberately different from the
+      // "camera"-bodied "فيديو خلفية حي" row above — the two used to share
+      // one icon, which is a plausible reason a real-device tap on one can
+      // land on the other. Its own camera-shutter sound plays inside
+      // takeSnapshot() itself — see IconRowSpec.skipDefaultClickSound's own
+      // doc comment for why.
+      { id: 'mzj-planning-snapshot', icon: 'aperture', label: 'لقطة', onTap: () => this.deps.onSnapshot(), skipDefaultClickSound: true },
       {
         id: 'mzj-planning-bg-image',
         icon: 'image',
