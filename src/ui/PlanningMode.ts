@@ -1,5 +1,6 @@
 import { Application, Container, Graphics, Text, TextStyle, type FederatedPointerEvent } from 'pixi.js';
 import type { BurstType } from '../fireworks/FireworksSystem';
+import { tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
 
 export interface VisibleRange {
   /** Screen y where the reachable (dashboard-free) area begins. */
@@ -65,12 +66,12 @@ export class PlanningMode {
   readonly layer: Container;
   private pins: Pin[] = [];
   private active = false;
-  // launch()'s staggered per-pin setTimeout ids — tracked so a show that's
+  // launch()'s staggered per-pin timer handles — tracked so a show that's
   // exited mid-sequence (see cancelPending()) can't keep popping rockets
   // after the player has already left it.
-  private pendingLaunchTimers: number[] = [];
+  private pendingLaunchTimers: TickerTimerHandle[] = [];
 
-  private pressTimer: number | undefined;
+  private pressTimer: TickerTimerHandle | undefined;
   private pressTargetIndex: number | null = null;
   private pressStart: { x: number; y: number } | null = null;
 
@@ -108,7 +109,7 @@ export class PlanningMode {
     if (hitIndex >= 0) {
       this.pressTargetIndex = hitIndex;
       this.pressStart = { x, y };
-      this.pressTimer = window.setTimeout(() => {
+      this.pressTimer = tickerSetTimeout(this.app.ticker, () => {
         if (this.pressTargetIndex !== null) this.removePinAt(this.pressTargetIndex);
         this.cancelPress();
       }, LONG_PRESS_MS);
@@ -130,7 +131,7 @@ export class PlanningMode {
   };
 
   private cancelPress(): void {
-    window.clearTimeout(this.pressTimer);
+    this.pressTimer?.cancel();
     this.pressTimer = undefined;
     this.pressTargetIndex = null;
     this.pressStart = null;
@@ -168,7 +169,8 @@ export class PlanningMode {
       : undefined;
 
     pins.forEach((pin, i) => {
-      const timer = window.setTimeout(
+      const timer = tickerSetTimeout(
+        this.app.ticker,
         () => this.onLaunchPin(pin.x, this.rescaleY(pin, fullHeight), pin.type, markOneDone),
         i * SEQUENTIAL_DELAY_MS,
       );
@@ -179,12 +181,12 @@ export class PlanningMode {
   /**
    * Cancels every not-yet-fired staggered launch from the most recent
    * launch() call — the real fix for a genuine leak a field test caught:
-   * pressing exit mid-sequence used to leave those `setTimeout`s running,
-   * so rockets kept firing on the idle/planning screen well after the
-   * player had already left it. Wired into fireworksMood.ts's endShow().
+   * pressing exit mid-sequence used to leave those timers running, so
+   * rockets kept firing on the idle/planning screen well after the player
+   * had already left it. Wired into fireworksMood.ts's endShow().
    */
   cancelPending(): void {
-    for (const timer of this.pendingLaunchTimers) window.clearTimeout(timer);
+    for (const timer of this.pendingLaunchTimers) timer.cancel();
     this.pendingLaunchTimers = [];
   }
 

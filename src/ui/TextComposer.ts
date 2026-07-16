@@ -4,6 +4,7 @@ import { iconTexture } from './svgIconTexture';
 import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
 import { TEXT_EFFECTS } from '../effects/textEffects/registry';
 import type { AudioManager } from '../audio/AudioManager';
+import { tickerSetInterval, tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
 
 export type { TextRevealEffect };
 
@@ -240,7 +241,7 @@ export class TextComposer {
   private readonly virtualKeyboard: Container;
   private readonly keyboardKeys: VirtualKeyObj[];
   private keyboardOpen = false;
-  private cursorBlinkTimer: number | undefined;
+  private cursorBlinkTimer: TickerTimerHandle | undefined;
   private readonly previewText: Text;
   private readonly baseFontSize: number;
   private readonly previewReveal: TextReveal;
@@ -283,7 +284,7 @@ export class TextComposer {
   private previewCycleActive = false;
   private previewGeneration = 0;
   private previewIndex = 0;
-  private previewCycleTimer: number | undefined;
+  private previewCycleTimer: TickerTimerHandle | undefined;
 
   constructor(deps: TextComposerDeps) {
     this.deps = deps;
@@ -562,7 +563,7 @@ export class TextComposer {
   private stopPreviewCycle(): void {
     this.previewCycleActive = false;
     this.previewGeneration++;
-    window.clearTimeout(this.previewCycleTimer);
+    this.previewCycleTimer?.cancel();
     this.previewReveal.clear();
   }
 
@@ -610,7 +611,7 @@ export class TextComposer {
 
   private previewWait(ms: number): Promise<void> {
     return new Promise((resolve) => {
-      this.previewCycleTimer = window.setTimeout(resolve, ms);
+      this.previewCycleTimer = tickerSetTimeout(this.deps.app.ticker, resolve, ms);
     });
   }
 
@@ -988,14 +989,14 @@ export class TextComposer {
 
   private startCursorBlink(): void {
     this.inputField.cursor.visible = true;
-    window.clearInterval(this.cursorBlinkTimer);
-    this.cursorBlinkTimer = window.setInterval(() => {
+    this.cursorBlinkTimer?.cancel();
+    this.cursorBlinkTimer = tickerSetInterval(this.deps.app.ticker, () => {
       this.inputField.cursor.visible = !this.inputField.cursor.visible;
     }, CURSOR_BLINK_MS);
   }
 
   private stopCursorBlink(): void {
-    window.clearInterval(this.cursorBlinkTimer);
+    this.cursorBlinkTimer?.cancel();
     this.cursorBlinkTimer = undefined;
     this.inputField.cursor.visible = false;
   }

@@ -9,6 +9,7 @@ import { ShapesPanel } from './ShapesPanel';
 import { PlanningIconColumn, type IconRowSpec } from './PlanningIconColumn';
 import type { BottomSheetPanel } from './BottomSheetPanel';
 import { SliderSheetPanel, CameraPickerPanel } from './PlanningSubpanels';
+import { tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
 
 export type LaunchMode = 'mass' | 'sequential';
 
@@ -126,7 +127,7 @@ export class PlanningScreen {
   private liveDocumentationArmed = false;
   private randomModeEnabled = false;
   private autoShowEnabled = false;
-  private hintTimer: number | undefined;
+  private hintTimer: TickerTimerHandle | undefined;
   private hintFadeRaf: number | undefined;
   private hintComposing = false;
   private hintAutoHidden = true;
@@ -312,8 +313,8 @@ export class PlanningScreen {
   private reshowHint(): void {
     this.hintAutoHidden = false;
     this.applyHintVisibility(true);
-    window.clearTimeout(this.hintTimer);
-    this.hintTimer = window.setTimeout(() => {
+    this.hintTimer?.cancel();
+    this.hintTimer = tickerSetTimeout(this.deps.app.ticker, () => {
       this.hintAutoHidden = true;
       this.applyHintVisibility(true);
     }, HINT_VISIBLE_MS);
@@ -323,7 +324,7 @@ export class PlanningScreen {
     this.iconColumn.container.visible = false;
     if (this.hintFadeRaf !== undefined) cancelAnimationFrame(this.hintFadeRaf);
     this.hintText.alpha = 0;
-    window.clearTimeout(this.hintTimer);
+    this.hintTimer?.cancel();
     this.colorPicker.setOpen(false);
     this.shapesPanel.setOpen(false);
     // The camera trigger's active state means "a video background is set",

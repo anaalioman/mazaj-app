@@ -1,5 +1,6 @@
-import { Container, Rectangle, Sprite, Text, TextStyle, Texture, type Application } from 'pixi.js';
+import { CanvasTextMetrics, Container, Rectangle, Sprite, Text, TextStyle, Texture, type Application, type Ticker } from 'pixi.js';
 import type { FireworksSystem } from '../fireworks/FireworksSystem';
+import { tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
 
 export interface CharacterRevealOptions {
   text: string;
@@ -30,13 +31,16 @@ const LAUNCH_SPREAD_PX = 90;
  * a sprite sheet uses). Every sprite still shows genuinely joined Arabic
  * glyphs; only the invisible rectangle each one crops is what's "split".
  *
- * Slice boundaries come from measuring cumulative prefix widths on a
- * scratch <canvas> with the same font — not from Pixi's Text object
- * itself, which has no public per-glyph API. For a pure-RTL string, the
- * *first* logical character ends up at the *right* edge of the rendered
- * box and each later character shifts further left (this is how Arabic
- * reads, right-to-left) — so a naive `prefixWidth[i]` as a left-edge
- * offset is backwards; see sliceBounds() below for the correction.
+ * Slice boundaries come from measuring cumulative prefix widths with
+ * Pixi's own `CanvasTextMetrics.measureText()` (see measurePrefixWidths()
+ * below) — the same static measurer `Text` itself uses internally for
+ * word-wrap layout — not from a hand-rolled scratch canvas, and not from
+ * Pixi's `Text` object directly, which has no public per-glyph API. For a
+ * pure-RTL string, the *first* logical character ends up at the *right*
+ * edge of the rendered box and each later character shifts further left
+ * (this is how Arabic reads, right-to-left) — so a naive `prefixWidth[i]`
+ * as a left-edge offset is backwards; see the `sliceLeft` calculation in
+ * play() below for the correction.
  * Known, accepted approximation: measuring a prefix substring in
  * isolation can shape its own *last* character slightly differently than
  * it would be shaped mid-run in the full string (a joining-form edge
@@ -44,11 +48,17 @@ const LAUNCH_SPREAD_PX = 90;
  *
  * Deliberately plain (no stroke/drop-shadow) style for this pass: Pixi's
  * Text canvas adds internal padding to fit a stroke/shadow's own extra
- * pixels, which would offset every glyph from what a stroke-less scratch
- * canvas measurement predicts. Keeping the sliced text unstyled avoids
- * that whole class of error; a per-sprite filter pass for the gold
- * stroke/shadow look is a real, separate follow-up once this core
- * mechanism is confirmed correct on a real device.
+ * pixels, which would offset every glyph from what a stroke-less
+ * measurement predicts. Keeping the sliced text unstyled avoids that whole
+ * class of error; a per-sprite filter pass for the gold stroke/shadow look
+ * is a real, separate follow-up once this core mechanism is confirmed
+ * correct on a real device.
+ *
+ * Timing: every sequencing step in this class — the per-character launch
+ * stagger and the settle-ease animation — runs off `this.app.ticker`
+ * (see tickerSetTimeout in utils/tickerTimers.ts), not `window.setTimeout`
+ * or `requestAnimationFrame`. Frame-synchronized, and it stops accruing
+ * time the instant the app's own render loop stops.
  */
 export class CharacterReveal {
   private readonly app: Application;
@@ -56,7 +66,7 @@ export class CharacterReveal {
   private readonly root: Container;
   private texture: Texture | null = null;
   private slices: CharacterSlice[] = [];
-  private pendingTimers: number[] = [];
+  private pendingTimers: TickerTimerHandle[] = [];
 
   constructor(app: Application, worldContainer: Container, fireworks: FireworksSystem) {
     this.app = app;
@@ -105,7 +115,7 @@ export class CharacterReveal {
       let settledCount = 0;
       const total = this.slices.length;
       this.slices.forEach((slice, index) => {
-        const timer = window.setTimeout(() => {
+        const timer = tickerSetTimeout(this.app.ticker, () => {
           this.launchCharacter(slice, () => {
             settledCount++;
             if (settledCount >= total) resolve();
@@ -131,26 +141,25 @@ export class CharacterReveal {
     const startY = slice.targetY - 60 - Math.random() * 40;
     sprite.position.set(startX, startY);
 
-    const startTime = performance.now();
-    const step = (now: number) => {
-      const t = Math.min(1, (now - startTime) / SETTLE_MOVE_MS);
-      const eased = 1 - (1 - t) ** 3;
+    let elapsedMs = 0;
+    const step = (t: Ticker): void => {
+      elapsedMs += t.deltaMS;
+      const progress = Math.min(1, elapsedMs / SETTLE_MOVE_MS);
+      const eased = 1 - (1 - progress) ** 3;
       sprite.position.set(startX + (slice.targetX - startX) * eased, startY + (slice.targetY - startY) * eased);
       sprite.alpha = eased;
       sprite.scale.set(1.6 - 0.6 * eased);
-      if (t < 1) {
-        requestAnimationFrame(step);
-        return;
-      }
+      if (progress < 1) return;
+      this.app.ticker.remove(step);
       this.fireworks.spawnSettleSparkle(slice.targetX, slice.targetY);
       onSettled();
     };
-    requestAnimationFrame(step);
+    this.app.ticker.add(step);
   }
 
   /** Cancels any pending launches, destroys every sprite and the one shared texture. Safe to call even if play() never resolved (e.g. the player exits mid-reveal). */
   destroy(): void {
-    for (const timer of this.pendingTimers) window.clearTimeout(timer);
+    for (const timer of this.pendingTimers) timer.cancel();
     this.pendingTimers = [];
     for (const slice of this.slices) slice.sprite.destroy();
     this.slices = [];
@@ -160,15 +169,21 @@ export class CharacterReveal {
   }
 }
 
-/** `prefixWidths[i]` = width of `text.slice(0, i)` measured in isolation, for i = 0..text.length. */
+/**
+ * `prefixWidths[i]` = width of `text.slice(0, i)` measured in isolation, for
+ * i = 0..text.length. Measured with Pixi's own `CanvasTextMetrics` — the
+ * same static measurer Pixi's `Text` uses internally for its own word-wrap
+ * layout — rather than a hand-rolled scratch `<canvas>` + manual `ctx.font`
+ * string. That matters beyond ceremony: `CanvasTextMetrics` builds the font
+ * string from `style._fontString` (Pixi's own resolver — font family
+ * fallback list, weight, style, all handled exactly as the real render
+ * does), so a slice boundary can never drift from what Pixi *actually*
+ * draws the way a manually-reconstructed `ctx.font` string could.
+ */
 function measurePrefixWidths(text: string, style: TextStyle): number[] {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d')!;
-  ctx.direction = 'rtl';
-  ctx.font = `${style.fontWeight ?? '400'} ${style.fontSize}px ${style.fontFamily}`;
   const widths: number[] = [0];
   for (let i = 1; i <= text.length; i++) {
-    widths.push(ctx.measureText(text.slice(0, i)).width);
+    widths.push(CanvasTextMetrics.measureText(text.slice(0, i), style, undefined, false).width);
   }
   return widths;
 }

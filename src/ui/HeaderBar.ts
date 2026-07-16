@@ -3,6 +3,7 @@ import { BackdropBlurFilter } from 'pixi-filters';
 import type { AudioManager } from '../audio/AudioManager';
 import { iconTexture } from './svgIconTexture';
 import type { IconName } from './icons';
+import { tickerSetTimeout } from '../utils/tickerTimers';
 
 export interface HeaderBarDeps {
   app: Application;
@@ -270,7 +271,7 @@ export class HeaderBar {
     if (!bg) return;
     const originalTint = bg.tint;
     bg.tint = FLASH_COLOR;
-    window.setTimeout(() => {
+    tickerSetTimeout(this.deps.app.ticker, () => {
       bg.tint = originalTint;
     }, FLASH_MS);
   }

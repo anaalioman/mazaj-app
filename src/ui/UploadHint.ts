@@ -1,6 +1,7 @@
 import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
 import { BackdropBlurFilter, DropShadowFilter } from 'pixi-filters';
 import type { SliderSheetPanel } from './PlanningSubpanels';
+import { tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
 
 const STORAGE_KEY = 'mzj-upload-hint-shown';
 const VISIBLE_MS = 3000;
@@ -46,7 +47,7 @@ export class UploadHint {
   private readonly toastRoot: Container;
   private readonly toastBg: Graphics;
   private readonly toastText: Text;
-  private hideTimer: number | null = null;
+  private hideTimer: TickerTimerHandle | null = null;
   /** -TOAST_SLIDE_Y when hidden, 0 when fully shown — animated independently of `toastRoot.alpha` but combined with it every frame in applyTransform(). */
   private slideOffset = -TOAST_SLIDE_Y;
   private lastMessage = '';
@@ -93,8 +94,8 @@ export class UploadHint {
     this.animateToast(true);
     this.glowPanel.pulse();
 
-    if (this.hideTimer !== null) window.clearTimeout(this.hideTimer);
-    this.hideTimer = window.setTimeout(() => this.animateToast(false), VISIBLE_MS);
+    if (this.hideTimer !== null) this.hideTimer.cancel();
+    this.hideTimer = tickerSetTimeout(this.app.ticker, () => this.animateToast(false), VISIBLE_MS);
 
     this.markShown();
   }

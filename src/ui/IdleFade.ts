@@ -1,4 +1,5 @@
-import type { Container } from 'pixi.js';
+import type { Container, Ticker } from 'pixi.js';
+import { tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
 
 const DEFAULT_IDLE_MS = 5000;
 /** Matches the old CSS `.mzj-fade-target` rule's `transition: opacity 0.18s ease` — fading back in still eases over this long; hiding is instant (the old rule's `display: none` never animated either, since CSS doesn't tween to/from `display: none`). */
@@ -20,13 +21,15 @@ const FADE_IN_MS = 180;
  */
 export class IdleFadeController {
   private readonly targets: Container[];
+  private readonly ticker: Ticker;
   private readonly idleMs: number;
-  private timer: number | undefined;
-  private fadeRaf: number | undefined;
+  private timer: TickerTimerHandle | undefined;
+  private fadeTick: ((t: Ticker) => void) | undefined;
   private armed = false;
 
-  constructor(targets: Container[], idleMs: number = DEFAULT_IDLE_MS) {
+  constructor(targets: Container[], ticker: Ticker, idleMs: number = DEFAULT_IDLE_MS) {
     this.targets = targets;
+    this.ticker = ticker;
     this.idleMs = idleMs;
 
     window.addEventListener('pointermove', this.handleActivity);
@@ -59,7 +62,7 @@ export class IdleFadeController {
    */
   disarmAndShow(): void {
     this.armed = false;
-    window.clearTimeout(this.timer);
+    this.timer?.cancel();
     this.show();
   }
 
@@ -69,31 +72,38 @@ export class IdleFadeController {
   };
 
   private resetTimer(): void {
-    window.clearTimeout(this.timer);
+    this.timer?.cancel();
     if (!this.armed) return;
-    this.timer = window.setTimeout(() => this.hide(), this.idleMs);
+    this.timer = tickerSetTimeout(this.ticker, () => this.hide(), this.idleMs);
+  }
+
+  private stopFade(): void {
+    if (this.fadeTick) this.ticker.remove(this.fadeTick);
+    this.fadeTick = undefined;
   }
 
   private show(): void {
-    if (this.fadeRaf !== undefined) cancelAnimationFrame(this.fadeRaf);
+    this.stopFade();
     const startAlphas = this.targets.map((target) => {
       target.visible = true;
       return target.alpha;
     });
-    const start = performance.now();
+    let elapsedMs = 0;
 
-    const tick = (now: number): void => {
-      const t = Math.min(1, (now - start) / FADE_IN_MS);
+    const tick = (t: Ticker): void => {
+      elapsedMs += t.deltaMS;
+      const progress = Math.min(1, elapsedMs / FADE_IN_MS);
       this.targets.forEach((target, i) => {
-        target.alpha = startAlphas[i] + (1 - startAlphas[i]) * t;
+        target.alpha = startAlphas[i] + (1 - startAlphas[i]) * progress;
       });
-      if (t < 1) this.fadeRaf = requestAnimationFrame(tick);
+      if (progress >= 1) this.stopFade();
     };
-    this.fadeRaf = requestAnimationFrame(tick);
+    this.fadeTick = tick;
+    this.ticker.add(tick);
   }
 
   private hide(): void {
-    if (this.fadeRaf !== undefined) cancelAnimationFrame(this.fadeRaf);
+    this.stopFade();
     for (const target of this.targets) {
       target.visible = false;
       target.alpha = 0;

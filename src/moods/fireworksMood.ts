@@ -17,6 +17,7 @@ import { PlanningMode } from '../ui/PlanningMode';
 import { PlanningScreen, type InputMode } from '../ui/PlanningScreen';
 import { canSaveToGallery, saveSnapshotToGallery } from '../media/GallerySaver';
 import { styleFixedFullscreenHost, styleFullscreenCanvas } from '../dom/shellStyles';
+import { tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
 
 export interface FireworksMoodHandle {
   show(): void;
@@ -187,7 +188,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     if (fireworks.isGroundFountainMode()) {
       fireworks.igniteGroundFountain(x, y);
       const stopSizzle = audio.startFountainSizzle();
-      window.setTimeout(stopSizzle, 5000);
+      tickerSetTimeout(app.ticker, stopSizzle, 5000);
       return;
     }
     fireworks.launch(x, y);
@@ -379,7 +380,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
     // *pending*, never-fired selection gets abandoned below.
     const wasShowRunning = showStarted;
     fireworks.clearActive();
-    // A sequential show's staggered per-pin setTimeouts (see PlanningMode's
+    // A sequential show's staggered per-pin Ticker timers (see PlanningMode's
     // own doc comment) keep running past this point otherwise — a real leak
     // a field test caught: rockets kept firing on the idle screen after the
     // player had already exited.
@@ -457,7 +458,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   snapshotErrorText.alpha = 0;
   snapshotErrorText.eventMode = 'none';
   uiContainer.addChild(snapshotErrorText);
-  let snapshotErrorHideTimer: number | undefined;
+  let snapshotErrorHideTimer: TickerTimerHandle | undefined;
 
   function layoutSnapshotErrorText(): void {
     snapshotErrorText.style.wordWrapWidth = Math.min(320, app.screen.width * 0.8);
@@ -469,8 +470,8 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   function showSnapshotError(message: string): void {
     snapshotErrorText.text = `تعذّر حفظ اللقطة: ${message}`;
     snapshotErrorText.alpha = 1;
-    window.clearTimeout(snapshotErrorHideTimer);
-    snapshotErrorHideTimer = window.setTimeout(() => {
+    snapshotErrorHideTimer?.cancel();
+    snapshotErrorHideTimer = tickerSetTimeout(app.ticker, () => {
       snapshotErrorText.alpha = 0;
     }, SNAPSHOT_ERROR_VISIBLE_MS);
   }
@@ -898,7 +899,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // for its `button`/`.mzj-tab`/`[data-tactile]` selector to ever match
   // (it had gone silently dead once PlanningIconColumn/PlanningSubpanels/
   // TextComposer all moved off DOM, and was found + fixed in this pass).
-  const idleFade = new IdleFadeController([header.container]);
+  const idleFade = new IdleFadeController([header.container], app.ticker);
 
   // Pixi paints/hit-tests a container's children in add order (last added =
   // topmost) — exitButton/shutterButton/snapshotErrorText had to be

@@ -3,6 +3,7 @@ import { AdvancedBloomFilter, DropShadowFilter } from 'pixi-filters';
 import { iconTexture } from './svgIconTexture';
 import type { IconName } from './icons';
 import type { AudioManager } from '../audio/AudioManager';
+import { tickerSetTimeout } from '../utils/tickerTimers';
 
 /**
  * Geometry ported 1:1 from the old `.mzj-planning-side-right` CSS (a
@@ -288,7 +289,7 @@ export class PlanningIconColumn {
     }
     halo.blendMode = 'add';
     target.addChildAt(halo, 0);
-    window.setTimeout(() => {
+    tickerSetTimeout(this.app.ticker, () => {
       halo.destroy();
     }, FLASH_MS);
   }
