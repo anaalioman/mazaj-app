@@ -1,4 +1,4 @@
-import { Application, Container, FillGradient, Graphics, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent } from 'pixi.js';
+import { Application, Container, FillGradient, Graphics, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent, type Ticker } from 'pixi.js';
 import { AdvancedBloomFilter, DropShadowFilter } from 'pixi-filters';
 import { iconTexture } from './svgIconTexture';
 import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
@@ -82,6 +82,19 @@ const KEY_LABEL_COLOR = 0xffe9b3;
 const KEY_LABEL_SIZE = 17;
 const KEY_GLOW_FLASH_MS = 180;
 const FUNCTION_KEY_LABEL_SIZE = 13;
+/**
+ * One shared filter instance for every key's glow, instead of each of the
+ * ~34 keys carrying its own permanent `AdvancedBloomFilter`. A Pixi Filter
+ * is stateless between renders (its own uniforms are fixed config, not
+ * per-target state), so the same instance is safe to reference from
+ * multiple objects' `.filters` at once — sharing it costs nothing. The real
+ * saving is elsewhere: `.filters` is only ever assigned to a key's `glow`
+ * for the ~180ms it's actually flashing (see flashKeyGlow()), and cleared
+ * right after — so a keyboard sitting idle costs zero bloom render passes
+ * instead of one permanent pass per key, per frame, whether or not anyone's
+ * touching it.
+ */
+const KEY_GLOW_FILTER = new AdvancedBloomFilter({ threshold: 0.2, blur: 6, quality: 4, bloomScale: 1.3, brightness: 1.1 });
 const DONE_KEY_COLOR = 0xfff6df;
 
 const SAMPLE_PHRASE = 'مبروك';
@@ -890,8 +903,10 @@ export class TextComposer {
     // than a letter) and depends on the composer's responsive width, so
     // the actual shape is (re)drawn in drawKeyBackground() from
     // layoutVirtualKeyboard() instead, same pattern as inputField.bg.
+    // No `.filters` assigned here — see KEY_GLOW_FILTER's own doc comment;
+    // flashKeyGlow() attaches the one shared filter only while this key is
+    // actually mid-flash.
     const glow = new Graphics();
-    glow.filters = [new AdvancedBloomFilter({ threshold: 0.2, blur: 6, quality: 4, bloomScale: 1.3, brightness: 1.1 })];
     glow.alpha = 0;
     root.addChild(glow);
 
@@ -938,16 +953,20 @@ export class TextComposer {
     });
   }
 
-  /** The same additive-halo technique createHandle() uses for its press state, here fired as a one-shot fade — the "تفاعل مع مؤثرات الـ Glow" the effects bar itself is built on, reused as tactile per-key feedback. */
+  /** The same additive-halo technique createHandle() uses for its press state, here fired as a one-shot fade — the "تفاعل مع مؤثرات الـ Glow" the effects bar itself is built on, reused as tactile per-key feedback. Ticker-driven (see utils/tickerTimers.ts's sibling pattern), and attaches KEY_GLOW_FILTER only for this flash's own duration — see that constant's own doc comment. */
   private flashKeyGlow(key: VirtualKeyObj): void {
+    key.glow.filters = [KEY_GLOW_FILTER];
     key.glow.alpha = 1;
-    const startTime = performance.now();
-    const step = (now: number) => {
-      const t = Math.min(1, (now - startTime) / KEY_GLOW_FLASH_MS);
-      key.glow.alpha = 1 - t;
-      if (t < 1) requestAnimationFrame(step);
+    let elapsedMs = 0;
+    const step = (t: Ticker): void => {
+      elapsedMs += t.deltaMS;
+      const progress = Math.min(1, elapsedMs / KEY_GLOW_FLASH_MS);
+      key.glow.alpha = 1 - progress;
+      if (progress < 1) return;
+      this.deps.app.ticker.remove(step);
+      key.glow.filters = [];
     };
-    requestAnimationFrame(step);
+    this.deps.app.ticker.add(step);
   }
 
   private openVirtualKeyboard(): void {
