@@ -988,28 +988,34 @@ export class TextComposer {
    * string grows or shrinks.
    */
   /**
-   * Deliberately single-line (no `wordWrap`) — the committed text this
-   * feeds into TextReveal/CharacterReveal must stay on one row for their
-   * own per-character horizontal slicing math to hold (see CharacterReveal's
-   * own doc comment: wrapping would put later characters on a second row,
-   * which that 1-D slice-position formula has no notion of at all). A
-   * fixed-height top bar rules out letting the pill grow taller instead.
-   * So a long enough phrase is handled by shrinking the whole line down to
-   * fit the pill's own width — never wrapping, never truncating a character
-   * the player actually typed — down to INPUT_MIN_SHRINK, past which it's
-   * allowed to overflow rather than become illegible.
+   * Correction on an earlier version of this comment: it cited
+   * CharacterReveal's per-character slicing as the reason this stays
+   * single-line, but this input pill's text isn't actually wired to
+   * CharacterReveal at all right now (see consumeForReveal() — the
+   * committed string feeds TextReveal instead, whose effects animate the
+   * whole Text as one unit and don't care about line count). The real
+   * reason is simpler: this pill sits in a fixed-height top bar, alongside
+   * the back button, with the effects bar/keyboard positioned at a fixed
+   * offset below it — wrapping to a second line would grow the pill and
+   * cascade into re-laying out everything beneath it, a bigger change than
+   * this feature warrants. So a long phrase is instead handled by shrinking
+   * the whole line to fit — done by lowering `fontSize` and letting Pixi
+   * re-render the glyphs at that true size (not by scaling the already-
+   * rendered texture, which is a GPU-side transform on top of a fixed
+   * raster), down to INPUT_MIN_SHRINK, past which it's allowed to overflow
+   * rather than become illegible.
    */
   private refreshInputVisual(): void {
     const hasText = this.text.length > 0;
     this.inputField.text.text = this.text;
     this.inputField.text.visible = hasText;
     this.inputField.placeholder.visible = !hasText;
-    this.inputField.text.scale.set(1);
+    this.inputField.text.style.fontSize = INPUT_FONT_SIZE;
 
     const available = this.inputFieldWidth - CURSOR_WIDTH - CURSOR_GAP * 2;
     if (hasText && available > 0 && this.inputField.text.width > available) {
-      const shrink = Math.max(INPUT_MIN_SHRINK, available / this.inputField.text.width);
-      this.inputField.text.scale.set(shrink);
+      const ratio = Math.max(INPUT_MIN_SHRINK, available / this.inputField.text.width);
+      this.inputField.text.style.fontSize = Math.round(INPUT_FONT_SIZE * ratio);
     }
 
     const caretX = hasText ? -this.inputField.text.width / 2 - CURSOR_GAP : 0;

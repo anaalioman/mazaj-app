@@ -50,7 +50,7 @@ export class TextReveal {
     const fontScale = options.fontScale ?? 1;
 
     const style = new TextStyle({
-      fontFamily: 'system-ui, "Segoe UI", Tahoma, sans-serif',
+      fontFamily: 'Tajawal, system-ui, "Segoe UI", Tahoma, sans-serif',
       fontSize: Math.round(Math.max(36, Math.min(width, height) * 0.09) * fontScale),
       fontWeight: '800',
       fill: 0xffe9b3,
