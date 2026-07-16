@@ -1,3 +1,5 @@
+import { triggerDownload } from '../dom/shadowServices';
+
 const CANDIDATE_MIME_TYPES = [
   'video/webm;codecs=vp9,opus',
   'video/webm;codecs=vp8,opus',
@@ -68,9 +70,6 @@ export class RecordingManager {
 
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  link.click();
+  triggerDownload(url, filename);
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }

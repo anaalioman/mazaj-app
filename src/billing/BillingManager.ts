@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { Entitlements } from './Entitlements';
 import { ALL_PRODUCT_IDS, PRODUCT_TO_ENTITLEMENT, type ProductId } from './products';
+import { waitForCordovaDeviceReady } from '../dom/shadowServices';
 
 /**
  * Thin wrapper around cordova-plugin-purchase (talks directly to the Google
@@ -76,19 +77,10 @@ export class BillingManager {
     if (error) console.error('فشلت استعادة المشتريات:', error.message);
   }
 
-  private waitForStore(): Promise<CdvPurchaseStore | null> {
-    if (window.CdvPurchase) return Promise.resolve(window.CdvPurchase.store);
-
-    return new Promise((resolve) => {
-      const timeout = window.setTimeout(() => resolve(null), 5000);
-      document.addEventListener(
-        'deviceready',
-        () => {
-          window.clearTimeout(timeout);
-          resolve(window.CdvPurchase?.store ?? null);
-        },
-        { once: true },
-      );
-    });
+  private async waitForStore(): Promise<CdvPurchaseStore | null> {
+    const existing = window.CdvPurchase;
+    if (existing) return existing.store;
+    const ready = await waitForCordovaDeviceReady(5000);
+    return ready ? (window.CdvPurchase?.store ?? null) : null;
   }
 }

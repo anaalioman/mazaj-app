@@ -10,6 +10,7 @@ import { PlanningIconColumn, type IconRowSpec } from './PlanningIconColumn';
 import type { BottomSheetPanel } from './BottomSheetPanel';
 import { SliderSheetPanel, CameraPickerPanel } from './PlanningSubpanels';
 import { tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
+import { createHiddenFileInput } from '../dom/shadowServices';
 
 export type LaunchMode = 'mass' | 'sequential';
 
@@ -135,8 +136,8 @@ export class PlanningScreen {
   constructor(deps: PlanningScreenDeps) {
     this.deps = deps;
 
-    this.bgImageInput = this.buildFileInput('image/*');
-    this.bgVideoInput = this.buildFileInput('video/*');
+    this.bgImageInput = createHiddenFileInput('image/*');
+    this.bgVideoInput = createHiddenFileInput('video/*');
 
     this.hintText = new Text({
       text: HINT_TEXT,
@@ -406,24 +407,6 @@ export class PlanningScreen {
     };
     this.hintFadeTick = tick;
     this.deps.app.ticker.add(tick);
-  }
-
-  /** The two file-picker bridges' shared build logic — see the class field's own doc comment for why this DOM node is unavoidable. Zero CSS: every property below is a direct inline `style.*` assignment, matching TextComposer's ghost-input rigor. */
-  private buildFileInput(accept: string): HTMLInputElement {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = accept;
-    input.style.position = 'fixed';
-    input.style.left = '-9999px';
-    input.style.top = '-9999px';
-    input.style.width = '1px';
-    input.style.height = '1px';
-    input.style.opacity = '0';
-    for (const type of ['pointerdown', 'click', 'change'] as const) {
-      input.addEventListener(type, (event) => event.stopPropagation());
-    }
-    document.body.appendChild(input);
-    return input;
   }
 
   /**

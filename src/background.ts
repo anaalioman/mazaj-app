@@ -1,4 +1,5 @@
 import { Application, BlurFilter, Container, FillGradient, Graphics, Sprite, Texture } from 'pixi.js';
+import { createLiveStreamVideoElement, createLoopingVideoElement } from './dom/shadowServices';
 
 // Deep Sky Canvas palette.
 const SKY_TOP = 0x050508; // Royal Black
@@ -91,12 +92,7 @@ export class BackgroundLayer {
   /** Loads a user-supplied clip and plays it, looped and muted, as a live backdrop. */
   async setVideo(file: File): Promise<void> {
     const objectUrl = URL.createObjectURL(file);
-    const video = document.createElement('video');
-    video.src = objectUrl;
-    video.loop = true;
-    video.muted = true;
-    video.playsInline = true;
-    video.autoplay = true;
+    const video = createLoopingVideoElement(objectUrl);
     await video.play().catch(() => undefined);
 
     this.stopVideo();
@@ -122,11 +118,7 @@ export class BackgroundLayer {
       audio: false,
     });
 
-    const video = document.createElement('video');
-    video.srcObject = stream;
-    video.muted = true;
-    video.playsInline = true;
-    video.autoplay = true;
+    const video = createLiveStreamVideoElement(stream);
     await video.play().catch(() => undefined);
 
     this.stopVideo();

@@ -17,6 +17,7 @@ import { PlanningMode } from '../ui/PlanningMode';
 import { PlanningScreen, type InputMode } from '../ui/PlanningScreen';
 import { canSaveToGallery, saveSnapshotToGallery } from '../media/GallerySaver';
 import { tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
+import { createOffscreenCanvas, triggerDownload } from '../dom/shadowServices';
 
 export interface FireworksMoodHandle {
   show(): void;
@@ -119,9 +120,7 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
   // documented as "relatively expensive" per-call, but it only ever runs
   // while the player has explicitly started a recording, so that cost is
   // scoped to exactly when it's needed.
-  const recordCanvas = document.createElement('canvas');
-  recordCanvas.width = app.screen.width * app.renderer.resolution;
-  recordCanvas.height = app.screen.height * app.renderer.resolution;
+  const recordCanvas = createOffscreenCanvas(app.screen.width * app.renderer.resolution, app.screen.height * app.renderer.resolution);
   const recordCtx = recordCanvas.getContext('2d')!;
   // A fixed viewport rect, not the default tight bounding box around
   // worldContainer's current contents — particles/background constantly
@@ -627,10 +626,7 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
       if (canSaveToGallery()) {
         await saveSnapshotToGallery(dataUrl);
       } else {
-        const link = document.createElement('a');
-        link.href = dataUrl;
-        link.download = `mazaj-snapshot-${Date.now()}.png`;
-        link.click();
+        triggerDownload(dataUrl, `mazaj-snapshot-${Date.now()}.png`);
       }
     } catch (error) {
       // console.error alone is invisible in a shipped APK without USB
