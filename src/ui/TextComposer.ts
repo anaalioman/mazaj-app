@@ -158,6 +158,8 @@ const BACK_ICON_SOURCE_SIZE = 40;
  */
 const INPUT_FONT_SIZE = 15;
 const INPUT_TEXT_COLOR = 0xffe9b3;
+/** Shrink-to-fit floor for the typed preview — see refreshInputVisual()'s own doc comment. Never shrinks past half size; a very long phrase past that point overflows rather than becoming illegible. */
+const INPUT_MIN_SHRINK = 0.5;
 const PLACEHOLDER_TEXT = 'اكتب عبارتك هنا';
 const PLACEHOLDER_COLOR = 0xffffff;
 const PLACEHOLDER_ALPHA = 0.4;
@@ -244,6 +246,8 @@ export class TextComposer {
   private readonly virtualKeyboard: Container;
   private readonly keyboardKeys: VirtualKeyObj[];
   private keyboardOpen = false;
+  /** Set each time layoutComposer() runs — the input pill's own available width, used by refreshInputVisual()'s shrink-to-fit. */
+  private inputFieldWidth = 0;
   private cursorBlinkTimer: TickerTimerHandle | undefined;
   private readonly previewText: Text;
   private readonly baseFontSize: number;
@@ -983,11 +987,30 @@ export class TextComposer {
    * will actually land, and `-text.width / 2` tracks that precisely as the
    * string grows or shrinks.
    */
+  /**
+   * Deliberately single-line (no `wordWrap`) — the committed text this
+   * feeds into TextReveal/CharacterReveal must stay on one row for their
+   * own per-character horizontal slicing math to hold (see CharacterReveal's
+   * own doc comment: wrapping would put later characters on a second row,
+   * which that 1-D slice-position formula has no notion of at all). A
+   * fixed-height top bar rules out letting the pill grow taller instead.
+   * So a long enough phrase is handled by shrinking the whole line down to
+   * fit the pill's own width — never wrapping, never truncating a character
+   * the player actually typed — down to INPUT_MIN_SHRINK, past which it's
+   * allowed to overflow rather than become illegible.
+   */
   private refreshInputVisual(): void {
     const hasText = this.text.length > 0;
     this.inputField.text.text = this.text;
     this.inputField.text.visible = hasText;
     this.inputField.placeholder.visible = !hasText;
+    this.inputField.text.scale.set(1);
+
+    const available = this.inputFieldWidth - CURSOR_WIDTH - CURSOR_GAP * 2;
+    if (hasText && available > 0 && this.inputField.text.width > available) {
+      const shrink = Math.max(INPUT_MIN_SHRINK, available / this.inputField.text.width);
+      this.inputField.text.scale.set(shrink);
+    }
 
     const caretX = hasText ? -this.inputField.text.width / 2 - CURSOR_GAP : 0;
     this.inputField.cursor.position.set(caretX, 0);
@@ -1070,6 +1093,7 @@ export class TextComposer {
     this.backButton.root.position.set(composerWidth - BACK_DIAMETER / 2, TOPBAR_HEIGHT / 2);
 
     const inputWidth = composerWidth - BACK_DIAMETER - GAP_BACK_INPUT;
+    this.inputFieldWidth = inputWidth;
     this.inputField.root.position.set(inputWidth / 2, TOPBAR_HEIGHT / 2);
     this.inputField.root.hitArea = new Rectangle(-inputWidth / 2, -INPUT_HIT_HEIGHT / 2, inputWidth, INPUT_HIT_HEIGHT);
     this.inputField.bg
@@ -1079,6 +1103,11 @@ export class TextComposer {
 
     const contentBottom = this.keyboardOpen ? this.layoutVirtualKeyboard(composerWidth) : this.layoutEffectFrames(composerWidth);
     this.catchAll.clear().rect(0, 0, composerWidth, contentBottom).fill({ color: 0x000000, alpha: 0.001 });
+
+    // Re-applies the shrink-to-fit against the (possibly just-changed) input
+    // width — a resize alone, with no new keystroke, can push already-typed
+    // text past the fit threshold on a narrower screen.
+    this.refreshInputVisual();
   }
 
   private drawKeyBackground(key: VirtualKeyObj, width: number): void {
