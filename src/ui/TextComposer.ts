@@ -1,10 +1,11 @@
-import { Application, Container, FillGradient, Graphics, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent, type Ticker } from 'pixi.js';
+import { Application, Container, FillGradient, Graphics, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent } from 'pixi.js';
 import { AdvancedBloomFilter, DropShadowFilter } from 'pixi-filters';
 import { iconTexture } from './svgIconTexture';
 import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
 import { TEXT_EFFECTS } from '../effects/textEffects/registry';
 import type { AudioManager } from '../audio/AudioManager';
 import { tickerSetInterval, tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
+import { createHiddenTextInput } from '../dom/shadowServices';
 
 export type { TextRevealEffect };
 
@@ -56,47 +57,6 @@ interface InputFieldObj {
   placeholder: Text;
   cursor: Graphics;
 }
-
-/** One native on-canvas keyboard key — a letter/backspace/space/done, root-centered like every other control in this file. `glow` is the same additive halo technique createHandle() uses, flashed briefly on every press. */
-interface VirtualKeyObj {
-  action: 'char' | 'backspace' | 'space' | 'done';
-  char: string;
-  root: Container;
-  bg: Graphics;
-  label: Text;
-  glow: Graphics;
-}
-
-/**
- * Standard Arabic alphabet order (not a phone-OS keyboard layout — see
- * buildVirtualKeyboard()'s own doc comment for why a QWERTY-style row
- * layout is physically impossible at the 44px hitArea floor this project
- * enforces everywhere else). ء/ة/ى included since they're common enough to
- * type directly rather than forcing a two-step compose.
- */
-const KEYBOARD_LETTERS = [
-  'ا', 'ب', 'ت', 'ث', 'ج', 'ح', 'خ', 'د', 'ذ', 'ر', 'ز',
-  'س', 'ش', 'ص', 'ض', 'ط', 'ظ', 'ع', 'غ', 'ف', 'ق', 'ك',
-  'ل', 'م', 'ن', 'ه', 'و', 'ي', 'ء', 'ة', 'ى',
-];
-const KEYBOARD_COLUMNS = 7;
-const KEY_SIZE = 44;
-const KEY_GAP = 6;
-const KEY_RADIUS = 10;
-const KEYBOARD_TOP_MARGIN = 12;
-const KEYBOARD_BOTTOM_ROW_GAP = 8;
-const KEY_FILL_COLOR = 0x0d0e16;
-const KEY_FILL_ALPHA = 0.6;
-const KEY_BORDER_COLOR = 0xffffff;
-const KEY_BORDER_ALPHA = 0.16;
-const KEY_LABEL_COLOR = 0xffe9b3;
-const KEY_LABEL_SIZE = 17;
-const KEY_GLOW_FLASH_MS = 180;
-const FUNCTION_KEY_LABEL_SIZE = 13;
-/** Concentric-layer halo (see drawKeyBackground()) — how far the outermost, faintest layer extends past the key's own edge. */
-const KEY_GLOW_STEPS = 5;
-const KEY_GLOW_MAX_OUTSET = 10;
-const DONE_KEY_COLOR = 0xfff6df;
 
 const SAMPLE_PHRASE = 'مبروك';
 const MIN_SCALE = 0.4;
@@ -164,8 +124,8 @@ const BACK_ICON_SOURCE_SIZE = 40;
 /**
  * The input field's genuine Pixi visuals — text, placeholder, and a
  * blinking gold caret, all real `Text`/`Graphics` on `app.stage`. See
- * buildVirtualKeyboard() for the native on-canvas keyboard that feeds
- * `this.text` (and therefore this display) its characters.
+ * buildGhostInput() for the hidden native `<input>` that feeds `this.text`
+ * (and therefore this display) its characters via the OS's own keyboard.
  */
 const INPUT_FONT_SIZE = 15;
 const INPUT_TEXT_COLOR = 0xffe9b3;
@@ -217,23 +177,31 @@ function clamp(value: number, min: number, max: number): number {
  * rotation persist in memory for as long as the mood instance lives (see
  * fireworksMood.ts's module doc).
  *
- * Every visible pixel of this class is genuine Pixi, and — as of this
- * revision — every *interactive* pixel is too: the back button, the input
- * field (background pill, live text, placeholder, blinking gold caret),
- * the effects bar's 7 frames, the fully native on-canvas Arabic keyboard
- * (see buildVirtualKeyboard()), the control box (border + two dedicated
- * corner handles), and the full-screen "tap outside to commit" backdrop
- * are all `Graphics`/`Container`/`Text` objects living on `app.stage`,
- * positioned via Pixi's own `position`/`rotation` — never CSS, never DOM.
- * This class creates zero DOM nodes. The tradeoff, made explicitly and
- * knowingly: no OS autocorrect, predictive text, personal dictionary, or
- * swipe-typing — the keyboard only ever inserts exactly the glyph printed
- * on the key tapped. The control box border keeps Konva.js's own
- * Transformer border default (1px `rgb(0, 161, 255)`, see the KONVA_BLUE
- * constant); the two handles are their own dedicated multi-function
- * circles, not a generic 4-corner grid — nothing renders outside the box's
- * own rectangle (see HANDLE_* constants above and syncControlBoxTransform()
- * below).
+ * Every visible pixel of this class is genuine Pixi: the back button, the
+ * input field (background pill, live text, placeholder, blinking gold
+ * caret, the horizontal-scroll mask/pan from refreshInputVisual()), the
+ * effects bar's 7 frames, the control box (border + two dedicated corner
+ * handles), and the full-screen "tap outside to commit" backdrop are all
+ * `Graphics`/`Container`/`Text` objects living on `app.stage`, positioned
+ * via Pixi's own `position`/`rotation` — never CSS, never DOM.
+ *
+ * Typing itself is the one deliberate exception: `ghostInput` (see
+ * buildGhostInput()) is a real `<input>` element, invisible and positioned
+ * exactly over the Pixi input pill, focused on tap so the device's own OS
+ * keyboard opens — autocorrect, predictive text, voice input, and every
+ * other native typing feature the platform provides work exactly as they
+ * would in any other app. Its `input` event is the only bridge into Pixi:
+ * `this.text = ghostInput.value` feeds the same `refreshInputVisual()`
+ * pipeline a native-canvas keyboard would have. This is a real, explicit
+ * architectural trade against an earlier revision of this class, which had
+ * zero DOM at the cost of every one of those OS features — see
+ * buildGhostInput()'s own doc comment for the reasoning.
+ *
+ * The control box border keeps Konva.js's own Transformer border default
+ * (1px `rgb(0, 161, 255)`, see the KONVA_BLUE constant); the two handles
+ * are their own dedicated multi-function circles, not a generic 4-corner
+ * grid — nothing renders outside the box's own rectangle (see HANDLE_*
+ * constants above and syncControlBoxTransform() below).
  *
  * The effects bar's demo previews reuse the exact same TextReveal engine as
  * the real final reveal (same particle physics, no CSS/static-image
@@ -253,10 +221,8 @@ export class TextComposer {
   private readonly backButton: { root: Container; bg: Graphics };
   private readonly inputField: InputFieldObj;
   private readonly effectFrames: EffectFrameObj[];
-  /** The native on-canvas Arabic keyboard — see buildVirtualKeyboard(). Hidden until the input field is tapped; hides the effects bar while open (both compete for the same vertical space below the input row). */
-  private readonly virtualKeyboard: Container;
-  private readonly keyboardKeys: VirtualKeyObj[];
-  private keyboardOpen = false;
+  /** The one real DOM element in this class — see buildGhostInput()'s own doc comment. */
+  private readonly ghostInput: HTMLInputElement;
   /** Set each time layoutComposer() runs — the input pill's own available width, used by refreshInputVisual()'s auto-scroll. */
   private inputFieldWidth = 0;
   /** Current pan offset applied to inputField.scrollGroup — 0 is fully right-aligned (resting position); positive values shift the group right, revealing more of the line's left (most-recently-typed) end. Clamped to [0, inputMaxScrollX]. */
@@ -375,11 +341,7 @@ export class TextComposer {
     this.effectFrames = TEXT_EFFECTS.map((entry) => this.buildEffectFrame(entry.id, entry.label));
     for (const frame of this.effectFrames) this.composerContainer.addChild(frame.root);
 
-    this.virtualKeyboard = new Container();
-    this.virtualKeyboard.visible = false;
-    this.composerContainer.addChild(this.virtualKeyboard);
-    this.keyboardKeys = this.buildVirtualKeyboard();
-    for (const key of this.keyboardKeys) this.virtualKeyboard.addChild(key.root);
+    this.ghostInput = this.buildGhostInput();
 
     deps.app.renderer.on('resize', () => this.layoutComposer());
     this.layoutComposer();
@@ -467,7 +429,7 @@ export class TextComposer {
     return { root, glow };
   }
 
-  /** Opens the composer pre-filled with whatever text/effect is currently set — used by the T icon and by tapping the committed text. Starts on the effects bar, not the keyboard — unlike the old DOM-bridge version there is no OS keyboard animation to kick off early, and showing the effects bar first lets the player see their options before tapping the input field to type. */
+  /** Opens the composer pre-filled with whatever text/effect is currently set — used by the T icon and by tapping the committed text. Starts on the effects bar; the OS keyboard only opens once the player actually taps the input pill (see buildGhostInput()), not automatically here. */
   open(): void {
     this.closeControlBox();
     this.previewText.visible = false;
@@ -490,7 +452,7 @@ export class TextComposer {
     // "ابدأ العرض") while the composer or control box is still open.
     this.stopPreviewCycle();
     this.composerContainer.visible = false;
-    this.closeVirtualKeyboard();
+    this.ghostInput.blur();
     this.closeControlBox();
     this.previewText.visible = false;
     if (!this.hasCommittedOnce) return null;
@@ -572,7 +534,7 @@ export class TextComposer {
       event.stopPropagation();
       this.deps.audio.playUiClick();
       this.stopPreviewCycle();
-      this.closeVirtualKeyboard();
+      this.ghostInput.blur();
       this.composerContainer.visible = false;
       this.text = this.text.trim() ? this.text : SAMPLE_PHRASE;
       this.previewText.text = this.text;
@@ -845,8 +807,9 @@ export class TextComposer {
    * while empty, and a blinking gold caret with the same
    * `AdvancedBloomFilter`/`DropShadowFilter` recipe as the effects bar's
    * frames — "مؤشر ذهبي متسق مع الهوية الملكية". Tapping anywhere in the
-   * field's hitArea opens the native on-canvas keyboard (see
-   * openVirtualKeyboard()/buildVirtualKeyboard()).
+   * field's hitArea focuses `ghostInput` (see buildGhostInput()), which
+   * opens the device's own OS keyboard; a drag instead pans a long line to
+   * review it (see handleInputPointerMove()).
    * `hitArea`/`bg` are sized in layoutComposer() once the pill's width is
    * known; everything here is built root-centered on local (0, 0), same
    * convention as every other control in this file.
@@ -902,10 +865,10 @@ export class TextComposer {
     root.on('pointertap', (event: FederatedPointerEvent) => {
       event.stopPropagation();
       // A real pan (see handleInputPointerMove) already did its job; a tap
-      // that barely moved still opens the keyboard, same as before panning
-      // existed at all.
+      // that barely moved still focuses the ghost input (raising the OS
+      // keyboard), same as before panning existed at all.
       if (this.inputDragMoved) return;
-      this.openVirtualKeyboard();
+      this.ghostInput.focus();
     });
 
     return { root, bg, scrollGroup, mask, text, placeholder, cursor };
@@ -932,120 +895,53 @@ export class TextComposer {
   };
 
   /**
-   * A fully native on-canvas Arabic keyboard — every key a `Graphics`
-   * rounded square + `Text` glyph, tapping one mutates `this.text` directly
-   * (see wireVirtualKeyboard()). Deliberately laid out as a compact grid in
-   * plain alphabetical order rather than a phone-OS-style QWERTY row: a
-   * real Arabic keyboard's widest row is 11 keys, and 11×44px (this
-   * project's own enforced touch-target floor) alone is 484px — wider than
-   * the composer panel ever gets, let alone a real phone screen. A grid
-   * (KEYBOARD_COLUMNS wide) keeps every single key at the full 44px floor
-   * with room to spare, at the cost of not matching an OS keyboard's
-   * muscle-memory layout — a reasonable trade since there is no muscle
-   * memory for a custom canvas keyboard nobody has used before anyway.
+   * The one deliberate DOM element in this class — a real `<input>`,
+   * invisible (`opacity: 0`, see createHiddenTextInput()) and kept
+   * positioned exactly over the Pixi input pill on every layoutComposer()
+   * call (see syncGhostInputBounds()). Focusing it (buildInputField()'s tap
+   * handler) raises the device's own OS keyboard — autocorrect, predictive
+   * text, personal dictionary, voice input, all free. Its `input` event is
+   * the single bridge back into Pixi: `this.text = ghostInput.value` feeds
+   * the exact same refreshInputVisual() pipeline every other change to
+   * `this.text` already goes through, so the horizontal-scroll mask/pan
+   * built for it works identically regardless of where a character came
+   * from.
+   *
+   * A prior revision of this class instead hand-drew every key of a full
+   * Arabic keyboard in Pixi, trading every one of the OS features above
+   * away for zero DOM. Both are legitimate, deliberate architectural
+   * choices — this is the second one.
    */
-  private buildVirtualKeyboard(): VirtualKeyObj[] {
-    const keys: VirtualKeyObj[] = [];
-    for (const char of KEYBOARD_LETTERS) keys.push(this.buildKey('char', char, char));
-    keys.push(this.buildKey('backspace', '⌫', '⌫', FUNCTION_KEY_LABEL_SIZE));
-    keys.push(this.buildKey('space', 'مسافة', ' ', FUNCTION_KEY_LABEL_SIZE));
-    keys.push(this.buildKey('done', 'تم', '', FUNCTION_KEY_LABEL_SIZE));
-    for (const key of keys) this.wireVirtualKey(key);
-    return keys;
-  }
-
-  private buildKey(action: VirtualKeyObj['action'], labelText: string, char: string, fontSize = KEY_LABEL_SIZE): VirtualKeyObj {
-    const root = new Container();
-    root.eventMode = 'static';
-    root.cursor = 'pointer';
-
-    // Both drawn empty here — width varies per key (space is much wider
-    // than a letter) and depends on the composer's responsive width, so
-    // the actual shape is (re)drawn in drawKeyBackground() from
-    // layoutVirtualKeyboard() instead, same pattern as inputField.bg. `glow`
-    // gets its concentric-halo layers there too — no Filter involved at all,
-    // see drawKeyBackground()'s own doc comment.
-    const glow = new Graphics();
-    glow.alpha = 0;
-    root.addChild(glow);
-
-    const bg = new Graphics();
-    root.addChild(bg);
-
-    const label = new Text({
-      text: labelText,
-      style: new TextStyle({
-        fontFamily: 'Tajawal, system-ui, sans-serif',
-        fontSize,
-        fontWeight: action === 'char' ? '700' : '600',
-        fill: action === 'done' ? DONE_KEY_COLOR : KEY_LABEL_COLOR,
-      }),
-    });
-    label.anchor.set(0.5);
-    root.addChild(label);
-
-    return { action, char, root, bg, label, glow };
-  }
-
-  private wireVirtualKey(key: VirtualKeyObj): void {
-    key.root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
-    key.root.on('pointertap', (event: FederatedPointerEvent) => {
-      event.stopPropagation();
-      this.deps.audio.playUiClick();
-      this.flashKeyGlow(key);
-      switch (key.action) {
-        case 'char':
-          this.text += key.char;
-          break;
-        case 'space':
-          this.text += ' ';
-          break;
-        case 'backspace':
-          this.text = this.text.slice(0, -1);
-          break;
-        case 'done':
-          this.closeVirtualKeyboard();
-          return;
-      }
+  private buildGhostInput(): HTMLInputElement {
+    const input = createHiddenTextInput();
+    input.addEventListener('input', () => {
+      this.text = input.value;
       this.refreshInputVisual();
       this.previewText.text = this.text || SAMPLE_PHRASE;
     });
+    input.addEventListener('focus', () => this.startCursorBlink());
+    input.addEventListener('blur', () => this.stopCursorBlink());
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        input.blur();
+      }
+    });
+    return input;
   }
 
-  /** The same additive-halo technique createHandle() uses for its press state, here fired as a one-shot fade — the "تفاعل مع مؤثرات الـ Glow" the effects bar itself is built on, reused as tactile per-key feedback. Pre-drawn shape (see drawKeyBackground()), so this only ever touches `.alpha` — no runtime Filter anywhere in this path. */
-  private flashKeyGlow(key: VirtualKeyObj): void {
-    key.glow.alpha = 1;
-    let elapsedMs = 0;
-    const step = (t: Ticker): void => {
-      elapsedMs += t.deltaMS;
-      const progress = Math.min(1, elapsedMs / KEY_GLOW_FLASH_MS);
-      key.glow.alpha = 1 - progress;
-      if (progress < 1) return;
-      this.deps.app.ticker.remove(step);
-    };
-    this.deps.app.ticker.add(step);
-  }
-
-  private openVirtualKeyboard(): void {
-    this.keyboardOpen = true;
-    for (const frame of this.effectFrames) frame.root.visible = false;
-    this.virtualKeyboard.visible = true;
-    this.layoutComposer();
-    this.startCursorBlink();
-  }
-
-  private closeVirtualKeyboard(): void {
-    this.keyboardOpen = false;
-    this.virtualKeyboard.visible = false;
-    for (const frame of this.effectFrames) frame.root.visible = true;
-    this.layoutComposer();
-    this.stopCursorBlink();
+  /** Positions ghostInput's real DOM bounds over the Pixi input pill's current on-screen rectangle — Pixi's global coordinates already match page/viewport coordinates 1:1 (the one shared canvas fills the viewport edge-to-edge, see shellStyles.ts, and the page itself never scrolls, see documentShell.ts), so no extra offset math is needed. */
+  private syncGhostInputBounds(pillGlobalX: number, pillGlobalY: number, width: number, height: number): void {
+    this.ghostInput.style.left = `${pillGlobalX - width / 2}px`;
+    this.ghostInput.style.top = `${pillGlobalY - height / 2}px`;
+    this.ghostInput.style.width = `${width}px`;
+    this.ghostInput.style.height = `${height}px`;
   }
 
   /**
    * Repaints the field's live text/placeholder/caret from `this.text` —
-   * called on every key press from the native keyboard (see
-   * wireVirtualKey()) and once up front so the field never starts blank
+   * called on every keystroke from ghostInput's own `input` event (see
+   * buildGhostInput()) and once up front so the field never starts blank
    * when it should show a pre-filled value (e.g. reopening the composer on
    * previously-committed text). The caret sits at the *leading* edge of the
    * rendered text block (its left side) because Arabic is RTL — typing
@@ -1069,6 +965,12 @@ export class TextComposer {
    * lets the player pan further by hand to review earlier characters.
    */
   private refreshInputVisual(): void {
+    // Keeps ghostInput in sync even when this.text changed from a source
+    // other than ghostInput's own `input` event (e.g. reopening the
+    // composer pre-filled with previously-committed text) — a no-op when
+    // it's already the source, since it's the same string either way.
+    this.ghostInput.value = this.text;
+
     const hasText = this.text.length > 0;
     this.inputField.text.text = this.text;
     this.inputField.text.visible = hasText;
@@ -1194,8 +1096,9 @@ export class TextComposer {
       .clear()
       .rect(pillGlobal.x - availWidth / 2, pillGlobal.y - INPUT_HEIGHT / 2, availWidth, INPUT_HEIGHT)
       .fill(0xffffff);
+    this.syncGhostInputBounds(pillGlobal.x, pillGlobal.y, inputWidth, INPUT_HEIGHT);
 
-    const contentBottom = this.keyboardOpen ? this.layoutVirtualKeyboard(composerWidth) : this.layoutEffectFrames(composerWidth);
+    const contentBottom = this.layoutEffectFrames(composerWidth);
     this.catchAll.clear().rect(0, 0, composerWidth, contentBottom).fill({ color: 0x000000, alpha: 0.001 });
 
     // Re-applies the auto-scroll against the (possibly just-changed) input
@@ -1204,78 +1107,6 @@ export class TextComposer {
     this.refreshInputVisual();
   }
 
-  private drawKeyBackground(key: VirtualKeyObj, width: number): void {
-    key.bg
-      .clear()
-      .roundRect(-width / 2, -KEY_SIZE / 2, width, KEY_SIZE, KEY_RADIUS)
-      .fill({ color: KEY_FILL_COLOR, alpha: KEY_FILL_ALPHA })
-      .stroke({ width: 1, color: KEY_BORDER_COLOR, alpha: KEY_BORDER_ALPHA });
-
-    // Pre-drawn concentric-layer halo — the same additive technique
-    // createHandle() uses (see its own doc comment), swapped from circles to
-    // rounded rects to match a key's own outline. No runtime Filter/blur at
-    // all: each layer is a plain flat-fill shape, progressively larger and
-    // fainter outward, and Pixi caches a Graphics object's fill geometry
-    // once drawn — flashKeyGlow() only ever touches `.alpha` afterward, so
-    // an idle keyboard costs zero extra render passes, and a flashing key
-    // costs one ordinary (unfiltered) draw, same as any other Graphics.
-    key.glow.clear();
-    for (let i = KEY_GLOW_STEPS; i > 0; i--) {
-      const t = i / KEY_GLOW_STEPS;
-      const outset = KEY_GLOW_MAX_OUTSET * t;
-      key.glow
-        .roundRect(-width / 2 - outset, -KEY_SIZE / 2 - outset, width + outset * 2, KEY_SIZE + outset * 2, KEY_RADIUS + outset)
-        .fill({ color: EFFECT_GOLD, alpha: (1 - t) * 0.5 });
-    }
-    key.glow.blendMode = 'add';
-
-    key.root.hitArea = new Rectangle(-width / 2, -KEY_SIZE / 2, width, KEY_SIZE);
-  }
-
-  /**
-   * Grid of letters (KEYBOARD_COLUMNS wide, RTL — first letter lands at the
-   * row's right edge, same convention layoutEffectFrames() uses), then one
-   * bottom row: تم (rightmost) / مسافة (wide, fills the remaining width) /
-   * ⌫ (leftmost) — right-to-left reading order matching the letters above
-   * it. Returns the content's bottom y, same contract as
-   * layoutEffectFrames().
-   */
-  private layoutVirtualKeyboard(composerWidth: number): number {
-    const letterKeys = this.keyboardKeys.filter((key) => key.action === 'char');
-    const backspaceKey = this.keyboardKeys.find((key) => key.action === 'backspace')!;
-    const spaceKey = this.keyboardKeys.find((key) => key.action === 'space')!;
-    const doneKey = this.keyboardKeys.find((key) => key.action === 'done')!;
-
-    const gridWidth = KEYBOARD_COLUMNS * KEY_SIZE + (KEYBOARD_COLUMNS - 1) * KEY_GAP;
-    const gridRightEdge = composerWidth / 2 + gridWidth / 2;
-    const gridLeftEdge = gridRightEdge - gridWidth;
-    let rowTop = TOPBAR_HEIGHT + KEYBOARD_TOP_MARGIN;
-
-    for (let start = 0; start < letterKeys.length; start += KEYBOARD_COLUMNS) {
-      const row = letterKeys.slice(start, start + KEYBOARD_COLUMNS);
-      let x = gridRightEdge - KEY_SIZE / 2;
-      for (const key of row) {
-        this.drawKeyBackground(key, KEY_SIZE);
-        key.root.position.set(x, rowTop + KEY_SIZE / 2);
-        x -= KEY_SIZE + KEY_GAP;
-      }
-      rowTop += KEY_SIZE + KEY_GAP;
-    }
-
-    rowTop += KEYBOARD_BOTTOM_ROW_GAP - KEY_GAP;
-    const spaceWidth = gridWidth - KEY_SIZE * 2 - KEY_GAP * 2;
-
-    this.drawKeyBackground(doneKey, KEY_SIZE);
-    doneKey.root.position.set(gridRightEdge - KEY_SIZE / 2, rowTop + KEY_SIZE / 2);
-
-    this.drawKeyBackground(spaceKey, spaceWidth);
-    spaceKey.root.position.set(gridRightEdge - KEY_SIZE - KEY_GAP - spaceWidth / 2, rowTop + KEY_SIZE / 2);
-
-    this.drawKeyBackground(backspaceKey, KEY_SIZE);
-    backspaceKey.root.position.set(gridLeftEdge + KEY_SIZE / 2, rowTop + KEY_SIZE / 2);
-
-    return rowTop + KEY_SIZE;
-  }
 
   /**
    * Replicates the old `.mzj-text-composer-effects { display: flex;

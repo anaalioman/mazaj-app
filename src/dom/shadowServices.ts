@@ -42,6 +42,35 @@ export function createLoopingVideoElement(objectUrl: string): HTMLVideoElement {
   return video;
 }
 
+/**
+ * A real `<input type="text">`, invisible but positioned/sized over the
+ * text composer's input pill (see TextComposer's syncGhostInputBounds) —
+ * the only way to raise the OS's own keyboard (autocorrect, predictive
+ * text, voice input) on a tap, which no Canvas API can invoke. `opacity: 0`
+ * rather than off-screen placement: mobile browsers generally only grant
+ * focus a native keyboard pop-up when the target sits within the viewport.
+ * Pixi renders the actual glyphs the player sees; this element exists
+ * solely to receive OS text-input events.
+ */
+export function createHiddenTextInput(): HTMLInputElement {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.autocomplete = 'off';
+  input.setAttribute('autocapitalize', 'off');
+  input.setAttribute('autocorrect', 'on');
+  input.style.position = 'fixed';
+  input.style.opacity = '0';
+  input.style.border = 'none';
+  input.style.outline = 'none';
+  input.style.padding = '0';
+  input.style.background = 'transparent';
+  input.style.caretColor = 'transparent';
+  input.style.color = 'transparent';
+  input.style.fontSize = '16px'; // Prevents iOS Safari's auto-zoom-on-focus.
+  document.body.appendChild(input);
+  return input;
+}
+
 /** Same as createLoopingVideoElement, sourced from a live MediaStream (the device camera) instead of a file. */
 export function createLiveStreamVideoElement(stream: MediaStream): HTMLVideoElement {
   const video = document.createElement('video');
