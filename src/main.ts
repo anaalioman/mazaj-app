@@ -1,7 +1,8 @@
+import { Application, Container } from 'pixi.js';
 import { applyDocumentShellStyles } from './dom/documentShell';
 import { loadTajawalFonts } from './dom/loadFonts';
-import { styleFixedFullscreenHost } from './dom/shellStyles';
-import { HomeScreen, type MoodId } from './home/HomeScreen';
+import { styleFullscreenCanvas } from './dom/shellStyles';
+import { HomeScreen, HOME_BACKGROUND, type MoodId } from './home/HomeScreen';
 import type { FireworksMoodHandle } from './moods/fireworksMood';
 import { initializeMonetization } from './services';
 
@@ -14,42 +15,86 @@ void loadTajawalFonts();
 // from rendering while the native SDKs (if present) spin up.
 void initializeMonetization();
 
-const homeScreenEl = document.querySelector<HTMLDivElement>('#home-screen')!;
-const fireworksContainer = document.querySelector<HTMLDivElement>('#fireworks-mood')!;
-styleFixedFullscreenHost(homeScreenEl);
+/**
+ * One shared PIXI.Application for the whole app — every "screen" (the home
+ * hub, each mood) is a Container added to `app.stage`, shown/hidden via
+ * `.visible` instead of ever getting its own Application/canvas/DOM host.
+ * There is exactly one `<canvas>` in the whole document, appended once
+ * below; screen switching is Container visibility, not DOM routing.
+ *
+ * A mood's own code/asset bundle still only downloads the first time it's
+ * actually picked (see enterFireworks()'s dynamic `import()` below) — that
+ * lazy-loading is a JS bundler concern, orthogonal to (and unaffected by)
+ * collapsing the *render* side down to one Application; it's the reason a
+ * product with 6 more moods on its roadmap (see home/HomeScreen.ts's own
+ * MOODS list) doesn't pay for code it hasn't shown the player yet.
+ */
+const app = new Application();
 
-let fireworksHandle: FireworksMoodHandle | null = null;
-// Tracks an in-flight load so a second tap while the first is still awaiting
-// app.init() (real, common on a touchscreen — WebGL setup isn't instant)
-// re-attaches to the same load instead of booting a second, fully-duplicate
-// mood instance (duplicate canvas, header, dashboard, submit listener, ...).
-let fireworksLoading: Promise<FireworksMoodHandle> | null = null;
+async function boot(): Promise<void> {
+  await app.init({
+    resizeTo: window,
+    background: HOME_BACKGROUND,
+    backgroundAlpha: 1,
+    antialias: true,
+    resolution: Math.min(window.devicePixelRatio || 1, 2),
+    autoDensity: true,
+    powerPreference: 'high-performance',
+    // Needed so canvas.captureStream() (the fireworks mood's video
+    // recording) sees fresh frames instead of an already-cleared WebGL
+    // buffer — harmless for every other screen sharing this Application.
+    preserveDrawingBuffer: true,
+  });
 
-function goHome(): void {
-  homeScreenEl.style.display = 'block';
-}
+  document.body.appendChild(app.canvas);
+  styleFullscreenCanvas(app.canvas);
 
-async function enterFireworks(): Promise<void> {
-  homeScreenEl.style.display = 'none';
+  const homeLayer = new Container();
+  const fireworksLayer = new Container();
+  fireworksLayer.visible = false;
+  app.stage.addChild(homeLayer);
+  app.stage.addChild(fireworksLayer);
 
-  if (fireworksHandle) {
-    fireworksHandle.show();
-    return;
+  let fireworksHandle: FireworksMoodHandle | null = null;
+  // Tracks an in-flight load so a second tap while the first is still
+  // awaiting its dynamic import + setup (real, common on a touchscreen)
+  // re-attaches to the same load instead of booting a second, fully-
+  // duplicate mood instance (duplicate header, dashboard, submit listener,
+  // ...) inside the same fireworksLayer.
+  let fireworksLoading: Promise<FireworksMoodHandle> | null = null;
+
+  function goHome(): void {
+    fireworksHandle?.hide();
+    fireworksLayer.visible = false;
+    homeLayer.visible = true;
+    app.renderer.background.color = HOME_BACKGROUND;
   }
 
-  if (!fireworksLoading) {
-    // Lazy-loaded so the home screen stays light — the fireworks bundle (and
-    // every other future mood's bundle) only downloads once actually chosen.
-    fireworksLoading = import('./moods/fireworksMood').then(({ startFireworksMood }) =>
-      startFireworksMood(fireworksContainer, goHome),
-    );
+  async function enterFireworks(): Promise<void> {
+    homeLayer.visible = false;
+    fireworksLayer.visible = true;
+
+    if (fireworksHandle) {
+      app.renderer.background.color = (await import('./moods/fireworksMood')).ROYAL_BLACK;
+      fireworksHandle.show();
+      return;
+    }
+
+    if (!fireworksLoading) {
+      fireworksLoading = import('./moods/fireworksMood').then(({ startFireworksMood, ROYAL_BLACK }) => {
+        app.renderer.background.color = ROYAL_BLACK;
+        return startFireworksMood(app, fireworksLayer, goHome);
+      });
+    }
+
+    fireworksHandle = await fireworksLoading;
   }
 
-  fireworksHandle = await fireworksLoading;
+  HomeScreen.create(app, homeLayer, {
+    onSelect: (mood: MoodId) => {
+      if (mood === 'fireworks') void enterFireworks();
+    },
+  });
 }
 
-void HomeScreen.create(homeScreenEl, {
-  onSelect: (mood: MoodId) => {
-    if (mood === 'fireworks') void enterFireworks();
-  },
-});
+void boot();

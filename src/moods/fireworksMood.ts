@@ -16,7 +16,6 @@ import { withTimeout } from '../utils/withTimeout';
 import { PlanningMode } from '../ui/PlanningMode';
 import { PlanningScreen, type InputMode } from '../ui/PlanningScreen';
 import { canSaveToGallery, saveSnapshotToGallery } from '../media/GallerySaver';
-import { styleFixedFullscreenHost, styleFullscreenCanvas } from '../dom/shellStyles';
 import { tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
 
 export interface FireworksMoodHandle {
@@ -25,13 +24,28 @@ export interface FireworksMoodHandle {
 }
 
 // Royal black: a deep, rich near-black backdrop for the fireworks stage.
-const ROYAL_BLACK = '#040406';
+export const ROYAL_BLACK = '#040406';
+
+/** Superset of app.init() options every mood needs — preserveDrawingBuffer/high-performance are here for the fireworks mood's video-recording pipeline specifically, but they're harmless for any other mood sharing this one Application. See main.ts, the only caller. */
+export const SHARED_APP_INIT_OPTIONS = {
+  resizeTo: window,
+  antialias: true,
+  resolution: Math.min(window.devicePixelRatio || 1, 2),
+  autoDensity: true,
+  powerPreference: 'high-performance' as const,
+  // Needed so canvas.captureStream() (video recording) sees fresh frames
+  // instead of an already-cleared WebGL buffer.
+  preserveDrawingBuffer: true,
+};
 
 /**
- * Boots the fireworks mood inside `container` (expects the #app markup
- * already in place, see index.html) and wires the "back to home" callback
- * into the header. Called once, lazily, the first time the player picks this
- * mood from the home screen; subsequent visits just call `show()`/`hide()`.
+ * Boots the fireworks mood's whole scene as a child of `moodLayer` — a
+ * Container main.ts already added to the single shared `app.stage`, toggled
+ * visible/hidden instead of ever getting its own Application/canvas/DOM host
+ * (see main.ts's own doc comment for why: one Application, one canvas, two
+ * screens as Containers). Wires the "back to home" callback into the header.
+ * Called once, lazily, the first time the player picks this mood from the
+ * home screen; subsequent visits just call `show()`/`hide()`.
  *
  * Tap-to-fire is live the instant the mood opens — there's no setup gate.
  * The header's pin-icon button opens the full-screen planning layout (see
@@ -40,28 +54,7 @@ const ROYAL_BLACK = '#040406';
  * `launchPlannedShow()`), plays the opening phrase reveal, and switches into
  * the fully-immersive (UI-hidden) viewing mode, all in one call.
  */
-export async function startFireworksMood(container: HTMLElement, onBackToHome: () => void): Promise<FireworksMoodHandle> {
-  const appContainer = container.querySelector<HTMLDivElement>('#app')!;
-  styleFixedFullscreenHost(appContainer);
-
-  const app = new Application();
-
-  await app.init({
-    resizeTo: window,
-    background: ROYAL_BLACK,
-    backgroundAlpha: 1,
-    antialias: true,
-    resolution: Math.min(window.devicePixelRatio || 1, 2),
-    autoDensity: true,
-    powerPreference: 'high-performance',
-    // Needed so canvas.captureStream() (video recording) sees fresh frames
-    // instead of an already-cleared WebGL buffer.
-    preserveDrawingBuffer: true,
-  });
-
-  appContainer.appendChild(app.canvas);
-  styleFullscreenCanvas(app.canvas);
-
+export async function startFireworksMood(app: Application, moodLayer: Container, onBackToHome: () => void): Promise<FireworksMoodHandle> {
   // --- Container tree: worldContainer (captured content) vs. uiContainer (chrome) ---
   //
   // Everything used to be added directly to `app.stage`, which meant
@@ -88,7 +81,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // captureStream instead of the main canvas. See the `recordCanvas` block
   // below for the (non-obvious) way that's actually done safely.
   const worldContainer = new Container();
-  app.stage.addChild(worldContainer);
+  moodLayer.addChild(worldContainer);
   // `isRenderGroup: true` — uiContainer's own subtree (header, icon column,
   // every panel, the text-composer toolbar) gets its own cached set of GPU
   // render instructions, independent of worldContainer's constantly-changing
@@ -97,7 +90,7 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // single frame; with it, Pixi only rebuilds uiContainer's batches when
   // something inside uiContainer itself actually changes.
   const uiContainer = new Container({ isRenderGroup: true });
-  app.stage.addChild(uiContainer);
+  moodLayer.addChild(uiContainer);
 
   // --- A worldContainer-only pixel source for video recording ---
   //
@@ -218,10 +211,16 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   });
   uiContainer.addChild(planningMode.layer);
 
-  app.stage.eventMode = 'static';
-  app.stage.hitArea = app.screen;
+  // Bound to `moodLayer`, not `app.stage` — app.stage is now shared with
+  // every other screen (see main.ts), and a container with `visible: false`
+  // is skipped by Pixi's hit-testing entirely, children and self alike. That
+  // alone is what stops this from ever firing while the player is looking at
+  // the home screen or any future mood: no manual "is this mood active" flag
+  // needed, just the same visible check Pixi already does for rendering.
+  moodLayer.eventMode = 'static';
+  moodLayer.hitArea = app.screen;
   app.renderer.on('resize', () => {
-    app.stage.hitArea = app.screen;
+    moodLayer.hitArea = app.screen;
   });
 
   // Free Tap fires exactly where the player touches; Mortar Field snaps the
@@ -237,14 +236,20 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   // with its own stopPropagation, independent of this handler entirely.
   // While sequential planning is active, PlanningMode's own listeners (see
   // above) handle every tap instead — this handler steps aside entirely.
-  app.stage.on('pointerdown', (event) => {
+  moodLayer.on('pointerdown', (event) => {
     if (showStarted || planningMode.isActive || planningScreen.hasMassSelection()) return;
     const { x, y } = event.global;
     const launchX = inputMode === 'mortar' ? mortarField.getNearestX(x) : x;
     fireAt(launchX, y);
   });
 
+  // Guarded on moodLayer.visible — app.ticker is now shared and always
+  // running (see main.ts), so this mood's own per-frame simulation must
+  // explicitly stand down while hidden instead of relying on the ticker
+  // itself being paused (that would also freeze every other screen's Ticker-
+  // driven timers, see utils/tickerTimers.ts).
   app.ticker.add((ticker) => {
+    if (!moodLayer.visible) return;
     fireworks.update(ticker.deltaTime);
     mortarField.update(ticker.deltaTime);
     textReveal.update(ticker.deltaTime);
@@ -917,19 +922,18 @@ export async function startFireworksMood(container: HTMLElement, onBackToHome: (
   uiContainer.addChild(shutterButton);
   uiContainer.addChild(snapshotErrorText);
 
+  // moodLayer's own visible/hitArea toggling is main.ts's job (it owns every
+  // screen's show/hide, see its own doc comment) — this handle only resets
+  // the header's own visibility, independent of idleFade's fade state,
+  // exactly as a fresh re-entry to the mood should look.
   handle = {
     show(): void {
-      container.style.display = 'block';
       header.container.visible = true;
-      app.ticker.start();
     },
     hide(): void {
-      container.style.display = 'none';
       header.container.visible = false;
-      app.ticker.stop();
     },
   };
 
-  handle.show();
   return handle;
 }

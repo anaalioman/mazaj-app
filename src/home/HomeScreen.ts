@@ -12,7 +12,6 @@ import {
 import { BackdropBlurFilter } from 'pixi-filters';
 import { iconTexture } from '../ui/svgIconTexture';
 import type { IconName } from '../ui/icons';
-import { styleFullscreenCanvas } from '../dom/shellStyles';
 
 export type MoodId =
   | 'fireworks'
@@ -104,7 +103,10 @@ interface Card {
   badge?: { root: Container; bg: Graphics; text: Text };
 }
 
-/** The single entry hub every mood is launched from — same visual identity across the whole app. Fully Pixi (own `Application`, own canvas) — no HTML/CSS at all; see PROGRESS.md. */
+/** Deliberately unsaturated near-black — the shared Application's background color is set to this whenever the home screen is the active screen, see main.ts. */
+export const HOME_BACKGROUND = '#050508';
+
+/** The single entry hub every mood is launched from — same visual identity across the whole app. Fully Pixi, mounted as a Container on the one shared Application (see main.ts) — no HTML/CSS at all; see PROGRESS.md. */
 export class HomeScreen {
   readonly app: Application;
   private readonly deps: HomeScreenDeps;
@@ -112,7 +114,7 @@ export class HomeScreen {
   private readonly subtitleText: Text;
   private readonly cards: Card[] = [];
 
-  private constructor(app: Application, deps: HomeScreenDeps) {
+  private constructor(app: Application, layer: Container, deps: HomeScreenDeps) {
     this.app = app;
     this.deps = deps;
 
@@ -121,7 +123,7 @@ export class HomeScreen {
       style: this.titleStyle(TITLE_FONT_SIZE_WIDE),
     });
     this.titleText.anchor.set(0.5, 0);
-    app.stage.addChild(this.titleText);
+    layer.addChild(this.titleText);
 
     this.subtitleText = new Text({
       text: 'اختر مزاجك',
@@ -129,10 +131,10 @@ export class HomeScreen {
     });
     this.subtitleText.alpha = 0.6;
     this.subtitleText.anchor.set(0.5, 0);
-    app.stage.addChild(this.subtitleText);
+    layer.addChild(this.subtitleText);
 
     for (const mood of MOODS) {
-      const card = this.buildCard(mood);
+      const card = this.buildCard(layer, mood);
       this.cards.push(card);
     }
 
@@ -140,19 +142,9 @@ export class HomeScreen {
     this.layout();
   }
 
-  static async create(container: HTMLElement, deps: HomeScreenDeps): Promise<HomeScreen> {
-    const app = new Application();
-    await app.init({
-      resizeTo: window,
-      background: '#050508',
-      backgroundAlpha: 1,
-      antialias: true,
-      resolution: Math.min(window.devicePixelRatio || 1, 2),
-      autoDensity: true,
-    });
-    container.appendChild(app.canvas);
-    styleFullscreenCanvas(app.canvas);
-    return new HomeScreen(app, deps);
+  /** `layer` is a Container main.ts already added to the shared app.stage, toggled visible/hidden alongside every other screen — this class never creates its own Application or canvas. */
+  static create(app: Application, layer: Container, deps: HomeScreenDeps): HomeScreen {
+    return new HomeScreen(app, layer, deps);
   }
 
   private titleStyle(fontSize: number): TextStyle {
@@ -184,7 +176,7 @@ export class HomeScreen {
    * `mood.active` cards are interactive; locked ones are visually dimmed
    * and never claim a hitArea at all.
    */
-  private buildCard(mood: MoodCard): Card {
+  private buildCard(layer: Container, mood: MoodCard): Card {
     const root = new Container();
     root.alpha = mood.active ? 1 : LOCKED_ALPHA;
     if (mood.active) {
@@ -196,7 +188,7 @@ export class HomeScreen {
         this.deps.onSelect(mood.id);
       });
     }
-    this.app.stage.addChild(root);
+    layer.addChild(root);
 
     const bg = new Graphics();
     bg.filters = [new BackdropBlurFilter({ strength: 8, quality: 4 })];
