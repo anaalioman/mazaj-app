@@ -37,10 +37,21 @@ interface EffectFrameObj {
   label: Text;
 }
 
-/** The composer's own text field, root-centered like every other control in this file: a background pill, the live typed text, a dimmed placeholder shown when empty, and a blinking gold caret — see buildInputField(). */
+/**
+ * The composer's own text field, root-centered like every other control in
+ * this file: a background pill, a dimmed placeholder shown when empty, and
+ * — inside `scrollGroup`, clipped by `mask` — the live typed text and its
+ * blinking gold caret. `scrollGroup` is right-edge anchored (RTL: the first
+ * typed character sits at the pill's right inner edge, later characters
+ * extend left) and pans horizontally once the line outgrows the pill's own
+ * width — see refreshInputVisual()'s own doc comment for why panning,
+ * not shrinking or wrapping.
+ */
 interface InputFieldObj {
   root: Container;
   bg: Graphics;
+  scrollGroup: Container;
+  mask: Graphics;
   text: Text;
   placeholder: Text;
   cursor: Graphics;
@@ -158,8 +169,8 @@ const BACK_ICON_SOURCE_SIZE = 40;
  */
 const INPUT_FONT_SIZE = 15;
 const INPUT_TEXT_COLOR = 0xffe9b3;
-/** Shrink-to-fit floor for the typed preview — see refreshInputVisual()'s own doc comment. Never shrinks past half size; a very long phrase past that point overflows rather than becoming illegible. */
-const INPUT_MIN_SHRINK = 0.5;
+/** Pointer movement (px) below which a press-and-release on the input pill still counts as a tap (opens the keyboard) rather than a pan. */
+const INPUT_DRAG_TAP_TOLERANCE = 6;
 const PLACEHOLDER_TEXT = 'اكتب عبارتك هنا';
 const PLACEHOLDER_COLOR = 0xffffff;
 const PLACEHOLDER_ALPHA = 0.4;
@@ -246,8 +257,16 @@ export class TextComposer {
   private readonly virtualKeyboard: Container;
   private readonly keyboardKeys: VirtualKeyObj[];
   private keyboardOpen = false;
-  /** Set each time layoutComposer() runs — the input pill's own available width, used by refreshInputVisual()'s shrink-to-fit. */
+  /** Set each time layoutComposer() runs — the input pill's own available width, used by refreshInputVisual()'s auto-scroll. */
   private inputFieldWidth = 0;
+  /** Current pan offset applied to inputField.scrollGroup — 0 is fully right-aligned (resting position); positive values shift the group right, revealing more of the line's left (most-recently-typed) end. Clamped to [0, inputMaxScrollX]. */
+  private inputScrollX = 0;
+  /** How far inputScrollX can go — 0 once the line fits the pill outright; recomputed every refreshInputVisual() call. */
+  private inputMaxScrollX = 0;
+  private inputDragPointerId: number | null = null;
+  private inputDragStartX = 0;
+  private inputDragStartScrollX = 0;
+  private inputDragMoved = false;
   private cursorBlinkTimer: TickerTimerHandle | undefined;
   private readonly previewText: Text;
   private readonly baseFontSize: number;
@@ -403,6 +422,10 @@ export class TextComposer {
     this.wireEffectButtons();
     this.wireBack();
     this.wireControlBox();
+
+    deps.app.stage.on('pointermove', this.handleInputPointerMove);
+    deps.app.stage.on('pointerup', this.handleInputPointerEnd);
+    deps.app.stage.on('pointerupoutside', this.handleInputPointerEnd);
   }
 
   /**
@@ -844,26 +867,69 @@ export class TextComposer {
     placeholder.alpha = PLACEHOLDER_ALPHA;
     root.addChild(placeholder);
 
+    // Never added to the display tree — a Pixi mask doesn't need to be, it
+    // only needs to be assigned to `scrollGroup.mask` below. Drawn to its
+    // real size once the pill's width is known, in layoutComposer().
+    const mask = new Graphics();
+
+    // Right-edge anchored (RTL: the first typed character's own edge sits
+    // fixed at the pill's right inner edge; the line grows leftward,
+    // unbounded, as more is typed) and clipped by `mask` — panned via
+    // refreshInputVisual()'s inputScrollX once the line outgrows the pill.
+    const scrollGroup = new Container();
+    scrollGroup.mask = mask;
+    root.addChild(scrollGroup);
+
     const text = new Text({
       text: '',
       style: new TextStyle({ fontFamily: 'Tajawal, system-ui, sans-serif', fontSize: INPUT_FONT_SIZE, fontWeight: '700', fill: INPUT_TEXT_COLOR }),
     });
-    text.anchor.set(0.5);
-    root.addChild(text);
+    text.anchor.set(1, 0.5);
+    scrollGroup.addChild(text);
 
     const cursor = new Graphics().rect(-CURSOR_WIDTH / 2, -CURSOR_HEIGHT / 2, CURSOR_WIDTH, CURSOR_HEIGHT).fill(EFFECT_GOLD);
     cursor.filters = effectFrameFilters();
     cursor.visible = false;
-    root.addChild(cursor);
+    scrollGroup.addChild(cursor);
 
-    root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
+    root.on('pointerdown', (event: FederatedPointerEvent) => {
+      event.stopPropagation();
+      this.inputDragPointerId = event.pointerId;
+      this.inputDragStartX = event.global.x;
+      this.inputDragStartScrollX = this.inputScrollX;
+      this.inputDragMoved = false;
+    });
     root.on('pointertap', (event: FederatedPointerEvent) => {
       event.stopPropagation();
+      // A real pan (see handleInputPointerMove) already did its job; a tap
+      // that barely moved still opens the keyboard, same as before panning
+      // existed at all.
+      if (this.inputDragMoved) return;
       this.openVirtualKeyboard();
     });
 
-    return { root, bg, text, placeholder, cursor };
+    return { root, bg, scrollGroup, mask, text, placeholder, cursor };
   }
+
+  /**
+   * Touch-panning for the input line — "التحكم بالإصبع" alongside the
+   * auto-scroll refreshInputVisual() already does while typing. Registered
+   * once, globally, same pattern as wireControlBox()'s own stage-level
+   * pointermove/pointerup pair right below it; both gate themselves on
+   * their own piece of state so they never interfere with each other.
+   */
+  private handleInputPointerMove = (event: FederatedPointerEvent): void => {
+    if (this.inputDragPointerId === null || event.pointerId !== this.inputDragPointerId) return;
+    const delta = event.global.x - this.inputDragStartX;
+    if (Math.abs(delta) > INPUT_DRAG_TAP_TOLERANCE) this.inputDragMoved = true;
+    this.inputScrollX = this.clampInputScrollX(this.inputDragStartScrollX + delta);
+    this.applyInputScroll();
+  };
+
+  private handleInputPointerEnd = (event: FederatedPointerEvent): void => {
+    if (this.inputDragPointerId === null || event.pointerId !== this.inputDragPointerId) return;
+    this.inputDragPointerId = null;
+  };
 
   /**
    * A fully native on-canvas Arabic keyboard — every key a `Graphics`
@@ -988,38 +1054,49 @@ export class TextComposer {
    * string grows or shrinks.
    */
   /**
-   * Correction on an earlier version of this comment: it cited
-   * CharacterReveal's per-character slicing as the reason this stays
-   * single-line, but this input pill's text isn't actually wired to
-   * CharacterReveal at all right now (see consumeForReveal() — the
-   * committed string feeds TextReveal instead, whose effects animate the
-   * whole Text as one unit and don't care about line count). The real
-   * reason is simpler: this pill sits in a fixed-height top bar, alongside
-   * the back button, with the effects bar/keyboard positioned at a fixed
-   * offset below it — wrapping to a second line would grow the pill and
-   * cascade into re-laying out everything beneath it, a bigger change than
-   * this feature warrants. So a long phrase is instead handled by shrinking
-   * the whole line to fit — done by lowering `fontSize` and letting Pixi
-   * re-render the glyphs at that true size (not by scaling the already-
-   * rendered texture, which is a GPU-side transform on top of a fixed
-   * raster), down to INPUT_MIN_SHRINK, past which it's allowed to overflow
-   * rather than become illegible.
+   * Text stays at its one true `INPUT_FONT_SIZE` always — never shrunk,
+   * never wrapped. This pill sits in a fixed-height top bar, alongside the
+   * back button, with the effects bar/keyboard positioned at a fixed offset
+   * below it — wrapping to a second line would grow the pill and cascade
+   * into re-laying out everything beneath it, and shrinking a long phrase
+   * down to fit works against the very thing a preview is for (reading back
+   * what you typed). Instead, a line longer than the pill pans horizontally
+   * — `scrollGroup` (see buildInputField()) is right-edge anchored, so it
+   * grows leftward, unbounded, clipped by `mask`; this method keeps the
+   * caret in view by panning `scrollGroup` exactly enough whenever the
+   * caret would otherwise fall outside the visible window, the same way a
+   * native phone keyboard's own text field does. handleInputPointerMove()
+   * lets the player pan further by hand to review earlier characters.
    */
   private refreshInputVisual(): void {
     const hasText = this.text.length > 0;
     this.inputField.text.text = this.text;
     this.inputField.text.visible = hasText;
     this.inputField.placeholder.visible = !hasText;
-    this.inputField.text.style.fontSize = INPUT_FONT_SIZE;
 
-    const available = this.inputFieldWidth - CURSOR_WIDTH - CURSOR_GAP * 2;
-    if (hasText && available > 0 && this.inputField.text.width > available) {
-      const ratio = Math.max(INPUT_MIN_SHRINK, available / this.inputField.text.width);
-      this.inputField.text.style.fontSize = Math.round(INPUT_FONT_SIZE * ratio);
-    }
+    const availWidth = Math.max(0, this.inputFieldWidth - CURSOR_WIDTH - CURSOR_GAP * 2);
+    // Fixed reference point: the text's own right edge always sits at the
+    // window's right edge in scrollGroup's un-panned local space — the line
+    // grows only leftward from there as more is typed (RTL).
+    this.inputField.text.position.set(availWidth / 2, 0);
 
-    const caretX = hasText ? -this.inputField.text.width / 2 - CURSOR_GAP : 0;
-    this.inputField.cursor.position.set(caretX, 0);
+    const caretLocalX = availWidth / 2 - this.inputField.text.width - CURSOR_GAP;
+    this.inputMaxScrollX = hasText ? Math.max(0, -availWidth / 2 - caretLocalX) : 0;
+    // Auto-follow the caret while actively typing — a manual pan (see
+    // handleInputPointerMove) can scroll away from this afterward, and the
+    // very next keystroke snaps back to it, same as a native text field.
+    this.inputScrollX = this.inputMaxScrollX;
+    this.applyInputScroll();
+
+    this.inputField.cursor.position.set(caretLocalX, 0);
+  }
+
+  private clampInputScrollX(x: number): number {
+    return Math.max(0, Math.min(this.inputMaxScrollX, x));
+  }
+
+  private applyInputScroll(): void {
+    this.inputField.scrollGroup.x = this.inputScrollX;
   }
 
   private startCursorBlink(): void {
@@ -1107,12 +1184,23 @@ export class TextComposer {
       .roundRect(-inputWidth / 2, -INPUT_HEIGHT / 2, inputWidth, INPUT_HEIGHT, 12)
       .fill({ color: 0xffffff, alpha: 0.08 });
 
+    // A Pixi mask never added to the display tree is evaluated in *global*
+    // space (the same convention this file's own previewMask already relies
+    // on, see syncEffectFrames()) — so the clip rectangle has to be drawn at
+    // the pill's real on-screen position, not root's local origin.
+    const availWidth = Math.max(0, inputWidth - CURSOR_WIDTH - CURSOR_GAP * 2);
+    const pillGlobal = this.inputField.root.getGlobalPosition();
+    this.inputField.mask
+      .clear()
+      .rect(pillGlobal.x - availWidth / 2, pillGlobal.y - INPUT_HEIGHT / 2, availWidth, INPUT_HEIGHT)
+      .fill(0xffffff);
+
     const contentBottom = this.keyboardOpen ? this.layoutVirtualKeyboard(composerWidth) : this.layoutEffectFrames(composerWidth);
     this.catchAll.clear().rect(0, 0, composerWidth, contentBottom).fill({ color: 0x000000, alpha: 0.001 });
 
-    // Re-applies the shrink-to-fit against the (possibly just-changed) input
+    // Re-applies the auto-scroll against the (possibly just-changed) input
     // width — a resize alone, with no new keystroke, can push already-typed
-    // text past the fit threshold on a narrower screen.
+    // text's caret out of view on a narrower screen.
     this.refreshInputVisual();
   }
 

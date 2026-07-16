@@ -55,6 +55,21 @@ async function boot(): Promise<void> {
   app.stage.addChild(homeLayer);
   app.stage.addChild(fireworksLayer);
 
+  // Every global drag/long-press gesture in the app (PixiSlider, the text
+  // composer's resize/rotate/scroll handles, PlanningMode's long-press)
+  // registers its pointermove/pointerup listeners on app.stage directly —
+  // Pixi's event bubbling only reaches a stage-level listener at all once
+  // the stage itself is a valid interactive hit target, not merely one of
+  // its descendants. moodLayer's own hitArea (see fireworksMood.ts) still
+  // independently gates the mood's tap-to-fire listener while hidden — this
+  // is the complementary, app-wide piece that makes stage-level bubbling
+  // work in the first place.
+  app.stage.eventMode = 'static';
+  app.stage.hitArea = app.screen;
+  app.renderer.on('resize', () => {
+    app.stage.hitArea = app.screen;
+  });
+
   let fireworksHandle: FireworksMoodHandle | null = null;
   // Tracks an in-flight load so a second tap while the first is still
   // awaiting its dynamic import + setup (real, common on a touchscreen)
