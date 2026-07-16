@@ -6,6 +6,7 @@ import { TEXT_EFFECTS } from '../effects/textEffects/registry';
 import type { AudioManager } from '../audio/AudioManager';
 import { tickerSetInterval, tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
 import { createHiddenTextInput } from '../dom/shadowServices';
+import { Transformer, type TransformerTarget } from './Transformer';
 
 export type { TextRevealEffect };
 
@@ -59,8 +60,6 @@ interface InputFieldObj {
 }
 
 const SAMPLE_PHRASE = 'مبروك';
-const MIN_SCALE = 0.4;
-const MAX_SCALE = 3;
 /** Effects bar order/labels come straight from the registry — add an effect there and it shows up here automatically, no other change needed. */
 const PREVIEW_ORDER: TextRevealEffect[] = TEXT_EFFECTS.map((entry) => entry.id);
 /** Fixed demo word for every effects-bar preview — unrelated to the player's own text/the input's pre-filled default. */
@@ -68,11 +67,6 @@ const PREVIEW_PHRASE = 'مرحبا';
 const PREVIEW_HOLD_BEFORE_MS = 600;
 const PREVIEW_HOLD_AFTER_MS = 600;
 const PREVIEW_NONE_HOLD_MS = 2000;
-
-/** The box outline itself stays Konva.js's real Transformer border default (konva/src/shapes/Transformer.ts): borderStroke 'rgb(0, 161, 255)', borderStrokeWidth 1, no radius. */
-const KONVA_BLUE = 0x00a1ff;
-const BOX_BORDER_WIDTH = 1;
-const BOX_PADDING = 14;
 
 /**
  * Geometry ported 1:1 from the old `#mzj-text-composer`/`.mzj-text-composer-*`
@@ -120,6 +114,8 @@ const BACK_BG_ALPHA = 0.06;
 const BACK_ICON_TINT = 0xe5e7eb;
 const BACK_ICON_SIZE = 18;
 const BACK_ICON_SOURCE_SIZE = 40;
+/** Real Pixi hitArea per finger — the visible circle stays BACK_DIAMETER (34px), the tappable area is still a generous 44x44 floor. */
+const BACK_HIT_SIZE = 44;
 
 /**
  * The input field's genuine Pixi visuals — text, placeholder, and a
@@ -147,23 +143,6 @@ function effectFrameFilters(): (AdvancedBloomFilter | DropShadowFilter)[] {
     new AdvancedBloomFilter({ threshold: 0.3, blur: 3, quality: 4, bloomScale: 1.1, brightness: 1.05 }),
     new DropShadowFilter({ color: 0x000000, alpha: 0.45, blur: 2, offset: { x: 0, y: 2 } }),
   ];
-}
-
-/**
- * Two dedicated corner handles replace both the old 4-identical-corners
- * grid and the separate rotate stalk+handle that used to stick out above
- * the box: top-right (`ne`) rotates, bottom-right (`se`) resizes. Nothing
- * ever renders outside the box's own rectangle anymore.
- */
-const HANDLE_VISUAL_DIAMETER = 24;
-const HANDLE_FILL = 0xfff6df;
-const HANDLE_STROKE = 0xc98f34;
-const HANDLE_STROKE_WIDTH = 2;
-/** Explicit oversized Pixi hitArea per finger — the circle stays 24px, the tappable area is still a generous 44x44 for accurate mobile touch. */
-const HANDLE_HIT_SIZE = 44;
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
 }
 
 /**
@@ -197,11 +176,17 @@ function clamp(value: number, min: number, max: number): number {
  * zero DOM at the cost of every one of those OS features — see
  * buildGhostInput()'s own doc comment for the reasoning.
  *
- * The control box border keeps Konva.js's own Transformer border default
- * (1px `rgb(0, 161, 255)`, see the KONVA_BLUE constant); the two handles
- * are their own dedicated multi-function circles, not a generic 4-corner
- * grid — nothing renders outside the box's own rectangle (see HANDLE_*
- * constants above and syncControlBoxTransform() below).
+ * The control box (border + rotate/resize handles) is not drawn by this
+ * class at all — it is `Transformer.ts`'s sole responsibility, a standalone
+ * widget with no knowledge of text/effects/typing. `openControlBox()`
+ * constructs a `Transformer` fresh for each editing session and
+ * `closeControlBox()` `destroy()`s it the moment editing ends (commit or
+ * tap-outside): no gated/idle listener for it is ever left running while
+ * nothing is being edited. This class stays the single source of truth for
+ * `posX`/`posY`/`scale`/`rotation`; the Transformer only ever reports
+ * gesture results back up via callbacks (`onMove`/`onRotate`/`onScale`,
+ * see `transformerTarget()`/`syncTransforms()`) and redraws itself against
+ * whatever state this class hands it.
  *
  * The effects bar's demo previews reuse the exact same TextReveal engine as
  * the real final reveal (same particle physics, no CSS/static-image
@@ -240,15 +225,8 @@ export class TextComposer {
   /** Clips the preview reveal's text+particles to the current icon slot's rectangle — nothing may render outside it, however the particles naturally move. */
   private readonly previewMask: Graphics;
 
-  /** Full-screen, invisible-but-hit-testable — catches "tap outside the box" to commit. Sits directly under `controlBox` on the stage so the box/handles always win the hit test over it. */
+  /** Full-screen, invisible-but-hit-testable — catches "tap outside the box" to commit. Sits directly under the Transformer's own box/handles on `uiContainer` so they always win the hit test over it. */
   private readonly backdrop: Graphics;
-  /** Everything the player drags/pinches/rotates: positioned at (posX, posY) and rotated by `this.rotation` as one unit, which is why every child below is drawn centered on its own local origin. */
-  private readonly controlBox: Container;
-  private readonly boxBorder: Graphics;
-  /** Top-right corner: rotation only. `.glow` is the soft additive halo behind the mark, hidden until pressed — see createHandle()'s doc comment for why that halo has to exist as its own shape. */
-  private readonly rotateHandle: { root: Container; glow: Graphics };
-  /** Bottom-right corner: resize/scale only. */
-  private readonly resizeHandle: { root: Container; glow: Graphics };
 
   private text = SAMPLE_PHRASE;
   private effect: TextRevealEffect = 'none';
@@ -258,20 +236,8 @@ export class TextComposer {
   /** Radians — see TextRevealConfig's doc comment for the convention. */
   private rotation = 0;
   private hasCommittedOnce = false;
-
-  private readonly activePointers = new Map<number, { x: number; y: number }>();
-  private dragStart: { x: number; y: number } | null = null;
-  private pinchStartDist: number | null = null;
-  private pinchStartScale = 1;
-
-  /** Single-finger corner-handle resize, independent of (and mutually exclusive with) the two-finger pinch above — both stay equally capable ways to resize. */
-  private activeHandlePointerId: number | null = null;
-  private handleStartDist = 0;
-  private handleStartScale = 1;
-
-  /** Single-finger rotation via the dedicated handle above the box — stores the angle offset at drag-start so the handle tracks the finger exactly regardless of the box's current tilt. */
-  private activeRotatePointerId: number | null = null;
-  private rotateStartAngleOffset = 0;
+  /** Exists only between openControlBox() and closeControlBox() — see Transformer.ts's own doc comment for why nothing here keeps a permanent gated listener for it. */
+  private transformer: Transformer | null = null;
 
   private previewCycleActive = false;
   private previewGeneration = 0;
@@ -366,67 +332,12 @@ export class TextComposer {
       this.backdrop.clear().rect(0, 0, screen.width, screen.height).fill({ color: 0x000000, alpha: 0.001 });
     });
 
-    this.controlBox = new Container();
-    this.controlBox.visible = false;
-    deps.uiContainer.addChild(this.controlBox);
-
-    this.boxBorder = new Graphics();
-    this.boxBorder.eventMode = 'static';
-    this.boxBorder.cursor = 'grab';
-    this.controlBox.addChild(this.boxBorder);
-
-    this.rotateHandle = this.createHandle('crosshair');
-    this.controlBox.addChild(this.rotateHandle.root);
-
-    this.resizeHandle = this.createHandle('nwse-resize');
-    this.controlBox.addChild(this.resizeHandle.root);
-
     this.wireEffectButtons();
     this.wireBack();
-    this.wireControlBox();
 
     deps.app.stage.on('pointermove', this.handleInputPointerMove);
     deps.app.stage.on('pointerup', this.handleInputPointerEnd);
     deps.app.stage.on('pointerupoutside', this.handleInputPointerEnd);
-  }
-
-  /**
-   * One 24px gold circle with a real drop shadow, plus a separate soft
-   * additive "glow" halo behind it that stays hidden until pressed. The
-   * halo has to be its own shape, not just `blendMode = 'add'` on the mark
-   * itself: additive blending only brightens where it overlaps *something*
-   * underneath, and against this app's plain black sky an opaque circle has
-   * nothing to add to — it renders pixel-identical in 'add' and 'normal'.
-   * The halo is several concentric, alpha-fading circles (the exact
-   * layering technique `textures.ts`'s own particle texture already uses)
-   * so additive blending has translucent content to actually bloom against.
-   * Both handles (rotate + resize) share this exact look — only their
-   * position and the gesture wired to them differ.
-   */
-  private createHandle(cursor: string): { root: Container; glow: Graphics } {
-    const root = new Container();
-
-    const glow = new Graphics();
-    const glowSteps = 5;
-    const glowRadius = HANDLE_VISUAL_DIAMETER * 1.5;
-    for (let i = glowSteps; i > 0; i--) {
-      const t = i / glowSteps;
-      glow.circle(0, 0, glowRadius * t).fill({ color: HANDLE_FILL, alpha: (1 - t) * 0.6 });
-    }
-    glow.blendMode = 'add';
-    glow.visible = false;
-    glow.eventMode = 'none';
-    root.addChild(glow);
-
-    const mark = new Graphics();
-    mark.circle(0, 0, HANDLE_VISUAL_DIAMETER / 2).fill(HANDLE_FILL).stroke({ width: HANDLE_STROKE_WIDTH, color: HANDLE_STROKE });
-    mark.filters = [new DropShadowFilter({ color: 0x000000, alpha: 0.45, blur: 2, offset: { x: 0, y: 2 } })];
-    root.addChild(mark);
-
-    root.eventMode = 'static';
-    root.cursor = cursor;
-    root.hitArea = new Rectangle(-HANDLE_HIT_SIZE / 2, -HANDLE_HIT_SIZE / 2, HANDLE_HIT_SIZE, HANDLE_HIT_SIZE);
-    return { root, glow };
   }
 
   /** Opens the composer pre-filled with whatever text/effect is currently set — used by the T icon and by tapping the committed text. Starts on the effects bar; the OS keyboard only opens once the player actually taps the input pill (see buildGhostInput()), not automatically here. */
@@ -607,23 +518,40 @@ export class TextComposer {
     });
   }
 
+  /**
+   * Builds a fresh `Transformer` for this one editing session — see
+   * Transformer.ts's own doc comment for why it is constructed here rather
+   * than once up front and merely shown/hidden: no gesture listener for it
+   * exists on `app.stage` at all while nothing is being edited.
+   * `onMove`/`onRotate`/`onScale` are the only way the Transformer ever
+   * changes anything — it reports a gesture result, this class remains the
+   * one place `posX`/`posY`/`scale`/`rotation` actually live.
+   */
   private openControlBox(): void {
     this.backdrop.visible = true;
-    this.controlBox.visible = true;
-    this.syncControlBoxTransform();
+    this.transformer = new Transformer(this.deps.app, this.deps.uiContainer, this.transformerTarget(), {
+      onMove: (x, y) => {
+        this.posX = x;
+        this.posY = y;
+        this.syncTransforms();
+      },
+      onRotate: (rotation) => {
+        this.rotation = rotation;
+        this.syncTransforms();
+      },
+      onScale: (scale) => {
+        this.scale = scale;
+        this.syncTransforms();
+      },
+    });
     this.deps.onComposingChange(true);
   }
 
+  /** Tears the Transformer down completely — see Transformer.destroy()'s own doc comment. */
   private closeControlBox(): void {
     this.backdrop.visible = false;
-    this.controlBox.visible = false;
-    this.activePointers.clear();
-    this.dragStart = null;
-    this.pinchStartDist = null;
-    this.activeHandlePointerId = null;
-    this.resizeHandle.glow.visible = false;
-    this.activeRotatePointerId = null;
-    this.rotateHandle.glow.visible = false;
+    this.transformer?.destroy();
+    this.transformer = null;
   }
 
   /** Tapping the backdrop outside the box commits it: chrome disappears, bare text stays at its last position/scale. */
@@ -633,171 +561,28 @@ export class TextComposer {
     this.deps.onComposingChange(false);
   }
 
-  /**
-   * Every drag/resize/rotate gesture starts on a specific Pixi object's own
-   * `pointerdown` (the box border, a corner handle, or the rotate handle),
-   * but `pointermove`/`pointerup` are wired once here on `app.stage` — the
-   * same idiom PlanningMode.ts already uses elsewhere in this app for its
-   * own pin-dragging, and the standard Pixi pattern for "keep tracking a
-   * finger even once it slides off the small object that grabbed it"
-   * (there's no DOM-style `setPointerCapture` for a Pixi DisplayObject).
-   * `event.stopPropagation()` on every `pointerdown` below matters for a
-   * different reason than it did as CSS: without it, the same tap would
-   * also bubble up to `app.stage`'s own tap-to-fire listener in
-   * fireworksMood.ts and launch a rocket underneath the box.
-   */
-  private wireControlBox(): void {
-    this.boxBorder.on('pointerdown', (event: FederatedPointerEvent) => {
-      event.stopPropagation();
-      const { x, y } = event.global;
-      this.activePointers.set(event.pointerId, { x, y });
-
-      if (this.activePointers.size === 1) {
-        this.dragStart = { x: x - this.posX, y: y - this.posY };
-      } else if (this.activePointers.size === 2) {
-        const [a, b] = Array.from(this.activePointers.values());
-        this.pinchStartDist = Math.hypot(a.x - b.x, a.y - b.y);
-        this.pinchStartScale = this.scale;
-      }
-    });
-
-    this.wireResizeHandle();
-    this.wireRotateHandle();
-
-    this.deps.app.stage.on('pointermove', this.handleControlPointerMove);
-    this.deps.app.stage.on('pointerup', this.handleControlPointerEnd);
-    this.deps.app.stage.on('pointerupoutside', this.handleControlPointerEnd);
-  }
-
-  private handleControlPointerMove = (event: FederatedPointerEvent): void => {
-    if (!this.controlBox.visible) return;
-    const { x, y } = event.global;
-
-    if (event.pointerId === this.activeRotatePointerId) {
-      const angle = Math.atan2(y - this.posY, x - this.posX);
-      this.rotation = angle + this.rotateStartAngleOffset;
-      this.syncPreviewTransform();
-      this.syncControlBoxTransform();
-      return;
-    }
-
-    if (event.pointerId === this.activeHandlePointerId) {
-      const dist = Math.hypot(x - this.posX, y - this.posY);
-      this.scale = clamp(this.handleStartScale * (dist / this.handleStartDist), MIN_SCALE, MAX_SCALE);
-      this.syncPreviewTransform();
-      this.syncControlBoxTransform();
-      return;
-    }
-
-    if (!this.activePointers.has(event.pointerId)) return;
-    this.activePointers.set(event.pointerId, { x, y });
-
-    if (this.activePointers.size >= 2 && this.pinchStartDist !== null) {
-      const [a, b] = Array.from(this.activePointers.values());
-      const dist = Math.hypot(a.x - b.x, a.y - b.y);
-      this.scale = clamp(this.pinchStartScale * (dist / this.pinchStartDist), MIN_SCALE, MAX_SCALE);
-      this.syncPreviewTransform();
-      this.syncControlBoxTransform();
-    } else if (this.activePointers.size === 1 && this.dragStart) {
-      this.posX = x - this.dragStart.x;
-      this.posY = y - this.dragStart.y;
-      this.syncPreviewTransform();
-      this.syncControlBoxTransform();
-    }
-  };
-
-  private handleControlPointerEnd = (event: FederatedPointerEvent): void => {
-    if (event.pointerId === this.activeRotatePointerId) {
-      this.activeRotatePointerId = null;
-      this.rotateHandle.glow.visible = false;
-      return;
-    }
-    if (event.pointerId === this.activeHandlePointerId) {
-      this.activeHandlePointerId = null;
-      this.resizeHandle.glow.visible = false;
-      return;
-    }
-    this.activePointers.delete(event.pointerId);
-    if (this.activePointers.size < 2) this.pinchStartDist = null;
-    if (this.activePointers.size < 1) this.dragStart = null;
-  };
-
-  /**
-   * The bottom-right handle only — equally capable as the two-finger pinch
-   * above, not a fallback for it. Dragging it measures its distance from
-   * the box's center and scales relative to where the drag started, exactly
-   * like pinch does with two points instead of one. Showing its `.glow`
-   * (additive-blended) while held is the touch feedback, the same
-   * overlapping-additive-brightness technique every spark/rocket in
-   * FireworksSystem.ts already uses for its own glow.
-   */
-  private wireResizeHandle(): void {
-    this.resizeHandle.root.on('pointerdown', (event: FederatedPointerEvent) => {
-      event.stopPropagation();
-      const { x, y } = event.global;
-      this.activeHandlePointerId = event.pointerId;
-      this.handleStartDist = Math.max(1, Math.hypot(x - this.posX, y - this.posY));
-      this.handleStartScale = this.scale;
-      this.resizeHandle.glow.visible = true;
-    });
-  }
-
-  /**
-   * The top-right handle: Pixi's own `controlBox.rotation` already carries
-   * it around the box's center as the player turns the text, so this only
-   * wires "finger angle around the center -> new rotation". On grab it
-   * records the offset between the pointer's current angle (relative to
-   * `posX/posY`, in stage space, independent of the box's own current
-   * rotation) and the current rotation, then every move just re-applies
-   * that same offset to wherever the finger now is — so the handle tracks
-   * the finger exactly, a full 360° free turn.
-   */
-  private wireRotateHandle(): void {
-    this.rotateHandle.root.on('pointerdown', (event: FederatedPointerEvent) => {
-      event.stopPropagation();
-      const { x, y } = event.global;
-      this.activeRotatePointerId = event.pointerId;
-      const angle = Math.atan2(y - this.posY, x - this.posX);
-      this.rotateStartAngleOffset = this.rotation - angle;
-      this.rotateHandle.glow.visible = true;
-    });
-  }
-
   private syncPreviewTransform(): void {
     this.previewText.position.set(this.posX, this.posY);
     this.previewText.rotation = this.rotation;
     this.previewText.style = this.textStyle();
   }
 
-  /**
-   * Sized from the text's own *local* (unrotated) width/height — not
-   * `getBounds()`, which returns the rotated stage-space AABB and would
-   * make the box balloon out as soon as the text tilts. `controlBox` is
-   * positioned at (posX, posY) and rotated by `this.rotation` as one unit
-   * via Pixi's own `position`/`rotation` (never CSS), which is why the
-   * border and both handles below are drawn/positioned centered on local
-   * (0, 0) — the container's own transform carries all of them around
-   * together. Nothing is ever positioned outside the box's own rectangle:
-   * the rotate handle sits exactly on the top-right corner, the resize
-   * handle exactly on the bottom-right corner, no stalk sticking out above.
-   */
-  private syncControlBoxTransform(): void {
-    const width = this.previewText.width + BOX_PADDING * 2;
-    const height = this.previewText.height + BOX_PADDING * 2;
-    const hw = width / 2;
-    const hh = height / 2;
+  /** A plain snapshot of everything the Transformer needs to draw itself — `previewText.width/height` already reflect the current `scale` (see textStyle(), which drives fontSize from it), so the border always matches the text's real on-screen size with no separate scaling step of its own. */
+  private transformerTarget(): TransformerTarget {
+    return {
+      x: this.posX,
+      y: this.posY,
+      rotation: this.rotation,
+      scale: this.scale,
+      contentWidth: this.previewText.width,
+      contentHeight: this.previewText.height,
+    };
+  }
 
-    this.boxBorder
-      .clear()
-      .rect(-hw, -hh, width, height)
-      .fill({ color: 0x000000, alpha: 0.001 })
-      .stroke({ width: BOX_BORDER_WIDTH, color: KONVA_BLUE });
-
-    this.rotateHandle.root.position.set(hw, -hh);
-    this.resizeHandle.root.position.set(hw, hh);
-
-    this.controlBox.position.set(this.posX, this.posY);
-    this.controlBox.rotation = this.rotation;
+  /** Called after any gesture callback (move/rotate/scale) changes posX/posY/rotation/scale: repaints the actual text, then hands the Transformer a fresh snapshot to redraw its border/handles against. */
+  private syncTransforms(): void {
+    this.syncPreviewTransform();
+    this.transformer?.update(this.transformerTarget());
   }
 
   /**
@@ -1015,7 +800,7 @@ export class TextComposer {
     const root = new Container();
     root.eventMode = 'static';
     root.cursor = 'pointer';
-    root.hitArea = new Rectangle(-HANDLE_HIT_SIZE / 2, -HANDLE_HIT_SIZE / 2, HANDLE_HIT_SIZE, HANDLE_HIT_SIZE);
+    root.hitArea = new Rectangle(-BACK_HIT_SIZE / 2, -BACK_HIT_SIZE / 2, BACK_HIT_SIZE, BACK_HIT_SIZE);
 
     const bg = new Graphics().circle(0, 0, BACK_DIAMETER / 2).fill({ color: BACK_BG_COLOR, alpha: BACK_BG_ALPHA });
     root.addChild(bg);
