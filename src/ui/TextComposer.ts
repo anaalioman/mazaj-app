@@ -896,16 +896,18 @@ export class TextComposer {
 
   /**
    * The one deliberate DOM element in this class — a real `<input>`,
-   * invisible (`opacity: 0`, see createHiddenTextInput()) and kept
-   * positioned exactly over the Pixi input pill on every layoutComposer()
-   * call (see syncGhostInputBounds()). Focusing it (buildInputField()'s tap
-   * handler) raises the device's own OS keyboard — autocorrect, predictive
-   * text, personal dictionary, voice input, all free. Its `input` event is
-   * the single bridge back into Pixi: `this.text = ghostInput.value` feeds
-   * the exact same refreshInputVisual() pipeline every other change to
-   * `this.text` already goes through, so the horizontal-scroll mask/pan
-   * built for it works identically regardless of where a character came
-   * from.
+   * invisible (`opacity: 0`, `pointer-events: none`, see
+   * createHiddenTextInput()) and never positioned over anything: Pixi's own
+   * hit-testing on the input pill is what decides whether a tap counts, and
+   * `input.focus()` needs no visual placement to raise the OS keyboard, so
+   * there is nothing to keep in sync on layout/resize. Focusing it
+   * (buildInputField()'s tap handler) raises the device's own OS keyboard —
+   * autocorrect, predictive text, personal dictionary, voice input, all
+   * free. Its `input` event is the single bridge back into Pixi:
+   * `this.text = ghostInput.value` feeds the exact same
+   * refreshInputVisual() pipeline every other change to `this.text` already
+   * goes through, so the horizontal-scroll mask/pan built for it works
+   * identically regardless of where a character came from.
    *
    * A prior revision of this class instead hand-drew every key of a full
    * Arabic keyboard in Pixi, trading every one of the OS features above
@@ -930,13 +932,6 @@ export class TextComposer {
     return input;
   }
 
-  /** Positions ghostInput's real DOM bounds over the Pixi input pill's current on-screen rectangle — Pixi's global coordinates already match page/viewport coordinates 1:1 (the one shared canvas fills the viewport edge-to-edge, see shellStyles.ts, and the page itself never scrolls, see documentShell.ts), so no extra offset math is needed. */
-  private syncGhostInputBounds(pillGlobalX: number, pillGlobalY: number, width: number, height: number): void {
-    this.ghostInput.style.left = `${pillGlobalX - width / 2}px`;
-    this.ghostInput.style.top = `${pillGlobalY - height / 2}px`;
-    this.ghostInput.style.width = `${width}px`;
-    this.ghostInput.style.height = `${height}px`;
-  }
 
   /**
    * Repaints the field's live text/placeholder/caret from `this.text` —
@@ -1096,7 +1091,6 @@ export class TextComposer {
       .clear()
       .rect(pillGlobal.x - availWidth / 2, pillGlobal.y - INPUT_HEIGHT / 2, availWidth, INPUT_HEIGHT)
       .fill(0xffffff);
-    this.syncGhostInputBounds(pillGlobal.x, pillGlobal.y, inputWidth, INPUT_HEIGHT);
 
     const contentBottom = this.layoutEffectFrames(composerWidth);
     this.catchAll.clear().rect(0, 0, composerWidth, contentBottom).fill({ color: 0x000000, alpha: 0.001 });

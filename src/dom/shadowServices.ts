@@ -43,14 +43,14 @@ export function createLoopingVideoElement(objectUrl: string): HTMLVideoElement {
 }
 
 /**
- * A real `<input type="text">`, invisible but positioned/sized over the
- * text composer's input pill (see TextComposer's syncGhostInputBounds) —
- * the only way to raise the OS's own keyboard (autocorrect, predictive
- * text, voice input) on a tap, which no Canvas API can invoke. `opacity: 0`
- * rather than off-screen placement: mobile browsers generally only grant
- * focus a native keyboard pop-up when the target sits within the viewport.
- * Pixi renders the actual glyphs the player sees; this element exists
- * solely to receive OS text-input events.
+ * A real `<input type="text">` — the only way to raise the OS's own
+ * keyboard (autocorrect, predictive text, voice input) on a tap, which no
+ * Canvas API can invoke. Never positioned over anything and never itself a
+ * touch target (`pointer-events: none`): the caller's own Pixi hit-testing
+ * decides when a tap counts and calls `.focus()` programmatically, so this
+ * element needs no on-screen placement to work — `opacity: 0` alone is
+ * enough to keep it invisible. Pixi renders the actual glyphs the player
+ * sees; this element exists solely to receive OS text-input events.
  */
 export function createHiddenTextInput(): HTMLInputElement {
   const input = document.createElement('input');
@@ -59,7 +59,10 @@ export function createHiddenTextInput(): HTMLInputElement {
   input.setAttribute('autocapitalize', 'off');
   input.setAttribute('autocorrect', 'on');
   input.style.position = 'fixed';
+  input.style.top = '0';
+  input.style.left = '0';
   input.style.opacity = '0';
+  input.style.pointerEvents = 'none';
   input.style.border = 'none';
   input.style.outline = 'none';
   input.style.padding = '0';
