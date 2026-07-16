@@ -11,7 +11,7 @@ const FADE_IN_MS = 180;
  * movement/tap. Hiding sets `visible = false` immediately (matching the old
  * CSS `.mzj-idle` rule's `display: none !important` — a genuinely zero-cost,
  * zero-hit-testable hide, not just alpha 0); showing tweens `alpha` back up
- * over `FADE_IN_MS` via `requestAnimationFrame`.
+ * over `FADE_IN_MS` via the shared Ticker (see `show()` below).
  *
  * The idle countdown is disarmed until `arm()` (or `hideNow()`) is called.
  * Before that, targets are shown unconditionally and never auto-hide — the

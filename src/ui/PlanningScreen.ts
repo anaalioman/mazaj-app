@@ -1,4 +1,4 @@
-import { Text, TextStyle, type Application, type Container } from 'pixi.js';
+import { Text, TextStyle, type Application, type Container, type Ticker } from 'pixi.js';
 import { type BurstType, type FireworksSystem } from '../fireworks/FireworksSystem';
 import type { BackgroundLayer } from '../background';
 import type { AudioManager } from '../audio/AudioManager';
@@ -128,7 +128,7 @@ export class PlanningScreen {
   private randomModeEnabled = false;
   private autoShowEnabled = false;
   private hintTimer: TickerTimerHandle | undefined;
-  private hintFadeRaf: number | undefined;
+  private hintFadeTick: ((t: Ticker) => void) | undefined;
   private hintComposing = false;
   private hintAutoHidden = true;
 
@@ -322,7 +322,7 @@ export class PlanningScreen {
 
   hide(): void {
     this.iconColumn.container.visible = false;
-    if (this.hintFadeRaf !== undefined) cancelAnimationFrame(this.hintFadeRaf);
+    this.stopHintFade();
     this.hintText.alpha = 0;
     this.hintTimer?.cancel();
     this.colorPicker.setOpen(false);
@@ -387,18 +387,25 @@ export class PlanningScreen {
     else this.hintText.alpha = visible ? 1 : 0;
   }
 
+  private stopHintFade(): void {
+    if (this.hintFadeTick) this.deps.app.ticker.remove(this.hintFadeTick);
+    this.hintFadeTick = undefined;
+  }
+
   private fadeHint(visible: boolean): void {
-    if (this.hintFadeRaf !== undefined) cancelAnimationFrame(this.hintFadeRaf);
+    this.stopHintFade();
     const target = visible ? 1 : 0;
     const start = this.hintText.alpha;
     if (start === target) return;
-    const startTime = performance.now();
-    const step = (now: number) => {
-      const t = Math.min(1, (now - startTime) / HINT_FADE_MS);
-      this.hintText.alpha = start + (target - start) * t;
-      this.hintFadeRaf = t < 1 ? requestAnimationFrame(step) : undefined;
+    let elapsedMs = 0;
+    const tick = (t: Ticker): void => {
+      elapsedMs += t.deltaMS;
+      const progress = Math.min(1, elapsedMs / HINT_FADE_MS);
+      this.hintText.alpha = start + (target - start) * progress;
+      if (progress >= 1) this.stopHintFade();
     };
-    this.hintFadeRaf = requestAnimationFrame(step);
+    this.hintFadeTick = tick;
+    this.deps.app.ticker.add(tick);
   }
 
   /** The two file-picker bridges' shared build logic — see the class field's own doc comment for why this DOM node is unavoidable. Zero CSS: every property below is a direct inline `style.*` assignment, matching TextComposer's ghost-input rigor. */

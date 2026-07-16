@@ -431,14 +431,15 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
 
   function flashScreen(): void {
     cameraFlash.alpha = 1;
-    const startTime = performance.now();
-    const step = (now: number) => {
-      const t = Math.min(1, (now - startTime) / FLASH_FADE_MS);
-      const eased = 1 - (1 - t) ** 3;
+    let elapsedMs = 0;
+    const step = (t: Ticker): void => {
+      elapsedMs += t.deltaMS;
+      const progress = Math.min(1, elapsedMs / FLASH_FADE_MS);
+      const eased = 1 - (1 - progress) ** 3;
       cameraFlash.alpha = 1 - eased;
-      if (t < 1) requestAnimationFrame(step);
+      if (progress >= 1) app.ticker.remove(step);
     };
-    requestAnimationFrame(step);
+    app.ticker.add(step);
   }
 
   // A snapshot failure used to be visible only in console.error — invisible

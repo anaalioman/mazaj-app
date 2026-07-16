@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
+import { Application, Container, Graphics, Text, TextStyle, type Ticker } from 'pixi.js';
 import { BackdropBlurFilter, DropShadowFilter } from 'pixi-filters';
 import type { SliderSheetPanel } from './PlanningSubpanels';
 import { tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
@@ -129,15 +129,16 @@ export class UploadHint {
     const startOffset = this.slideOffset;
     if (startAlpha === targetAlpha && startOffset === targetOffset) return;
 
-    const startTime = performance.now();
-    const step = (now: number) => {
-      const t = Math.min(1, (now - startTime) / TOAST_FADE_MS);
-      this.toastRoot.alpha = startAlpha + (targetAlpha - startAlpha) * t;
-      this.slideOffset = startOffset + (targetOffset - startOffset) * t;
+    let elapsedMs = 0;
+    const step = (t: Ticker): void => {
+      elapsedMs += t.deltaMS;
+      const progress = Math.min(1, elapsedMs / TOAST_FADE_MS);
+      this.toastRoot.alpha = startAlpha + (targetAlpha - startAlpha) * progress;
+      this.slideOffset = startOffset + (targetOffset - startOffset) * progress;
       this.toastRoot.position.set(this.app.screen.width / 2, TOAST_TOP_Y + this.slideOffset);
-      if (t < 1) requestAnimationFrame(step);
+      if (progress >= 1) this.app.ticker.remove(step);
     };
-    requestAnimationFrame(step);
+    this.app.ticker.add(step);
   }
 
   private hasShownBefore(): boolean {

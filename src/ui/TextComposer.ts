@@ -82,19 +82,9 @@ const KEY_LABEL_COLOR = 0xffe9b3;
 const KEY_LABEL_SIZE = 17;
 const KEY_GLOW_FLASH_MS = 180;
 const FUNCTION_KEY_LABEL_SIZE = 13;
-/**
- * One shared filter instance for every key's glow, instead of each of the
- * ~34 keys carrying its own permanent `AdvancedBloomFilter`. A Pixi Filter
- * is stateless between renders (its own uniforms are fixed config, not
- * per-target state), so the same instance is safe to reference from
- * multiple objects' `.filters` at once — sharing it costs nothing. The real
- * saving is elsewhere: `.filters` is only ever assigned to a key's `glow`
- * for the ~180ms it's actually flashing (see flashKeyGlow()), and cleared
- * right after — so a keyboard sitting idle costs zero bloom render passes
- * instead of one permanent pass per key, per frame, whether or not anyone's
- * touching it.
- */
-const KEY_GLOW_FILTER = new AdvancedBloomFilter({ threshold: 0.2, blur: 6, quality: 4, bloomScale: 1.3, brightness: 1.1 });
+/** Concentric-layer halo (see drawKeyBackground()) — how far the outermost, faintest layer extends past the key's own edge. */
+const KEY_GLOW_STEPS = 5;
+const KEY_GLOW_MAX_OUTSET = 10;
 const DONE_KEY_COLOR = 0xfff6df;
 
 const SAMPLE_PHRASE = 'مبروك';
@@ -902,10 +892,9 @@ export class TextComposer {
     // Both drawn empty here — width varies per key (space is much wider
     // than a letter) and depends on the composer's responsive width, so
     // the actual shape is (re)drawn in drawKeyBackground() from
-    // layoutVirtualKeyboard() instead, same pattern as inputField.bg.
-    // No `.filters` assigned here — see KEY_GLOW_FILTER's own doc comment;
-    // flashKeyGlow() attaches the one shared filter only while this key is
-    // actually mid-flash.
+    // layoutVirtualKeyboard() instead, same pattern as inputField.bg. `glow`
+    // gets its concentric-halo layers there too — no Filter involved at all,
+    // see drawKeyBackground()'s own doc comment.
     const glow = new Graphics();
     glow.alpha = 0;
     root.addChild(glow);
@@ -953,9 +942,8 @@ export class TextComposer {
     });
   }
 
-  /** The same additive-halo technique createHandle() uses for its press state, here fired as a one-shot fade — the "تفاعل مع مؤثرات الـ Glow" the effects bar itself is built on, reused as tactile per-key feedback. Ticker-driven (see utils/tickerTimers.ts's sibling pattern), and attaches KEY_GLOW_FILTER only for this flash's own duration — see that constant's own doc comment. */
+  /** The same additive-halo technique createHandle() uses for its press state, here fired as a one-shot fade — the "تفاعل مع مؤثرات الـ Glow" the effects bar itself is built on, reused as tactile per-key feedback. Pre-drawn shape (see drawKeyBackground()), so this only ever touches `.alpha` — no runtime Filter anywhere in this path. */
   private flashKeyGlow(key: VirtualKeyObj): void {
-    key.glow.filters = [KEY_GLOW_FILTER];
     key.glow.alpha = 1;
     let elapsedMs = 0;
     const step = (t: Ticker): void => {
@@ -964,7 +952,6 @@ export class TextComposer {
       key.glow.alpha = 1 - progress;
       if (progress < 1) return;
       this.deps.app.ticker.remove(step);
-      key.glow.filters = [];
     };
     this.deps.app.ticker.add(step);
   }
@@ -1100,7 +1087,25 @@ export class TextComposer {
       .roundRect(-width / 2, -KEY_SIZE / 2, width, KEY_SIZE, KEY_RADIUS)
       .fill({ color: KEY_FILL_COLOR, alpha: KEY_FILL_ALPHA })
       .stroke({ width: 1, color: KEY_BORDER_COLOR, alpha: KEY_BORDER_ALPHA });
-    key.glow.clear().roundRect(-width / 2, -KEY_SIZE / 2, width, KEY_SIZE, KEY_RADIUS).fill({ color: EFFECT_GOLD, alpha: 0.5 });
+
+    // Pre-drawn concentric-layer halo — the same additive technique
+    // createHandle() uses (see its own doc comment), swapped from circles to
+    // rounded rects to match a key's own outline. No runtime Filter/blur at
+    // all: each layer is a plain flat-fill shape, progressively larger and
+    // fainter outward, and Pixi caches a Graphics object's fill geometry
+    // once drawn — flashKeyGlow() only ever touches `.alpha` afterward, so
+    // an idle keyboard costs zero extra render passes, and a flashing key
+    // costs one ordinary (unfiltered) draw, same as any other Graphics.
+    key.glow.clear();
+    for (let i = KEY_GLOW_STEPS; i > 0; i--) {
+      const t = i / KEY_GLOW_STEPS;
+      const outset = KEY_GLOW_MAX_OUTSET * t;
+      key.glow
+        .roundRect(-width / 2 - outset, -KEY_SIZE / 2 - outset, width + outset * 2, KEY_SIZE + outset * 2, KEY_RADIUS + outset)
+        .fill({ color: EFFECT_GOLD, alpha: (1 - t) * 0.5 });
+    }
+    key.glow.blendMode = 'add';
+
     key.root.hitArea = new Rectangle(-width / 2, -KEY_SIZE / 2, width, KEY_SIZE);
   }
 
