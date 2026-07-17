@@ -630,7 +630,6 @@ export class TextComposer {
     deps.app.ticker.add((ticker) => this.syncDeleteSparks(ticker));
 
     this.backButton = this.buildBackButton();
-    this.composerContainer.addChild(this.backButton.root);
 
     this.effectFrames = TEXT_EFFECTS.map((entry) => this.buildEffectFrame(entry.id, entry.label));
     for (const frame of this.effectFrames) this.composerContainer.addChild(frame.root);
@@ -651,6 +650,15 @@ export class TextComposer {
     this.fuseEmber.visible = false;
     this.composerContainer.addChild(this.fuseEmber);
     deps.app.ticker.add((ticker) => this.syncFuseEffect(ticker));
+
+    // Added last, deliberately — Pixi renders later-added children on top,
+    // so this guarantees the back arrow always sits visually above the
+    // effects bar, the mode row, and the fuse rope/ember, regardless of
+    // whatever any of those are doing (a bounce mid-pop, the fuse ember
+    // riding past its own row). Per the standing "السهم هو القائد العام"
+    // rule: no effect icon may ever visually cover or intercept it, now or
+    // after any future addition to this composer.
+    this.composerContainer.addChild(this.backButton.root);
 
     this.ghostInput = this.buildGhostInput();
 
