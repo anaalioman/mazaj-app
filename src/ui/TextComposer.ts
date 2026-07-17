@@ -387,6 +387,13 @@ export class TextComposer {
     });
   }
 
+  /**
+   * Picking an effect is the player's confirmation that they're done
+   * composing — same as tapping the back arrow, just one tap instead of
+   * two. `syncEffectFrames()` still runs first so the tapped card visibly
+   * lights up gold for one frame before the whole effects bar disappears
+   * underneath it, confirming which effect was actually picked.
+   */
   private wireEffectButtons(): void {
     for (const frame of this.effectFrames) {
       frame.root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
@@ -395,6 +402,7 @@ export class TextComposer {
         this.deps.audio.playUiClick();
         this.effect = frame.effect;
         this.syncEffectFrames();
+        this.confirmAndOpenControlBox();
       });
     }
   }
@@ -449,15 +457,20 @@ export class TextComposer {
     this.backButton.root.on('pointertap', (event: FederatedPointerEvent) => {
       event.stopPropagation();
       this.deps.audio.playUiClick();
-      this.stopPreviewCycle();
-      this.ghostInput.blur();
-      this.composerContainer.visible = false;
-      this.text = this.text.trim() ? this.text : SAMPLE_PHRASE;
-      this.previewText.text = this.text;
-      this.previewText.visible = true;
-      this.syncPreviewTransform();
-      this.openControlBox();
+      this.confirmAndOpenControlBox();
     });
+  }
+
+  /** Leaves the input+effects bar and reveals the committed text in its draggable/resizable/rotatable control box — the one transition both the back arrow and picking an effect (see wireEffectButtons()) trigger. */
+  private confirmAndOpenControlBox(): void {
+    this.stopPreviewCycle();
+    this.ghostInput.blur();
+    this.composerContainer.visible = false;
+    this.text = this.text.trim() ? this.text : SAMPLE_PHRASE;
+    this.previewText.text = this.text;
+    this.previewText.visible = true;
+    this.syncPreviewTransform();
+    this.openControlBox();
   }
 
   /** Runs smoke -> flame -> none -> smoke -> ... forever, one at a time, using the exact same TextReveal engine as the real final reveal — only ever one preview actually animating. Independent of tapping an icon to select it. */
