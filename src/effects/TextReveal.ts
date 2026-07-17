@@ -71,8 +71,22 @@ export class TextReveal {
 
     const promise = effect.play({ container: this.container, text, particleTexture: getParticleTexture(this.app) });
     void promise.then(() => {
-      // Stop ticking a finished effect — matches how it always behaved before this got pluggable.
-      if (this.activeEffect === effect) this.activeEffect = null;
+      // Stop ticking a finished effect — matches how it always behaved before
+      // this got pluggable. Also force-clears it (not just drops the
+      // reference): an effect resolves once its own *overall* timer expires,
+      // which for a module that keeps spawning new particles for its whole
+      // duration (e.g. inferno.ts's continuous embers) does not guarantee
+      // every individual particle's own shorter life has also expired yet.
+      // Left alone, update() simply stops being called on this effect the
+      // instant we drop it below — any still-alive particle freezes exactly
+      // where it was, forever, since nothing else will ever call kill() on
+      // it. clear() is idempotent and safe to call on an effect that's
+      // already fully finished (empty particle list, already-destroyed
+      // containers) — it's still correct, just a no-op in that case.
+      if (this.activeEffect === effect) {
+        effect.clear();
+        this.activeEffect = null;
+      }
     });
     return promise;
   }
