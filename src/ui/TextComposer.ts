@@ -1,4 +1,4 @@
-import { Application, BlurFilter, CanvasTextMetrics, Container, FillGradient, Graphics, ParticleContainer, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent, type Ticker } from 'pixi.js';
+import { Application, CanvasTextMetrics, Container, FillGradient, Graphics, ParticleContainer, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent, type Ticker } from 'pixi.js';
 import { AdvancedBloomFilter, DropShadowFilter, GlowFilter } from 'pixi-filters';
 import { iconTexture } from './svgIconTexture';
 import type { IconName } from './icons';
@@ -21,6 +21,8 @@ export interface TextRevealConfig {
   fontScale: number;
   /** Radians, same convention as Pixi's own `rotation` (0 = upright, clockwise-positive). */
   rotation: number;
+  /** Whether "سحابة دخان" was the player's choice for this text — see consumeForReveal()'s own doc comment for why this only ever plays once passed through to TextReveal's own `smokeCloud` option, never in the composer itself. */
+  smokeCloud: boolean;
 }
 
 export interface TextComposerDeps {
@@ -304,26 +306,18 @@ const FUSE_EMBER_SPAWN_INTERVAL_MS = 140;
 
 /**
  * "سحابة دخان ذهبية" — unlike the other three ComposeMode entries, this one
- * animates `previewText` (the already-committed word shown in the scene,
- * see fireworksMood.ts's own container-tree doc comment), not the input
- * field: `previewText` and the composer's own input+mode row are never
- * visible at the same time (open() hides previewText; commit hides the
- * composer and shows it — see confirmAndOpenControlBox()), so toggling this
- * mid-typing has no *visible* effect yet, by design. `smokeCloudActive`
- * survives just long enough to be read at the moment of commit (snapshotted
- * into `committedSmokeActive`, see that field's own doc comment) and then
- * resets — the *next* word's mode row starts clean rather than showing the
- * previous word's choice as if it were still selected. See
- * syncSmokeCloudEffect() for the actual per-frame drift/blur/mask logic.
+ * has no visible effect anywhere in the composer at all. A real, corrected
+ * requirement: the effect must not launch until the real show actually
+ * starts (previously it animated the still-idle control-box preview
+ * immediately on commit, well before "ابدأ العرض" — confirmed live as
+ * wrong). `smokeCloudActive`/`committedSmokeActive` here only carry the
+ * player's choice through `consumeForReveal()`'s returned `TextRevealConfig`
+ * (see that method's own doc comment) — the actual drift/blur playback
+ * lives entirely in `TextReveal.ts`'s own `smokeCloud` option, driven off
+ * the real reveal's own settled text object, since that's the only object
+ * that (a) still exists once the show starts and (b) stays on screen for
+ * the rest of it. `previewText` itself never touches this effect.
  */
-const SMOKE_DRIFT_SPEED = 0.14; // px per ticker.deltaTime unit — gentle, per "زحف هادئة"
-const SMOKE_RETURN_DURATION_MS = 500;
-/** BlurFilter's `legacy` option (default false) already applies Pixi v8's own "optimized halving" pass-strength scheme — no extra code needed to get it, just not overriding it back to the pre-v8 uniform one. */
-const SMOKE_BLUR_MIN = 1.5;
-const SMOKE_BLUR_MAX = 5;
-const SMOKE_BLUR_PULSE_SPEED = 0.0011;
-/** Reuses this file's own COMPOSER_TOP_Y (where the composer itself starts, just clear of the header) as "the top of the safe display area" — a real existing boundary rather than a new guessed-at header height. The drift clamps here (see syncSmokeCloudEffect()) rather than fading — the text stays fully visible forever once it reaches this line. */
-const SMOKE_MASK_TOP_Y = COMPOSER_TOP_Y;
 
 const PLACEHOLDER_TEXT = 'اكتب عبارتك هنا';
 const PLACEHOLDER_COLOR = 0xffffff;
@@ -490,25 +484,18 @@ export class TextComposer {
   private fuseEmberSpawnAccumulator = 0;
   /**
    * The row's one stackable/independent toggle — see RowMode's own doc
-   * comment. Like `composeMode`, reset to `false` by
-   * confirmAndOpenControlBox() every commit for the exact same reason —
-   * see that field's own doc comment. The currently-*displayed* text's own
-   * smoke animation does not depend on this staying true: that's
-   * `committedSmokeActive`'s job, a separate snapshot taken at the moment
-   * of commit specifically so resetting this one for the *next* word never
-   * reverses the effect already baked into the *current* one.
+   * comment. Reset to `false` by confirmAndOpenControlBox() every commit,
+   * same as `composeMode` — see that field's own doc comment. Does *not*
+   * animate `previewText` at all (see this class's own smoke-cloud doc
+   * comment on why: the effect only actually plays once the real show
+   * starts, on the real reveal's own text object — see
+   * TextReveal.ts's own `smokeCloud` option). This field, and
+   * `committedSmokeActive` below, exist purely to carry the player's choice
+   * through to `consumeForReveal()`'s returned `TextRevealConfig`.
    */
   private smokeCloudActive = false;
-  /** Snapshot of `smokeCloudActive` taken at the exact moment of commit (see confirmAndOpenControlBox()) — what syncSmokeCloudEffect() actually reads to animate the currently-displayed previewText, independent of whatever the (possibly since-reset, possibly since-reselected-for-the-next-word) live `smokeCloudActive` is doing. */
+  /** Snapshot of `smokeCloudActive` taken at the exact moment of commit (see confirmAndOpenControlBox()) — what consumeForReveal() actually reads once the control box has been shown at least once for the current text, since `smokeCloudActive` itself gets reset for the *next* word by then. */
   private committedSmokeActive = false;
-  /** Accumulated upward offset added on top of `posY` while smoke is active — negative-going. Eases back to exactly 0 (not snapped) once the mode turns off, via smokeReturnStart/smokeReturnFromY, the same eased-decay shape as modeBounceStart. */
-  private smokeDriftY = 0;
-  private smokeReturnStart = -1;
-  private smokeReturnFromY = 0;
-  /** Applied only while smoke is active or still easing back — see syncSmokeCloudEffect(). previewText's *other* filter, previewGlow, stays in the array either way; this one is added/removed around it rather than the whole array ever going empty, since the halo is permanent and this effect isn't. */
-  private readonly smokeBlur: BlurFilter;
-  /** Unparented (evaluated in global space, same convention previewMask/inputField.mask already use) — confines the drifting text to "شاشة العرض", fading it out before it would otherwise cross above where the header/composer chrome sits. */
-  private readonly previewSmokeMask: Graphics;
   private readonly previewText: Text;
   /** The committed text's pulsing halo — one instance, reused every frame (see GLOW_* constants' own doc comment); never recreated per-tick. */
   private readonly previewGlow: GlowFilter;
@@ -567,13 +554,6 @@ export class TextComposer {
     this.previewText.filters = [this.previewGlow];
     deps.app.ticker.add((ticker) => this.syncPreviewGlow(ticker));
 
-    // Smoke-cloud's own filter/mask — see SMOKE_* constants' own doc
-    // comment. `legacy` deliberately left at its default `false` so
-    // BlurFilter uses Pixi v8's own "optimized halving" pass-strength
-    // scheme rather than opting back into the pre-v8 uniform one.
-    this.smokeBlur = new BlurFilter({ strength: SMOKE_BLUR_MIN, quality: 3 });
-    this.previewSmokeMask = new Graphics();
-    deps.app.ticker.add((ticker) => this.syncSmokeCloudEffect(ticker));
     this.previewText.on('pointerdown', (event) => {
       event.stopPropagation();
       this.open();
@@ -728,8 +708,21 @@ export class TextComposer {
    * overlapping. Null if the player never actually went through the
    * composer at all this session — callers should fall back to their own
    * default in that case.
+   *
+   * `smokeCloud` is where the smoke-cloud mode's choice actually gets used
+   * — deliberately not in the composer at all (see that field's own doc
+   * comment: the effect must never animate before the real show starts).
+   * Which field is authoritative depends on whether the control box was
+   * ever actually shown for *this* text: if `previewText.visible` is
+   * already true, confirmAndOpenControlBox() already ran and reset the
+   * live `smokeCloudActive` for whatever comes next, so `committedSmokeActive`
+   * (its snapshot) is the real answer. If it's still false, the player
+   * pressed "ابدأ العرض" without ever tapping the composer's own arrow —
+   * confirmAndOpenControlBox() never ran, so the live `smokeCloudActive`
+   * itself is still the current, uncommitted choice for this text.
    */
   consumeForReveal(): TextRevealConfig | null {
+    const smokeCloud = this.previewText.visible ? this.committedSmokeActive : this.smokeCloudActive;
     // Defensive: the show can start (via the header's always-available
     // "ابدأ العرض") while the composer or control box is still open.
     this.stopPreviewCycle();
@@ -738,7 +731,7 @@ export class TextComposer {
     this.closeControlBox();
     this.previewText.visible = false;
     if (!this.hasCommittedOnce) return null;
-    return { text: this.text, effect: this.effect, x: this.posX, y: this.posY, fontScale: this.scale, rotation: this.rotation };
+    return { text: this.text, effect: this.effect, x: this.posX, y: this.posY, fontScale: this.scale, rotation: this.rotation, smokeCloud };
   }
 
   private textStyle(): TextStyle {
@@ -1051,29 +1044,14 @@ export class TextComposer {
    * draggable/resizable/rotatable control box — the one transition both the
    * back arrow and picking an effect (see wireEffectButtons()) trigger.
    *
-   * `smokeDriftY` is reset here — `smokeDriftY` only ever accumulates
-   * while `previewText.visible` (see syncSmokeCloudEffect()'s own gate),
-   * which is true for exactly as long as some *previous* commit sat in its
-   * control box, and the drift a prior viewing had already accumulated has
-   * no business surviving into a *new* commit. Without this, a fresh
-   * commit's text would render already displaced upward from wherever an
-   * earlier, unrelated viewing had drifted to, instead of starting from
-   * its own true committed position every time.
-   * `previewText.alpha` is reset defensively alongside it — nothing in the
-   * current smoke logic touches alpha anymore (see syncSmokeCloudEffect()'s
-   * own doc comment on why it clamps position instead of fading), but a
-   * fresh commit should never inherit a non-1 alpha from any past state
-   * regardless of which system might have set it.
-   *
-   * `composeMode`/`smokeCloudActive` reset to their own defaults here too —
+   * `composeMode`/`smokeCloudActive` reset to their own defaults here —
    * once a mode has actually been used (this commit *is* that use), it has
    * no business still showing "selected" the next time the composer opens
    * for a new word. `committedSmokeActive` is snapshotted from
-   * `smokeCloudActive` *before* that reset specifically so the animation
-   * already playing on *this* just-committed text keeps running off its
-   * own frozen snapshot — resetting the live `smokeCloudActive` for the
-   * next word must never reach backward and reverse an effect already
-   * baked into a previous one.
+   * `smokeCloudActive` *before* that reset — consumeForReveal() reads it
+   * from there once the real show actually starts (see that method's own
+   * doc comment on why the smoke-cloud effect only ever plays then, never
+   * on this still-idle control-box preview).
    */
   private confirmAndOpenControlBox(): void {
     this.stopPreviewCycle();
@@ -1082,9 +1060,6 @@ export class TextComposer {
     this.text = this.text.trim() ? this.text : SAMPLE_PHRASE;
     this.previewText.text = this.text;
     this.previewText.visible = true;
-    this.smokeDriftY = 0;
-    this.smokeReturnStart = -1;
-    this.previewText.alpha = 1;
     this.committedSmokeActive = this.smokeCloudActive;
     this.composeMode = 'none';
     this.smokeCloudActive = false;
@@ -1199,9 +1174,8 @@ export class TextComposer {
     this.deps.onComposingChange(false);
   }
 
-  /** `+ this.smokeDriftY` layers the smoke-cloud effect's own upward offset (see syncSmokeCloudEffect()) on top of the "true" committed position every time this runs (drag/resize/rotate gestures, or the initial reveal after commit) — without it, any gesture update mid-drift would snap the text back down to `posY` and fight the very next tick's own re-application of the offset. */
   private syncPreviewTransform(): void {
-    this.previewText.position.set(this.posX, this.posY + this.smokeDriftY);
+    this.previewText.position.set(this.posX, this.posY);
     this.previewText.rotation = this.rotation;
     this.previewText.style = this.textStyle();
   }
@@ -1221,74 +1195,6 @@ export class TextComposer {
     if (!this.previewText.visible) return;
     const pulse = 0.5 + 0.5 * Math.sin(ticker.lastTime * GLOW_PULSE_SPEED);
     this.previewGlow.outerStrength = GLOW_PULSE_MIN + pulse * (GLOW_PULSE_MAX - GLOW_PULSE_MIN);
-  }
-
-  /**
-   * Drives the smoke-cloud mode's drift/blur on `previewText` — see
-   * `smokeCloudActive`'s own doc comment for why this only ever does
-   * anything once the composer has closed (previewText.visible), even
-   * though the icon that toggles it lives *inside* the still-open composer.
-   * Three states, exactly one active per call: actively drifting upward
-   * (mode on), easing back down to `posY` (just turned off, still
-   * mid-return), or fully settled (nothing to do — the cheap early exit).
-   * `previewText.mask`/`.filters` are only ever touched while one of the
-   * first two states applies, so a previewText that never once had smoke
-   * toggled on carries zero extra per-frame cost beyond this one check.
-   *
-   * The drift *stops* at the safe display area's own top edge rather than
-   * fading the text out there — an explicit correction: the text must stay
-   * fully visible forever once it reaches the top, never disappear, so
-   * there is no alpha fade at all here, only a position clamp.
-   * `previewSmokeMask` still exists purely as a hard safety net should the
-   * clamp math ever be off by a pixel — it never actually clips anything
-   * once the clamp itself is correct.
-   *
-   * Reads `committedSmokeActive`, not the live `smokeCloudActive` — see
-   * that field's own doc comment: `smokeCloudActive` resets to `false` the
-   * moment a commit actually uses it, so the *next* word's mode row starts
-   * clean, while `committedSmokeActive` keeps the *current* word's already-
-   * playing animation running off its own frozen snapshot regardless.
-   */
-  private syncSmokeCloudEffect(ticker: Ticker): void {
-    if (!this.previewText.visible) return;
-
-    if (this.committedSmokeActive) {
-      // Reassigned every active frame, same as syncComposeModeFrames()
-      // rebuilds its own FillGradient every frame — a 2-element array
-      // literal is cheap enough that tracking "is it already attached"
-      // separately would only add state for no real saving.
-      this.previewText.filters = [this.previewGlow, this.smokeBlur];
-      this.smokeReturnStart = -1;
-      // Clamped so `posY + smokeDriftY - height/2` (the text's own top
-      // edge, given its anchor(0.5, 0.5)) never rises past
-      // SMOKE_MASK_TOP_Y — once it reaches that line it simply stops
-      // there instead of continuing to accumulate.
-      const minDriftY = SMOKE_MASK_TOP_Y - this.posY + this.previewText.height / 2;
-      this.smokeDriftY = Math.max(this.smokeDriftY - SMOKE_DRIFT_SPEED * ticker.deltaTime, minDriftY);
-      const pulse = 0.5 + 0.5 * Math.sin(ticker.lastTime * SMOKE_BLUR_PULSE_SPEED);
-      this.smokeBlur.strength = SMOKE_BLUR_MIN + pulse * (SMOKE_BLUR_MAX - SMOKE_BLUR_MIN);
-    } else if (this.smokeDriftY !== 0) {
-      if (this.smokeReturnStart < 0) {
-        this.smokeReturnStart = ticker.lastTime;
-        this.smokeReturnFromY = this.smokeDriftY;
-      }
-      const t = Math.min(1, (ticker.lastTime - this.smokeReturnStart) / SMOKE_RETURN_DURATION_MS);
-      this.smokeDriftY = this.smokeReturnFromY * (1 - easeOutBounce(t));
-      if (t >= 1) {
-        this.smokeDriftY = 0;
-        this.smokeReturnStart = -1;
-        this.previewText.filters = [this.previewGlow];
-        this.previewText.mask = null;
-        return;
-      }
-    } else {
-      return;
-    }
-
-    this.previewText.position.set(this.posX, this.posY + this.smokeDriftY);
-    const screen = this.deps.app.screen;
-    this.previewSmokeMask.clear().rect(0, SMOKE_MASK_TOP_Y, screen.width, screen.height - SMOKE_MASK_TOP_Y).fill(0xffffff);
-    this.previewText.mask = this.previewSmokeMask;
   }
 
   /**

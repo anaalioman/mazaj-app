@@ -1,4 +1,4 @@
-import { Application, Container, Text, TextStyle } from 'pixi.js';
+import { Application, BlurFilter, Container, Text, TextStyle } from 'pixi.js';
 import { getParticleTexture } from '../fireworks/textures';
 import { createTextEffect, type TextEffect, type TextRevealEffect } from './textEffects/registry';
 
@@ -14,7 +14,22 @@ export interface RevealOptions {
   fontScale?: number;
   /** Radians — matches whatever tilt the player set via the control box's rotate handle. Default 0 (upright). */
   rotation?: number;
+  /**
+   * "سحابة دخان ذهبية" from the text composer's mode row — see
+   * TextComposer.ts's own doc comment on this field for why it only ever
+   * plays here, on the real reveal's settled text, never on the composer's
+   * own idle preview. Default false.
+   */
+  smokeCloud?: boolean;
 }
+
+/** Slow upward drift, px per ticker.deltaTime unit (~px/frame at 60fps) — same tuned value already approved for the composer's earlier (now-removed) previewText version. */
+const SMOKE_DRIFT_SPEED = 0.14;
+/** Screen-space y the drifting text's own top edge clamps against — stays here forever once reached, per the explicit "must never disappear" requirement. */
+const SMOKE_TOP_MARGIN = 28;
+const SMOKE_BLUR_MIN = 1.5;
+const SMOKE_BLUR_MAX = 4.5;
+const SMOKE_BLUR_PULSE_SPEED = 0.015;
 
 /**
  * Reveals a phrase using whichever TextEffect module the caller picks (see
@@ -31,10 +46,18 @@ export class TextReveal {
   private textSprite: Text | null = null;
   private activeEffect: TextEffect | null = null;
 
+  /** See RevealOptions.smokeCloud's own doc comment. Only ever animates once `activeEffect` has finished — see update(). */
+  private smokeCloudActive = false;
+  private smokeElapsed = 0;
+  private smokeDriftY = 0;
+  private smokeBaseY = 0;
+  private readonly smokeBlur: BlurFilter;
+
   constructor(app: Application) {
     this.app = app;
     this.container = new Container();
     app.stage.addChild(this.container);
+    this.smokeBlur = new BlurFilter({ strength: SMOKE_BLUR_MIN, quality: 3 });
   }
 
   reveal(phrase: string, options: RevealOptions = {}): Promise<void> {
@@ -65,6 +88,11 @@ export class TextReveal {
     text.rotation = options.rotation ?? 0;
     this.container.addChild(text);
     this.textSprite = text;
+
+    this.smokeCloudActive = options.smokeCloud ?? false;
+    this.smokeElapsed = 0;
+    this.smokeDriftY = 0;
+    this.smokeBaseY = y;
 
     const effect = createTextEffect(effectId);
     this.activeEffect = effect;
@@ -100,9 +128,36 @@ export class TextReveal {
       this.textSprite.destroy();
       this.textSprite = null;
     }
+    this.smokeCloudActive = false;
+    this.smokeElapsed = 0;
+    this.smokeDriftY = 0;
   }
 
   update(delta: number): void {
     this.activeEffect?.update(delta);
+    if (this.smokeCloudActive && this.textSprite && !this.activeEffect) {
+      this.syncSmokeCloud(delta);
+    }
+  }
+
+  /**
+   * Runs only once the reveal's own effect (smoke/flame/none/...) has fully
+   * settled — this never fights with that effect's own transient animation,
+   * it only ever takes over once the text is otherwise done moving. Same
+   * clamp-not-fade design already proven correct on the composer's earlier
+   * previewText version: drift stops dead once the text's own top edge
+   * reaches SMOKE_TOP_MARGIN, staying there — fully visible — forever.
+   */
+  private syncSmokeCloud(delta: number): void {
+    const text = this.textSprite;
+    if (!text) return;
+    this.smokeElapsed += delta;
+    const minDriftY = this.smokeBaseY - text.height / 2 - SMOKE_TOP_MARGIN;
+    this.smokeDriftY = Math.min(this.smokeDriftY + SMOKE_DRIFT_SPEED * delta, minDriftY);
+    text.position.y = this.smokeBaseY - this.smokeDriftY;
+
+    const pulse = (Math.sin(this.smokeElapsed * SMOKE_BLUR_PULSE_SPEED) + 1) / 2;
+    this.smokeBlur.strength = SMOKE_BLUR_MIN + pulse * (SMOKE_BLUR_MAX - SMOKE_BLUR_MIN);
+    text.filters = [this.smokeBlur];
   }
 }
