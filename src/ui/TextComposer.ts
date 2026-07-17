@@ -321,10 +321,8 @@ const SMOKE_RETURN_DURATION_MS = 500;
 const SMOKE_BLUR_MIN = 1.5;
 const SMOKE_BLUR_MAX = 5;
 const SMOKE_BLUR_PULSE_SPEED = 0.0011;
-/** Reuses this file's own COMPOSER_TOP_Y (where the composer itself starts, just clear of the header) as "the top of the safe display area" — a real existing boundary rather than a new guessed-at header height. */
+/** Reuses this file's own COMPOSER_TOP_Y (where the composer itself starts, just clear of the header) as "the top of the safe display area" — a real existing boundary rather than a new guessed-at header height. The drift clamps here (see syncSmokeCloudEffect()) rather than fading — the text stays fully visible forever once it reaches this line. */
 const SMOKE_MASK_TOP_Y = COMPOSER_TOP_Y;
-/** How far below the mask's top edge the text starts fading — reaches alpha 0 exactly at the mask boundary, never a hard visible cutoff. */
-const SMOKE_FADE_BAND = 90;
 
 const PLACEHOLDER_TEXT = 'اكتب عبارتك هنا';
 const PLACEHOLDER_COLOR = 0xffffff;
@@ -1033,20 +1031,20 @@ export class TextComposer {
    * draggable/resizable/rotatable control box — the one transition both the
    * back arrow and picking an effect (see wireEffectButtons()) trigger.
    *
-   * `smokeDriftY`/`previewText.alpha` are reset here — a real bug, caught
-   * live (a fresh commit's text rendering fully invisible, no blur, no
-   * fade, just gone): `smokeDriftY` only ever accumulates while
-   * `previewText.visible` (see syncSmokeCloudEffect()'s own gate), which is
-   * true for exactly as long as some *previous* commit sat in its control
-   * box — smokeCloudActive deliberately persists across composer open/
-   * close (see its own doc comment), but the drift/fade it had already
-   * accumulated has no business surviving into a *new* commit. Left alone,
-   * enough accumulated drift from an earlier viewing already had this
-   * text's alpha faded to 0 (or its position clipped out by
-   * previewSmokeMask entirely) *before* the very first frame the new text
-   * ever rendered — every future commit inherited that same already-faded
-   * state and compounded it further. Each fresh commit now always starts
-   * its own smoke, if any, from a clean 0.
+   * `smokeDriftY` is reset here — `smokeDriftY` only ever accumulates
+   * while `previewText.visible` (see syncSmokeCloudEffect()'s own gate),
+   * which is true for exactly as long as some *previous* commit sat in its
+   * control box — smokeCloudActive deliberately persists across composer
+   * open/close (see its own doc comment), but the drift a prior viewing
+   * had already accumulated has no business surviving into a *new* commit.
+   * Without this, a fresh commit's text would render already displaced
+   * upward from wherever an earlier, unrelated viewing had drifted to,
+   * instead of starting from its own true committed position every time.
+   * `previewText.alpha` is reset defensively alongside it — nothing in the
+   * current smoke logic touches alpha anymore (see syncSmokeCloudEffect()'s
+   * own doc comment on why it clamps position instead of fading), but a
+   * fresh commit should never inherit a non-1 alpha from any past state
+   * regardless of which system might have set it.
    */
   private confirmAndOpenControlBox(): void {
     this.stopPreviewCycle();
@@ -1193,7 +1191,7 @@ export class TextComposer {
   }
 
   /**
-   * Drives the smoke-cloud mode's drift/blur/mask on `previewText` — see
+   * Drives the smoke-cloud mode's drift/blur on `previewText` — see
    * `smokeCloudActive`'s own doc comment for why this only ever does
    * anything once the composer has closed (previewText.visible), even
    * though the icon that toggles it lives *inside* the still-open composer.
@@ -1203,6 +1201,14 @@ export class TextComposer {
    * `previewText.mask`/`.filters` are only ever touched while one of the
    * first two states applies, so a previewText that never once had smoke
    * toggled on carries zero extra per-frame cost beyond this one check.
+   *
+   * The drift *stops* at the safe display area's own top edge rather than
+   * fading the text out there — an explicit correction: the text must stay
+   * fully visible forever once it reaches the top, never disappear, so
+   * there is no alpha fade at all here, only a position clamp.
+   * `previewSmokeMask` still exists purely as a hard safety net should the
+   * clamp math ever be off by a pixel — it never actually clips anything
+   * once the clamp itself is correct.
    */
   private syncSmokeCloudEffect(ticker: Ticker): void {
     if (!this.previewText.visible) return;
@@ -1214,7 +1220,12 @@ export class TextComposer {
       // separately would only add state for no real saving.
       this.previewText.filters = [this.previewGlow, this.smokeBlur];
       this.smokeReturnStart = -1;
-      this.smokeDriftY -= SMOKE_DRIFT_SPEED * ticker.deltaTime;
+      // Clamped so `posY + smokeDriftY - height/2` (the text's own top
+      // edge, given its anchor(0.5, 0.5)) never rises past
+      // SMOKE_MASK_TOP_Y — once it reaches that line it simply stops
+      // there instead of continuing to accumulate.
+      const minDriftY = SMOKE_MASK_TOP_Y - this.posY + this.previewText.height / 2;
+      this.smokeDriftY = Math.max(this.smokeDriftY - SMOKE_DRIFT_SPEED * ticker.deltaTime, minDriftY);
       const pulse = 0.5 + 0.5 * Math.sin(ticker.lastTime * SMOKE_BLUR_PULSE_SPEED);
       this.smokeBlur.strength = SMOKE_BLUR_MIN + pulse * (SMOKE_BLUR_MAX - SMOKE_BLUR_MIN);
     } else if (this.smokeDriftY !== 0) {
@@ -1229,7 +1240,6 @@ export class TextComposer {
         this.smokeReturnStart = -1;
         this.previewText.filters = [this.previewGlow];
         this.previewText.mask = null;
-        this.previewText.alpha = 1;
         return;
       }
     } else {
@@ -1237,15 +1247,9 @@ export class TextComposer {
     }
 
     this.previewText.position.set(this.posX, this.posY + this.smokeDriftY);
-
-    // Confines the drift to the safe display area (see SMOKE_MASK_TOP_Y's
-    // own doc comment) and fades the text out smoothly before it would
-    // otherwise reach that boundary — never a hard, sudden cutoff.
     const screen = this.deps.app.screen;
     this.previewSmokeMask.clear().rect(0, SMOKE_MASK_TOP_Y, screen.width, screen.height - SMOKE_MASK_TOP_Y).fill(0xffffff);
     this.previewText.mask = this.previewSmokeMask;
-    const distanceToTop = this.posY + this.smokeDriftY - SMOKE_MASK_TOP_Y;
-    this.previewText.alpha = clampNumber(distanceToTop / SMOKE_FADE_BAND, 0, 1);
   }
 
   /**
