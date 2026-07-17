@@ -35,6 +35,19 @@ export interface PlanningScreenDeps {
   onAutoShowChange: (enabled: boolean) => void;
   /** Fires whenever the 'mass' selection changes (a shape queued/unqueued), passing the new hasMassSelection() value directly — lets fireworksMood.ts track it in a local flag instead of calling back into this class, since onModeChange (below) can run synchronously during this very constructor, before fireworksMood.ts's own `const planningScreen = new PlanningScreen(...)` has finished assigning. */
   onMassSelectionChange: (hasSelection: boolean) => void;
+  /**
+   * Forwards TextComposer's own onComposingChange straight through — lets
+   * fireworksMood.ts hide its exit button (see updateExitButtonVisibility())
+   * for exactly as long as the composer's own back arrow sits in that same
+   * top-right corner, otherwise a real, confirmed pixel-for-pixel overlap
+   * whenever text composing overlaps any other exitButton-visible state
+   * (sequential mode armed, a mass selection queued, an auto-show running).
+   * Unlike onModeChange, safe to fire synchronously here — TextComposer
+   * never calls its own onComposingChange during construction, only from
+   * open()/commit()/consumeForReveal(), none of which run until the player
+   * actually taps something.
+   */
+  onTextComposingChange?: (composing: boolean) => void;
 }
 
 interface SliderSpec {
@@ -236,6 +249,7 @@ export class PlanningScreen {
         this.hintComposing = composing;
         this.applyHintVisibility(false);
         this.iconColumn.container.visible = !composing;
+        this.deps.onTextComposingChange?.(composing);
       },
     });
 

@@ -287,6 +287,14 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
   // synchronously as part of that very construction, before the `const
   // planningScreen = new PlanningScreen(...)` assignment has finished.
   let massSelectionActive = false;
+  // Mirrors TextComposer's own open()/commit() state (via PlanningScreen's
+  // onTextComposingChange) — see updateExitButtonVisibility() below for why
+  // this specifically suppresses the exit button rather than just adding it
+  // to the "show it" list: a confirmed, reproduced pixel-for-pixel overlap
+  // between exitButton and the composer's own back arrow, both independently
+  // positioned "just clear of the header" without either one knowing about
+  // the other. Same construction-order safety as massSelectionActive above.
+  let textComposing = false;
 
   // Neither mode icon in the planning screen fires anything itself — this is
   // the one and only trigger, per the confirmed spec: mass launches every
@@ -764,9 +772,22 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
    * selection started it. Reads only local flags/planningMode, never
    * planningScreen directly — see massSelectionActive's own doc comment for
    * why that matters here specifically.
+   *
+   * `!textComposing` overrides every one of those — confirmed live (a
+   * screenshot with the two circles' own glyphs literally superimposed)
+   * that composing text while any other launch state is *also* active (most
+   * directly: sequential mode armed, then the player opens the T icon) sits
+   * exitButton and the composer's own back-arrow button on almost exactly
+   * the same 34-36px circle, ~8px apart center-to-center — both
+   * independently positioned "just clear of the header," neither aware the
+   * other could ever be visible at the same time. The composer's own arrow
+   * already serves the identical "one reliable way back" role for exactly
+   * as long as it's on screen, so suppressing exitButton for that same
+   * window removes the collision at its source instead of shrinking either
+   * button or nudging their fixed positions apart.
    */
   function updateExitButtonVisibility(): void {
-    exitButton.visible = showStarted || autoShowActive || massSelectionActive || planningMode.isActive;
+    exitButton.visible = !textComposing && (showStarted || autoShowActive || massSelectionActive || planningMode.isActive);
   }
 
   // --- Floating shutter button: capture stays reachable during the show ---
@@ -888,6 +909,11 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
     // should show (see massSelectionActive's own doc comment).
     onMassSelectionChange: (hasSelection) => {
       massSelectionActive = hasSelection;
+      updateExitButtonVisibility();
+    },
+    // Text composing opened/closed — see textComposing's own doc comment.
+    onTextComposingChange: (composing) => {
+      textComposing = composing;
       updateExitButtonVisibility();
     },
   });
