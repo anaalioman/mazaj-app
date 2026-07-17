@@ -1,6 +1,7 @@
 import { Application, CanvasTextMetrics, Container, FillGradient, Graphics, ParticleContainer, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent, type Ticker } from 'pixi.js';
 import { AdvancedBloomFilter, DropShadowFilter, GlowFilter } from 'pixi-filters';
 import { iconTexture } from './svgIconTexture';
+import type { IconName } from './icons';
 import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
 import { TEXT_EFFECTS } from '../effects/textEffects/registry';
 import type { AudioManager } from '../audio/AudioManager';
@@ -38,6 +39,16 @@ interface EffectFrameObj {
   effect: TextRevealEffect;
   root: Container;
   border: Graphics;
+  label: Text;
+}
+
+/** One compose-mode-row item — see ComposeMode's own doc comment. `glow` is a dedicated GlowFilter instance per icon (not shared) so each can carry its own independent idle/active/tap-boost level every frame — see syncComposeModeFrames(). */
+interface ComposeModeFrameObj {
+  mode: ComposeMode;
+  root: Container;
+  border: Graphics;
+  glyph: Sprite;
+  glow: GlowFilter;
   label: Text;
 }
 
@@ -197,6 +208,86 @@ const INPUT_LINE_HEIGHT = Math.round(INPUT_FONT_SIZE * 1.3);
 const INPUT_TEXT_COLOR = 0xffe9b3;
 /** Same gold/fire identity as the text itself — "وكأن الحرف نفسه قد احترق". */
 const DELETE_SPARK_COLORS = [EFFECT_GOLD, 0xffb04c, INPUT_TEXT_COLOR];
+/**
+ * Composing-time behavior modes — a second, exclusive-select icon row
+ * (mirrors the effects bar's own single-active-at-a-time radio pattern,
+ * see syncEffectFrames()) sitting *below* it, with its own "off" state:
+ * `'none'` (the default — matches every mode being unconditionally off
+ * until the player deliberately opts in) and tapping the currently-active
+ * icon again returns to `'none'`, unlike the effects bar (whose tap always
+ * commits and closes the composer — these three stay live *while* still
+ * typing, so a commit-on-tap would defeat the whole point).
+ * - `'spring'` gates the input field's own insert-pop (see
+ *   INPUT_BOUNCE_* constants) — previously unconditional on every keystroke
+ *   that grew the string; now only while this mode is active.
+ * - `'spark-eraser'` gates the delete-ember burst (see DELETE_SPARK_*
+ *   constants) — previously unconditional on every deletion; same story.
+ * - `'fuse'` is genuinely new: a lit rope drawn under the input text (see
+ *   FUSE_* constants and syncFuseEffect()) with a traveling ember.
+ */
+export type ComposeMode = 'none' | 'fuse' | 'spark-eraser' | 'spring';
+
+/** One entry per new-row icon: its mode id, its 24x24 line-icon name (see ui/icons.ts), and its Arabic label. */
+interface ComposeModeEntry {
+  mode: ComposeMode;
+  icon: IconName;
+  label: string;
+}
+const COMPOSE_MODE_ENTRIES: ComposeModeEntry[] = [
+  { mode: 'fuse', icon: 'fuse', label: 'فتيل مشتعل' },
+  { mode: 'spark-eraser', icon: 'sparkEraser', label: 'ممحاة نارية' },
+  { mode: 'spring', icon: 'spring', label: 'نابض مرن' },
+];
+
+/**
+ * "Golden metallic" identity for the new row specifically — a warmer,
+ * brighter gradient than the effects bar's own dark-navy-to-black frames
+ * (see syncEffectFrames()), so this row visibly reads as its own family of
+ * controls rather than more reveal-effect options. `MODE_GLOW_BASE` is the
+ * *idle* dim halo every icon in this row always carries (per "توهج ناعم" —
+ * a soft ambient glow, not fully dark); `MODE_GLOW_ACTIVE` is the sustained
+ * brighter level for whichever mode is currently selected;
+ * `MODE_GLOW_TAP_BOOST` is a further, transient spike layered on top of
+ * whichever of those two the icon is already at, decaying back down over
+ * `MODE_BOUNCE_DURATION_MS` — the same eased-decay technique
+ * syncInputBounce() already uses for the input field's own pop, reused here
+ * via modeBounceStart/easeOutBounce.
+ */
+const MODE_ICON_SIZE_SOURCE = 28;
+const MODE_ICON_SIZE = 22;
+const MODE_METALLIC_TOP = 0x4a3a18;
+const MODE_METALLIC_BOTTOM = 0x1a1408;
+const MODE_METALLIC_TOP_ACTIVE = 0x8a6a28;
+const MODE_METALLIC_BOTTOM_ACTIVE = 0x2c2008;
+const MODE_GLOW_BASE = 0.5;
+const MODE_GLOW_ACTIVE = 1.4;
+const MODE_GLOW_TAP_BOOST = 2.2;
+const MODE_BOUNCE_MIN_SCALE = 0.85;
+const MODE_BOUNCE_DURATION_MS = 260;
+const MODE_ROW_MARGIN_TOP = 14;
+
+/**
+ * "الفتيل المشتعل تحت النص" — a glowing rope (real `Graphics`, redrawn
+ * every frame it's visible so it always matches the input text's own
+ * current width exactly, never a stale cached shape) spanning the input
+ * text, with a bright ember sliding back and forth along it
+ * (Math.sin-driven off `ticker.lastTime`, the same pulse technique
+ * syncPreviewGlow() already uses) and — every FUSE_EMBER_SPAWN_INTERVAL_MS
+ * or so — a single small spark peeling off the ember, reusing this class's
+ * *own* delete-spark Particle pool (sparkTrailsContainer/sparkCoresContainer
+ * /getPooledSparkParticle()) rather than a third parallel particle system.
+ */
+/** Bright enough to read against the composer's own near-black background — a literal rope-brown was tried first and live-tested nearly invisible there. */
+const FUSE_ROPE_COLOR = 0xb08040;
+const FUSE_ROPE_WIDTH = 3;
+/** Stays inside EFFECTS_MARGIN_TOP's own 10px gap — see syncFuseEffect()'s own doc comment on why ropeY anchors to TOPBAR_HEIGHT rather than the caret line. */
+const FUSE_ROPE_GAP_BELOW_TEXT = 5;
+const FUSE_EMBER_COLOR = 0xfff2c2;
+const FUSE_EMBER_RADIUS = 3.5;
+const FUSE_EMBER_GLOW = 2.4;
+const FUSE_EMBER_SPEED = 0.0016;
+const FUSE_EMBER_SPAWN_INTERVAL_MS = 140;
+
 const PLACEHOLDER_TEXT = 'اكتب عبارتك هنا';
 const PLACEHOLDER_COLOR = 0xffffff;
 const PLACEHOLDER_ALPHA = 0.4;
@@ -341,6 +432,17 @@ export class TextComposer {
   private sparkParticles: Particle[] = [];
   /** Dead sparks ready for immediate reuse — see spawnDeleteSparks(); never destroyed, only ever `kill()`ed and pushed back here. */
   private readonly sparkDeadPool: Particle[] = [];
+  /** Which second-row icon (if any) is active — see ComposeMode's own doc comment. Gates the input bounce, the delete-spark burst, and the fuse effect. */
+  private composeMode: ComposeMode = 'none';
+  private readonly composeModeFrames: ComposeModeFrameObj[];
+  /** `ticker.lastTime` the current tap's bounce+glow-boost spike started at, or -1 once it's settled — same eased-decay pattern as inputBounceStart. Keyed by frame so only the tapped icon spikes, not every frame in the row. */
+  private modeBounceStart = -1;
+  private modeBounceFrame: ComposeModeFrameObj | null = null;
+  /** The lit-fuse rope + its traveling ember — real Graphics, redrawn every frame it's visible (see syncFuseEffect()). Never added/removed from the tree; `visible` toggles with composeMode/hasText instead, avoiding churn on every mode switch. */
+  private readonly fuseRope: Graphics;
+  private readonly fuseEmber: Graphics;
+  private readonly fuseEmberGlow: GlowFilter;
+  private fuseEmberSpawnAccumulator = 0;
   private readonly previewText: Text;
   /** The committed text's pulsing halo — one instance, reused every frame (see GLOW_* constants' own doc comment); never recreated per-tick. */
   private readonly previewGlow: GlowFilter;
@@ -476,6 +578,23 @@ export class TextComposer {
 
     this.effectFrames = TEXT_EFFECTS.map((entry) => this.buildEffectFrame(entry.id, entry.label));
     for (const frame of this.effectFrames) this.composerContainer.addChild(frame.root);
+
+    this.composeModeFrames = COMPOSE_MODE_ENTRIES.map((entry) => this.buildComposeModeFrame(entry.mode, entry.icon, entry.label));
+    for (const frame of this.composeModeFrames) this.composerContainer.addChild(frame.root);
+    this.wireComposeModeButtons();
+    deps.app.ticker.add((ticker) => this.syncComposeModeFrames(ticker));
+
+    // Fuse rope + ember — see FUSE_* constants' own doc comment. Added once,
+    // hidden by default; syncFuseEffect() owns visibility/redraw entirely.
+    this.fuseRope = new Graphics();
+    this.fuseRope.visible = false;
+    this.composerContainer.addChild(this.fuseRope);
+    this.fuseEmberGlow = new GlowFilter({ distance: GLOW_DISTANCE, outerStrength: FUSE_EMBER_GLOW, innerStrength: 0.4, color: FUSE_EMBER_COLOR, quality: GLOW_QUALITY });
+    this.fuseEmber = new Graphics().circle(0, 0, FUSE_EMBER_RADIUS).fill(FUSE_EMBER_COLOR);
+    this.fuseEmber.filters = [this.fuseEmberGlow];
+    this.fuseEmber.visible = false;
+    this.composerContainer.addChild(this.fuseEmber);
+    deps.app.ticker.add((ticker) => this.syncFuseEffect(ticker));
 
     this.ghostInput = this.buildGhostInput();
 
@@ -615,6 +734,200 @@ export class TextComposer {
       });
       frame.label.alpha = active ? 1 : LABEL_IDLE_ALPHA;
     }
+  }
+
+  /**
+   * Unlike wireEffectButtons() (whose tap always commits and closes the
+   * composer), tapping a mode icon toggles it and keeps composing —
+   * tapping the already-active one deselects it back to `'none'`, tapping
+   * a different one switches directly (see ComposeMode's own doc comment).
+   * Every tap, active-going or not, still fires the micro-bounce/glow spike
+   * on *that* frame — physical feedback that the press registered, whether
+   * it turned the mode on or off.
+   */
+  private wireComposeModeButtons(): void {
+    for (const frame of this.composeModeFrames) {
+      frame.root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
+      frame.root.on('pointertap', (event: FederatedPointerEvent) => {
+        event.stopPropagation();
+        this.deps.audio.playUiClick();
+        this.composeMode = this.composeMode === frame.mode ? 'none' : frame.mode;
+        this.modeBounceStart = this.deps.app.ticker.lastTime;
+        this.modeBounceFrame = frame;
+        this.syncComposeModeFrames(this.deps.app.ticker);
+      });
+    }
+  }
+
+  /**
+   * Per-frame visual sync for the mode row — cheap even when nothing is
+   * mid-bounce: the eased spike only computes for `modeBounceFrame`, every
+   * other frame just re-reads its own static idle/active glow level.
+   * `MODE_METALLIC_*ACTIVE` swaps the whole gradient (not just the stroke,
+   * unlike the effects bar) — this row's own "غامق ذهبي إلى مشع" identity —
+   * and the border stroke color itself follows the *live* glow strength
+   * (lerped between the same two stops) so the metal itself, not just the
+   * halo around it, visibly warms up during the tap spike.
+   */
+  private syncComposeModeFrames(ticker: Ticker): void {
+    let spike = 0;
+    if (this.modeBounceStart >= 0) {
+      const t = Math.min(1, (ticker.lastTime - this.modeBounceStart) / MODE_BOUNCE_DURATION_MS);
+      const eased = easeOutBounce(t);
+      if (this.modeBounceFrame) {
+        this.modeBounceFrame.root.scale.set(MODE_BOUNCE_MIN_SCALE + eased * (1 - MODE_BOUNCE_MIN_SCALE));
+      }
+      spike = (1 - eased) * MODE_GLOW_TAP_BOOST;
+      if (t >= 1) {
+        this.modeBounceFrame?.root.scale.set(1);
+        this.modeBounceStart = -1;
+        this.modeBounceFrame = null;
+        spike = 0;
+      }
+    }
+
+    for (const frame of this.composeModeFrames) {
+      const active = frame.mode === this.composeMode;
+      const isBouncing = frame === this.modeBounceFrame;
+      frame.glow.outerStrength = (active ? MODE_GLOW_ACTIVE : MODE_GLOW_BASE) + (isBouncing ? spike : 0);
+
+      const fill = new FillGradient({
+        type: 'linear',
+        start: { x: 0, y: 0 },
+        end: { x: 0, y: 1 },
+        textureSpace: 'local',
+        colorStops: active
+          ? [{ offset: 0, color: MODE_METALLIC_TOP_ACTIVE }, { offset: 1, color: MODE_METALLIC_BOTTOM_ACTIVE }]
+          : [{ offset: 0, color: MODE_METALLIC_TOP }, { offset: 1, color: MODE_METALLIC_BOTTOM }],
+      });
+      frame.border
+        .clear()
+        .roundRect(-PREVIEW_W / 2, -PREVIEW_H / 2, PREVIEW_W, PREVIEW_H, PREVIEW_RADIUS)
+        .fill(fill)
+        .stroke({ width: 1.5, color: EFFECT_GOLD, alpha: active ? FRAME_BORDER_ACTIVE_ALPHA : FRAME_BORDER_IDLE_ALPHA })
+        .roundRect(-PREVIEW_W / 2 + 3, -PREVIEW_H / 2 + 3, PREVIEW_W - 6, PREVIEW_H * 0.42, PREVIEW_RADIUS - 3)
+        .fill({ color: 0xffe9b3, alpha: active ? 0.14 : 0.06 });
+      frame.label.style = new TextStyle({
+        fontFamily: 'Tajawal, system-ui, sans-serif',
+        fontSize: LABEL_FONT_SIZE,
+        fontWeight: active ? '700' : '400',
+        fill: active ? LABEL_ACTIVE_COLOR : LABEL_IDLE_COLOR,
+      });
+      frame.label.alpha = active ? 1 : LABEL_IDLE_ALPHA;
+    }
+  }
+
+  /** One compose-mode row item — same border/label recipe as buildEffectFrame() but with a centered icon glyph instead of a live preview, and its own dedicated GlowFilter (see MODE_* constants' own doc comment). */
+  private buildComposeModeFrame(mode: ComposeMode, icon: IconName, labelText: string): ComposeModeFrameObj {
+    const root = new Container();
+    root.eventMode = 'static';
+    root.cursor = 'pointer';
+    root.hitArea = new Rectangle(-FRAME_HIT_WIDTH / 2, FRAME_HIT_TOP, FRAME_HIT_WIDTH, FRAME_HIT_HEIGHT);
+
+    const glow = new GlowFilter({ distance: GLOW_DISTANCE, outerStrength: MODE_GLOW_BASE, innerStrength: 0, color: EFFECT_GOLD, quality: GLOW_QUALITY });
+    const border = new Graphics();
+    border.filters = [glow];
+    root.addChild(border);
+
+    const glyph = new Sprite();
+    glyph.anchor.set(0.5);
+    glyph.tint = EFFECT_GOLD;
+    glyph.width = MODE_ICON_SIZE;
+    glyph.height = MODE_ICON_SIZE;
+    root.addChild(glyph);
+    void iconTexture(icon, MODE_ICON_SIZE_SOURCE, '#ffffff').then((texture) => {
+      glyph.texture = texture;
+    });
+
+    const label = new Text({ text: labelText, style: new TextStyle({ fontFamily: 'Tajawal, system-ui, sans-serif', fontSize: LABEL_FONT_SIZE, fill: LABEL_IDLE_COLOR }) });
+    label.anchor.set(0.5, 0);
+    label.position.set(0, PREVIEW_H / 2 + LABEL_GAP);
+    root.addChild(label);
+
+    return { mode, root, border, glyph, glow, label };
+  }
+
+  /**
+   * Redraws the fuse rope + slides its ember every frame while
+   * `composeMode === 'fuse'` and there's text to run it under; hidden (and
+   * cheaply skipped) otherwise. The rope spans the *visible* text block's
+   * own on-screen extent — measured the same way refreshInputVisual()
+   * already sizes the scroll window, so the rope never runs wider than what
+   * the player can actually see (multi-line text keeps it pinned under just
+   * the *last* line, which is always the one at the fixed bottom anchor).
+   * The ember rides a Math.sin oscillation between the rope's own two ends
+   * (ticker.lastTime-driven, unaccumulated — same pulse technique
+   * syncPreviewGlow() uses) and periodically peels off a single real ember
+   * via this class's own delete-spark particle pool.
+   */
+  private syncFuseEffect(ticker: Ticker): void {
+    const active = this.composeMode === 'fuse' && this.text.length > 0;
+    this.fuseRope.visible = active;
+    this.fuseEmber.visible = active;
+    if (!active) return;
+
+    const availWidth = Math.max(0, this.inputFieldWidth - CURSOR_WIDTH - CURSOR_GAP * 2);
+    const lines = this.text.split('\n');
+    const lastLine = lines[lines.length - 1];
+    const lastLineWidth = lastLine.length ? CanvasTextMetrics.measureText(lastLine, this.inputField.text.style).width : 0;
+    const ropeWidth = Math.min(availWidth, lastLineWidth);
+
+    // Runs directly under the *visible glyphs*, not the pill's own center —
+    // the text is right-anchored (see refreshInputVisual()'s own doc
+    // comment on the RTL layout), so its right edge always sits at local
+    // x = availWidth / 2 within inputField.root, same reference
+    // refreshInputVisual() itself positions text.position.x from. fuseRope
+    // is composerContainer's own child (a sibling of inputField.root, not
+    // its child), so that local x needs inputField.root's own position
+    // added back in to land in composerContainer's space.
+    const textRightEdgeX = this.inputField.root.position.x + availWidth / 2;
+    const ropeCenterX = textRightEdgeX - ropeWidth / 2;
+    const ropeHalfWidth = ropeWidth / 2;
+
+    // Anchored to the pill's own fixed bottom edge (TOPBAR_HEIGHT), not the
+    // caret's own line — multi-line text's *last* line always sits at the
+    // same fixed bottom anchor regardless of line count (see
+    // refreshInputVisual()'s own doc comment), so the rope's own Y never
+    // needs to track it. Sits inside the existing EFFECTS_MARGIN_TOP gap
+    // between the topbar and the effects grid below it, not a new one —
+    // FUSE_ROPE_GAP_BELOW_TEXT stays comfortably under that gap's own size.
+    const ropeY = TOPBAR_HEIGHT + FUSE_ROPE_GAP_BELOW_TEXT;
+
+    this.fuseRope
+      .clear()
+      .moveTo(ropeCenterX - ropeHalfWidth, ropeY)
+      .lineTo(ropeCenterX + ropeHalfWidth, ropeY)
+      .stroke({ width: FUSE_ROPE_WIDTH, color: FUSE_ROPE_COLOR, cap: 'round' });
+
+    const emberT = 0.5 + 0.5 * Math.sin(ticker.lastTime * FUSE_EMBER_SPEED);
+    const emberX = ropeCenterX - ropeHalfWidth + emberT * (ropeHalfWidth * 2);
+    this.fuseEmber.position.set(emberX, ropeY);
+
+    this.fuseEmberSpawnAccumulator += ticker.deltaMS;
+    if (this.fuseEmberSpawnAccumulator >= FUSE_EMBER_SPAWN_INTERVAL_MS) {
+      this.fuseEmberSpawnAccumulator = 0;
+      // fuseEmber's own parent is composerContainer, not inputField.root — see ropeY's own doc comment above on the same space mismatch.
+      const global = this.composerContainer.toGlobal({ x: emberX, y: ropeY });
+      this.spawnFuseEmber(global.x, global.y);
+    }
+  }
+
+  /** A single, gentle ember (not a burst — see spawnDeleteSparks() for that) peeling off the traveling fuse point. Same pool as the delete-spark system (see FUSE_* constants' own doc comment). */
+  private spawnFuseEmber(x: number, y: number): void {
+    const particle = this.getPooledSparkParticle();
+    particle.init({
+      x,
+      y,
+      vx: (Math.random() - 0.5) * 0.4,
+      vy: -0.6 - Math.random() * 0.4,
+      color: FUSE_EMBER_COLOR,
+      size: 2 + Math.random(),
+      life: 20 + Math.random() * 14,
+      gravity: 0.06,
+      drag: 0.97,
+      twinkle: true,
+    });
+    this.sparkParticles.push(particle);
   }
 
   private wireBack(): void {
@@ -1060,7 +1373,7 @@ export class TextComposer {
     input.addEventListener('input', () => {
       const oldText = this.text;
       const newText = input.value;
-      if (newText.length < oldText.length) this.triggerDeleteSpark(oldText, newText);
+      if (this.composeMode === 'spark-eraser' && newText.length < oldText.length) this.triggerDeleteSpark(oldText, newText);
       this.text = newText;
       this.refreshInputVisual();
       this.previewText.text = this.text || SAMPLE_PHRASE;
@@ -1188,8 +1501,14 @@ export class TextComposer {
     this.inputField.placeholder.visible = !hasText;
 
     // Pop only on genuine additions (typing/pasting), never on deletion —
-    // see triggerInputBounce()'s own doc comment on the constant it reads.
-    if (this.text.length > this.previousInputTextForBounce.length && this.text !== this.previousInputTextForBounce) {
+    // see triggerInputBounce()'s own doc comment on the constant it reads —
+    // and only while 'spring' mode is active (see ComposeMode's own doc
+    // comment: this used to be unconditional, now it's opt-in).
+    if (
+      this.composeMode === 'spring' &&
+      this.text.length > this.previousInputTextForBounce.length &&
+      this.text !== this.previousInputTextForBounce
+    ) {
       this.inputBounceStart = this.deps.app.ticker.lastTime;
     }
     this.previousInputTextForBounce = this.text;
@@ -1373,7 +1692,8 @@ export class TextComposer {
       .rect(pillGlobal.x - availWidth / 2, pillGlobal.y - INPUT_HEIGHT / 2, availWidth, INPUT_HEIGHT)
       .fill(0xffffff);
 
-    const contentBottom = this.layoutEffectFrames(composerWidth);
+    const effectsBottom = this.layoutEffectFrames(composerWidth);
+    const contentBottom = this.layoutComposeModeRow(composerWidth, effectsBottom);
     this.catchAll.clear().rect(0, 0, composerWidth, contentBottom).fill({ color: 0x000000, alpha: 0.001 });
 
     // Re-applies the auto-scroll against the (possibly just-changed) input
@@ -1411,5 +1731,20 @@ export class TextComposer {
 
     this.syncEffectFrames();
     return rowTop - ITEM_GAP_Y;
+  }
+
+  /** The second, exclusive icon row (fuse/spark-eraser/spring — see ComposeMode's own doc comment), centered as one row directly under the effects grid. Only ever 3 items, so — unlike layoutEffectFrames() — there's no multi-row wrapping to handle. */
+  private layoutComposeModeRow(composerWidth: number, effectsBottom: number): number {
+    const rowTop = effectsBottom + MODE_ROW_MARGIN_TOP;
+    const rowContentWidth = this.composeModeFrames.length * PREVIEW_W + (this.composeModeFrames.length - 1) * ITEM_GAP_X;
+    let rightEdge = composerWidth / 2 + rowContentWidth / 2;
+
+    for (const frame of this.composeModeFrames) {
+      frame.root.position.set(rightEdge - PREVIEW_W / 2, rowTop + PREVIEW_H / 2);
+      rightEdge -= PREVIEW_W + ITEM_GAP_X;
+    }
+
+    this.syncComposeModeFrames(this.deps.app.ticker);
+    return rowTop + ITEM_HEIGHT;
   }
 }

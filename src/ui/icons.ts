@@ -58,6 +58,13 @@ const PATHS = {
     '<path d="M12 3l1.3 4.7L18 9l-4.7 1.3L12 15l-1.3-4.7L6 9l4.7-1.3L12 3Z"/><path d="M19 15.2l.6 2.2 2.2.6-2.2.6-.6 2.2-.6-2.2-2.2-.6 2.2-.6.6-2.2Z"/>',
   heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8Z"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  // Composing-time mode icons (TextComposer's second icon row): a lit fuse
+  // rope, an eraser trailing sparks, and a coiled spring — see that file's
+  // own ComposeMode doc comment for what each mode actually does.
+  fuse: '<path d="M3 20q4-4 2-8t3-8"/><path d="M14 2.5l1.3 3.2L18.5 7l-3.2 1.3L14 11.5l-1.3-3.2L9.5 7l3.2-1.3L14 2.5Z"/>',
+  sparkEraser:
+    '<rect x="3.3" y="12.5" width="12" height="7" rx="1.5" transform="rotate(-22 9.3 16)"/><path d="M18.5 4.5l1 2.3 2.3 1-2.3 1-1 2.3-1-2.3-2.3-1 2.3-1 1-2.3Z"/><path d="M20 12.5l1.8 1.8M21.3 15.8l1.3 1.3"/>',
+  spring: '<path d="M12 2.5v3M12 5.5 7 8l10 3-10 3 10 3-7 2.5M12 19.5V22"/>',
 } as const;
 
 export type IconName = keyof typeof PATHS;
