@@ -145,6 +145,10 @@ function effectFrameFilters(): (AdvancedBloomFilter | DropShadowFilter)[] {
   ];
 }
 
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
 /**
  * Free-text composing flow for the "T" icon: a live top input + an effects
  * bar (each icon auto-loops its own demo continuously — no tap needed to
@@ -697,6 +701,19 @@ export class TextComposer {
       // reviewing text by panning while the OS keyboard stays open is the
       // same experience any native multi-line field gives.
       this.ghostInput.focus();
+
+      // Pixel-accurate tap-to-position: map the touch straight to a
+      // character index (see hitTestCaretIndex()) and hand it to the real
+      // <textarea>'s own selection, so the next keystroke/backspace acts
+      // from exactly where the player touched — not always from the end.
+      // `scrollGroup.toLocal()` undoes every ancestor transform up to and
+      // including scrollGroup's own current pan offset, landing exactly in
+      // the same unpanned coordinate space `text`/`cursor` are positioned
+      // in below, so it needs no manual adjustment for the current scroll.
+      const local = this.inputField.scrollGroup.toLocal(event.global);
+      const hitIndex = this.hitTestCaretIndex(local.x, local.y);
+      this.ghostInput.setSelectionRange(hitIndex, hitIndex);
+      this.refreshInputVisual();
     });
     root.on('pointertap', (event: FederatedPointerEvent) => {
       // Focus already happened on pointerdown above — this only still
@@ -763,15 +780,86 @@ export class TextComposer {
     });
     input.addEventListener('focus', () => this.startCursorBlink());
     input.addEventListener('blur', () => this.stopCursorBlink());
+    // Keeps the drawn caret in sync with the real textarea's own selection
+    // for any move that isn't a tap or a keystroke (e.g. the OS keyboard's
+    // arrow keys, or a native long-press-drag to reposition) — `input`
+    // above only fires when the *text* changes, not when just the caret
+    // does. `selectionchange` is a document-level event with no target
+    // filter of its own, hence the activeElement check.
+    document.addEventListener('selectionchange', () => {
+      if (document.activeElement === input) this.refreshInputVisual();
+    });
     return input;
   }
 
   /**
+   * Reverse of hitTestCaretIndex(): given an absolute character index into
+   * `this.text` (as `ghostInput.selectionStart` reports it — a single
+   * offset into the *whole* string, `\n`s included), finds which line it
+   * falls on and its offset within just that line's own text.
+   */
+  private locateCaretPosition(lines: string[], caretIndex: number): { lineIndex: number; offsetInLine: number } {
+    let consumed = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const lineLength = lines[i].length;
+      if (i === lines.length - 1 || caretIndex <= consumed + lineLength) {
+        return { lineIndex: i, offsetInLine: clampNumber(caretIndex - consumed, 0, lineLength) };
+      }
+      consumed += lineLength + 1; // +1 for the '\n' itself
+    }
+    return { lineIndex: 0, offsetInLine: 0 };
+  }
+
+  /**
+   * Real glyph-metric hit-testing, not a guess: maps a touch point (already
+   * in scrollGroup's own unpanned local space, see buildInputField()'s
+   * `pointerdown` handler) to the nearest character boundary. First picks
+   * the tapped *line* from the vertical offset from the fixed bottom
+   * anchor (see refreshInputVisual()'s own doc comment for why that anchor
+   * position is constant regardless of line count), then walks that one
+   * line's own prefix widths — via `CanvasTextMetrics`, the same technique
+   * CharacterReveal.ts already uses for per-character positions — and
+   * picks whichever boundary the tap actually landed closest to.
+   */
+  private hitTestCaretIndex(localX: number, localY: number): number {
+    const lines = this.text.split('\n');
+    const availWidth = Math.max(0, this.inputFieldWidth - CURSOR_WIDTH - CURSOR_GAP * 2);
+    const bottomPad = (INPUT_HEIGHT - INPUT_FONT_SIZE) / 2;
+    const anchorY = INPUT_HEIGHT / 2 - bottomPad;
+
+    const rawLineFromBottom = Math.round((anchorY - localY) / INPUT_LINE_HEIGHT);
+    const lineFromBottom = clampNumber(rawLineFromBottom, 0, lines.length - 1);
+    const lineIndex = lines.length - 1 - lineFromBottom;
+    const lineText = lines[lineIndex];
+
+    let bestOffset = lineText.length;
+    let bestDist = Infinity;
+    for (let i = 0; i <= lineText.length; i++) {
+      const prefix = lineText.slice(0, i);
+      const prefixWidth = prefix.length ? CanvasTextMetrics.measureText(prefix, this.inputField.text.style).width : 0;
+      const boundaryX = availWidth / 2 - prefixWidth;
+      const dist = Math.abs(boundaryX - localX);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestOffset = i;
+      }
+    }
+
+    let consumed = 0;
+    for (let i = 0; i < lineIndex; i++) consumed += lines[i].length + 1;
+    return consumed + bestOffset;
+  }
+
+  /**
    * Repaints the field's live text/placeholder/caret from `this.text` —
-   * called on every keystroke from ghostInput's own `input` event (see
-   * buildGhostInput()) and once up front so the field never starts blank
-   * when it should show a pre-filled value (e.g. reopening the composer on
-   * previously-committed text).
+   * called on every keystroke and every selection change from ghostInput
+   * itself (see buildGhostInput()), on every tap (see buildInputField()'s
+   * `pointerdown`, which also moves the real selection first), and once up
+   * front so the field never starts blank when it should show a pre-filled
+   * value (e.g. reopening the composer on previously-committed text). Runs
+   * synchronously inline with whichever of those triggered it — no
+   * deferral, so the redraw always lands in the very same frame as the
+   * keystroke/tap that caused it.
    *
    * Text stays at its one true `INPUT_FONT_SIZE` always — never shrunk,
    * never wrapped to fit a fixed-size pill. What *does* grow now is line
@@ -782,22 +870,30 @@ export class TextComposer {
    * one-line-tall window (`INPUT_HEIGHT`, unchanged: the top bar's height
    * still doesn't cascade into the rest of the layout below it).
    *
-   * Both axes use the exact same trick: `text.anchor` (see
-   * buildInputField()) is pinned to the block's own bottom-right corner, so
-   * the *last* line's *own* trailing edge always sits at that fixed corner
-   * with zero extra math — a line longer than the pill grows leftward
-   * (RTL) past the corner, a second-or-later line grows upward past it,
-   * both simply clipped by the stationary `mask`. `inputMaxScrollX`/`Y`
-   * only have to account for how far *that* corner already sits outside
-   * the visible window; `handleInputPointerMove()` lets the player pan
-   * beyond either default position by hand to review earlier text.
+   * `text.anchor` (see buildInputField()) is pinned to the block's own
+   * bottom-right corner, so the *last* line's *own* trailing edge always
+   * sits at that fixed corner with zero extra math — a line longer than
+   * the pill grows leftward (RTL) past the corner, a second-or-later line
+   * grows upward past it, both simply clipped by the stationary `mask`.
+   * The caret, though, can now sit anywhere in the text (see
+   * hitTestCaretIndex()) — `ghostInput.selectionStart` is the single
+   * source of truth for where, read fresh every call — so the old
+   * "always snap fully to one edge" auto-scroll is replaced by
+   * `nudgeScrollToReveal()`: shift the view the *minimum* amount needed to
+   * keep the caret in the visible window, in whichever direction it's
+   * actually out of view, leaving it untouched if the caret (e.g. a spot
+   * the player just tapped) was already visible. For a caret sitting at
+   * the true end this still converges on exactly the old snap-to-edge
+   * result — see the method's own doc comment.
    */
   private refreshInputVisual(): void {
     // Keeps ghostInput in sync even when this.text changed from a source
     // other than ghostInput's own `input` event (e.g. reopening the
-    // composer pre-filled with previously-committed text) — a no-op when
-    // it's already the source, since it's the same string either way.
-    this.ghostInput.value = this.text;
+    // composer pre-filled with previously-committed text) — comparing
+    // first (rather than assigning unconditionally) matters here: setting
+    // `.value` to a string that's already current would otherwise reset
+    // the very selection a tap/selectionchange just established.
+    if (this.ghostInput.value !== this.text) this.ghostInput.value = this.text;
 
     const hasText = this.text.length > 0;
     this.inputField.text.text = this.text;
@@ -816,43 +912,63 @@ export class TextComposer {
     this.inputField.text.position.set(availWidth / 2, anchorY);
 
     const lines = this.text.split('\n');
-    const lastLine = lines[lines.length - 1] ?? '';
-    const lastLineWidth = lastLine.length
-      ? CanvasTextMetrics.measureText(lastLine, this.inputField.text.style).width
-      : 0;
+    const lineWidths = lines.map((line) => (line.length ? CanvasTextMetrics.measureText(line, this.inputField.text.style).width : 0));
+    const widestLineWidth = Math.max(0, ...lineWidths);
 
-    const caretLocalX = availWidth / 2 - lastLineWidth - CURSOR_GAP;
-    this.inputMaxScrollX = hasText ? Math.max(0, -availWidth / 2 - caretLocalX) : 0;
-    // How far scrollGroup has to shift down to bring the *top* of the
-    // (possibly multi-line) block flush with the window's own top edge —
-    // not simply `text.height - INPUT_HEIGHT`, which ignores that the
-    // block's bottom already sits `bottomPad` above the window's bottom
-    // edge at rest, not flush against it.
+    // Bounds on how far the player can pan by hand (see
+    // handleInputPointerMove) — the *widest* line's own extent, not just
+    // the last line's: an earlier line can easily be longer than
+    // wherever the caret currently sits.
+    this.inputMaxScrollX = hasText ? Math.max(0, widestLineWidth + CURSOR_GAP - availWidth) : 0;
     this.inputMaxScrollY = hasText ? Math.max(0, this.inputField.text.height - INPUT_HEIGHT + bottomPad) : 0;
-    // Auto-follow the caret's line while actively typing. X and Y need
-    // opposite defaults here, not a copy-paste of the same value: on X the
-    // fixed right-edge anchor is where the *oldest* part of the current
-    // line sits (RTL: typing grows the line *away* from it, leftward), so
-    // showing the caret needs an actual scroll (inputMaxScrollX). On Y the
-    // bottom-right anchor *is* where the newest content sits (the last,
-    // most-recently-added line is always the bottom-most one), so the
-    // caret's own line is already exactly where it needs to be at rest —
-    // inputScrollY stays 0 here; only a manual pan (see
-    // handleInputPointerMove) ever moves it away from that, to reveal
-    // earlier lines, and the very next keystroke snaps back to 0.
-    this.inputScrollX = this.inputMaxScrollX;
-    this.inputScrollY = 0;
+
+    if (!hasText) {
+      this.inputScrollX = 0;
+      this.inputScrollY = 0;
+      this.applyInputScroll();
+      this.inputField.cursor.position.set(availWidth / 2 - CURSOR_GAP, anchorY - INPUT_LINE_HEIGHT / 2);
+      return;
+    }
+
+    const caretIndex = clampNumber(this.ghostInput.selectionStart ?? this.text.length, 0, this.text.length);
+    const { lineIndex, offsetInLine } = this.locateCaretPosition(lines, caretIndex);
+    const prefixWidth = offsetInLine
+      ? CanvasTextMetrics.measureText(lines[lineIndex].slice(0, offsetInLine), this.inputField.text.style).width
+      : 0;
+    const caretLocalX = availWidth / 2 - prefixWidth - CURSOR_GAP;
+    const linesFromBottom = lines.length - 1 - lineIndex;
+    const caretLocalY = anchorY - linesFromBottom * INPUT_LINE_HEIGHT - INPUT_LINE_HEIGHT / 2;
+
+    this.inputScrollX = this.nudgeScrollToReveal(this.inputScrollX, caretLocalX, -availWidth / 2, availWidth / 2, this.inputMaxScrollX);
+    this.inputScrollY = this.nudgeScrollToReveal(this.inputScrollY, caretLocalY, -INPUT_HEIGHT / 2, INPUT_HEIGHT / 2, this.inputMaxScrollY);
     this.applyInputScroll();
 
-    this.inputField.cursor.position.set(caretLocalX, anchorY - INPUT_LINE_HEIGHT / 2);
+    this.inputField.cursor.position.set(caretLocalX, caretLocalY);
   }
 
   private clampInputScrollX(x: number): number {
-    return Math.max(0, Math.min(this.inputMaxScrollX, x));
+    return clampNumber(x, 0, this.inputMaxScrollX);
   }
 
   private clampInputScrollY(y: number): number {
-    return Math.max(0, Math.min(this.inputMaxScrollY, y));
+    return clampNumber(y, 0, this.inputMaxScrollY);
+  }
+
+  /**
+   * Shifts `current` the minimum amount needed so that `pointLocal`
+   * (already in the same unpanned local space `current` is applied
+   * against — see applyInputScroll()) lands within `[windowMin,
+   * windowMax]`; leaves it untouched if the point is already inside that
+   * range. Shared by both axes in refreshInputVisual() — see that
+   * method's own doc comment for why this replaces the old "always snap
+   * to one edge" logic.
+   */
+  private nudgeScrollToReveal(current: number, pointLocal: number, windowMin: number, windowMax: number, max: number): number {
+    const visible = pointLocal + current;
+    let next = current;
+    if (visible < windowMin) next += windowMin - visible;
+    else if (visible > windowMax) next -= visible - windowMax;
+    return clampNumber(next, 0, max);
   }
 
   private applyInputScroll(): void {
