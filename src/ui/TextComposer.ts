@@ -126,6 +126,31 @@ const GLOW_PULSE_SPEED = 0.0024;
 const GLOW_DISTANCE = 10;
 const GLOW_QUALITY = 0.3;
 
+/**
+ * The live input field's own "pop" — the whole typed line (not per
+ * character: splitting the *source string* into independent glyphs, e.g.
+ * PixiJS v8.11+'s own `SplitText`, was tried and confirmed live to shape
+ * every Arabic letter in isolation, breaking every join — see
+ * refreshInputVisual()'s own doc comment) scales from
+ * INPUT_BOUNCE_MIN_SCALE up to 1 via easeOutBounce() every time a
+ * keystroke actually *adds* characters (not on deletion — see
+ * triggerInputBounce()). `text.origin` (Container's real v8 property,
+ * distinct from `pivot`: changing it re-centers the scale pivot without
+ * moving the object's own position) is recomputed to the text's own
+ * current visual center on every trigger, so the pop reads as growing
+ * outward from the middle of whatever's currently typed rather than from
+ * the fixed right-edge anchor corner. `inputGlow`'s outerStrength is
+ * driven by the exact same per-frame `eased` value as the scale (see
+ * syncInputBounce()), so the two are mathematically locked together, not
+ * merely started at the same time — glow brightens exactly as the pop
+ * grows and settles back to its own resting level the instant the bounce
+ * finishes.
+ */
+const INPUT_BOUNCE_MIN_SCALE = 0.8;
+const INPUT_BOUNCE_DURATION_MS = 220;
+const INPUT_GLOW_BASE = 0.6;
+const INPUT_GLOW_BOOST = 2.6;
+
 /** Plain glass chrome, matching HeaderBar's own back/home buttons — not part of the gold identity, which belongs to content (the effect frames), not navigation. */
 const BACK_BG_COLOR = 0xffffff;
 const BACK_BG_ALPHA = 0.06;
@@ -165,6 +190,16 @@ function effectFrameFilters(): (AdvancedBloomFilter | DropShadowFilter)[] {
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+/** Standard "ease out bounce" (easings.net) — a ball dropped and settling, three diminishing bounces, never overshooting past 1. `t` and the return value are both 0..1. */
+function easeOutBounce(t: number): number {
+  const n1 = 7.5625;
+  const d1 = 2.75;
+  if (t < 1 / d1) return n1 * t * t;
+  if (t < 2 / d1) return n1 * (t -= 1.5 / d1) * t + 0.75;
+  if (t < 2.5 / d1) return n1 * (t -= 2.25 / d1) * t + 0.9375;
+  return n1 * (t -= 2.625 / d1) * t + 0.984375;
 }
 
 /**
@@ -246,6 +281,12 @@ export class TextComposer {
   private inputDragStartScrollX = 0;
   private inputDragStartScrollY = 0;
   private cursorBlinkTimer: TickerTimerHandle | undefined;
+  /** `this.text` as of the previous refreshInputVisual() call — triggerInputBounce()'s baseline for telling an addition (pop-worthy) apart from a deletion (not). */
+  private previousInputTextForBounce = '';
+  /** `ticker.lastTime` the current pop started at, or -1 once it's settled (skipped every frame after) — see INPUT_BOUNCE_* constants' own doc comment. */
+  private inputBounceStart = -1;
+  /** The live input field's own halo, synced frame-for-frame to the pop (see syncInputBounce()) — a separate instance from previewGlow, since it lives on a different Text object. */
+  private readonly inputGlow: GlowFilter;
   private readonly previewText: Text;
   /** The committed text's pulsing halo — one instance, reused every frame (see GLOW_* constants' own doc comment); never recreated per-tick. */
   private readonly previewGlow: GlowFilter;
@@ -330,7 +371,9 @@ export class TextComposer {
     this.catchAll.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
     this.composerContainer.addChild(this.catchAll);
 
+    this.inputGlow = new GlowFilter({ distance: GLOW_DISTANCE, outerStrength: INPUT_GLOW_BASE, innerStrength: 0, color: EFFECT_GOLD, quality: GLOW_QUALITY });
     this.inputField = this.buildInputField();
+    deps.app.ticker.add((ticker) => this.syncInputBounce(ticker));
     this.composerContainer.addChild(this.inputField.root);
 
     this.backButton = this.buildBackButton();
@@ -629,6 +672,35 @@ export class TextComposer {
     this.previewGlow.outerStrength = GLOW_PULSE_MIN + pulse * (GLOW_PULSE_MAX - GLOW_PULSE_MIN);
   }
 
+  /**
+   * Drives the input field's pop — registered once on `deps.app.ticker` in
+   * the constructor, a no-op whenever `inputBounceStart` is idle (-1, the
+   * common case) so it costs nothing while the player isn't actively
+   * typing. `eased` (easeOutBounce()) feeds *both* `text.scale` and
+   * `inputGlow.outerStrength` from the exact same value every frame — see
+   * the INPUT_BOUNCE_ and INPUT_GLOW_ constants' own doc comment for why
+   * that locks them together rather than merely starting together. The instant
+   * the bounce finishes (t >= 1), the glow is explicitly snapped back to
+   * its own resting level rather than left at its boosted peak — plain
+   * assignment, not eased, since easeOutBounce(1) is exactly 1 and would
+   * otherwise leave outerStrength permanently at INPUT_GLOW_BASE +
+   * INPUT_GLOW_BOOST once idle.
+   */
+  private syncInputBounce(ticker: Ticker): void {
+    if (this.inputBounceStart < 0) return;
+    const elapsed = ticker.lastTime - this.inputBounceStart;
+    const t = Math.min(1, elapsed / INPUT_BOUNCE_DURATION_MS);
+    if (t >= 1) {
+      this.inputField.text.scale.set(1);
+      this.inputGlow.outerStrength = INPUT_GLOW_BASE;
+      this.inputBounceStart = -1;
+      return;
+    }
+    const eased = easeOutBounce(t);
+    this.inputField.text.scale.set(INPUT_BOUNCE_MIN_SCALE + eased * (1 - INPUT_BOUNCE_MIN_SCALE));
+    this.inputGlow.outerStrength = INPUT_GLOW_BASE + eased * INPUT_GLOW_BOOST;
+  }
+
   /** A plain snapshot of everything the Transformer needs to draw itself — `previewText.width/height` already reflect the current `scale` (see textStyle(), which drives fontSize from it), so the border always matches the text's real on-screen size with no separate scaling step of its own. */
   private transformerTarget(): TransformerTarget {
     return {
@@ -712,6 +784,7 @@ export class TextComposer {
     // the same job on Y for free, with no separate scroll math needed for
     // the default (non-dragged) case.
     text.anchor.set(1, 1);
+    text.filters = [this.inputGlow];
     scrollGroup.addChild(text);
 
     const cursor = new Graphics().rect(-CURSOR_WIDTH / 2, -CURSOR_HEIGHT / 2, CURSOR_WIDTH, CURSOR_HEIGHT).fill(EFFECT_GOLD);
@@ -939,6 +1012,20 @@ export class TextComposer {
     this.inputField.text.text = this.text;
     this.inputField.text.visible = hasText;
     this.inputField.placeholder.visible = !hasText;
+
+    // Pop only on genuine additions (typing/pasting), never on deletion —
+    // see triggerInputBounce()'s own doc comment on the constant it reads.
+    if (this.text.length > this.previousInputTextForBounce.length && this.text !== this.previousInputTextForBounce) {
+      this.inputBounceStart = this.deps.app.ticker.lastTime;
+    }
+    this.previousInputTextForBounce = this.text;
+    // Recomputed every call since the text's own width changes with every
+    // keystroke: with anchor (1, 1) the rendered texture spans local
+    // x ∈ [-width, 0], y ∈ [-height, 0], so its visual center sits at
+    // (-width/2, -height/2) — `origin`, not `pivot`, so re-centering it
+    // here never nudges the text's own on-screen position (see
+    // INPUT_BOUNCE_* constants' own doc comment on why `origin` specifically).
+    this.inputField.text.origin.set(-this.inputField.text.width / 2, -this.inputField.text.height / 2);
 
     const availWidth = Math.max(0, this.inputFieldWidth - CURSOR_WIDTH - CURSOR_GAP * 2);
     // Reproduces the single-line field's old vertically-centered look
