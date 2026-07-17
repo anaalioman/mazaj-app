@@ -611,6 +611,13 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
     });
 
     flashScreen();
+    // Ownership of `texture`'s GPU lifetime transfers here: playSnapshotLiftUp()
+    // is solely responsible for destroying it (via its own thumb sprite's
+    // `texture: true` teardown) once its lift-up animation finishes — see
+    // that function's own doc comment on why a second destroy() call here
+    // would double-free it. Nothing below this line touches `texture`'s
+    // disposal again; only its pixels, via base64().
+    //
     // The shutter sound itself fires from inside playSnapshotLiftUp(),
     // synced to the exact frame the thumbnail starts rising — see its own
     // doc comment.
