@@ -2,20 +2,15 @@ import { Application, CanvasTextMetrics, Container, FillGradient, Graphics, Part
 import { AdvancedBloomFilter, DropShadowFilter, GlowFilter } from 'pixi-filters';
 import { iconTexture } from './svgIconTexture';
 import type { IconName } from './icons';
-import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
-import { TEXT_EFFECTS } from '../effects/textEffects/registry';
 import type { AudioManager } from '../audio/AudioManager';
-import { tickerSetInterval, tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
+import { tickerSetInterval, type TickerTimerHandle } from '../utils/tickerTimers';
 import { createHiddenTextArea } from '../dom/shadowServices';
 import { Transformer, type TransformerTarget } from './Transformer';
 import { Particle } from '../fireworks/Particle';
 import { getParticleTexture } from '../fireworks/textures';
 
-export type { TextRevealEffect };
-
 export interface TextRevealConfig {
   text: string;
-  effect: TextRevealEffect;
   x: number;
   y: number;
   fontScale: number;
@@ -34,14 +29,6 @@ export interface TextComposerDeps {
   uiContainer: Container;
   /** True while the input+effects bar OR the control box is open — lets the caller hide whatever else is on screen (e.g. the planning screen's own icon columns) so this stays the sole focus. */
   onComposingChange: (composing: boolean) => void;
-}
-
-/** One effects-bar item: a rounded preview frame (border+fill, gold identity, real bloom+shadow filters) plus its label below it. `border` is redrawn on select/deselect rather than rebuilt. */
-interface EffectFrameObj {
-  effect: TextRevealEffect;
-  root: Container;
-  border: Graphics;
-  label: Text;
 }
 
 /** One compose-mode-row item — see ComposeMode's/RowMode's own doc comments. `glow` is a dedicated GlowFilter instance per icon (not shared) so each can carry its own independent idle/active/tap-boost level every frame — see syncComposeModeFrames(). `stackable` mirrors its own ComposeModeEntry (copied here rather than re-looked-up every frame). */
@@ -76,13 +63,6 @@ interface InputFieldObj {
 }
 
 const SAMPLE_PHRASE = 'مبروك';
-/** Effects bar order/labels come straight from the registry — add an effect there and it shows up here automatically, no other change needed. */
-const PREVIEW_ORDER: TextRevealEffect[] = TEXT_EFFECTS.map((entry) => entry.id);
-/** Fixed demo word for every effects-bar preview — unrelated to the player's own text/the input's pre-filled default. */
-const PREVIEW_PHRASE = 'مرحبا';
-const PREVIEW_HOLD_BEFORE_MS = 600;
-const PREVIEW_HOLD_AFTER_MS = 600;
-const PREVIEW_NONE_HOLD_MS = 2000;
 
 /**
  * Geometry ported 1:1 from the old `#mzj-text-composer`/`.mzj-text-composer-*`
@@ -104,7 +84,6 @@ const PREVIEW_W = 78;
 const PREVIEW_H = 44;
 const PREVIEW_RADIUS = 10;
 const ITEM_GAP_X = 14;
-const ITEM_GAP_Y = 12;
 const LABEL_GAP = 5;
 const LABEL_FONT_SIZE = 10;
 const LABEL_LINE_HEIGHT = 12;
@@ -112,12 +91,11 @@ const ITEM_HEIGHT = PREVIEW_H + LABEL_GAP + LABEL_LINE_HEIGHT;
 /** Real Pixi hitArea per finger — same reasoning as every other control converted this session. Each item's own footprint (78x61) already clears the 44x44 floor. */
 const FRAME_HIT_WIDTH = PREVIEW_W;
 const FRAME_HIT_HEIGHT = ITEM_HEIGHT;
-/** Root is centered on the *border box*, not the whole item — so the hitArea's vertical span is deliberately asymmetric (see buildEffectFrame()): it starts exactly at the box's own top edge (no wasted margin that would creep into the row above) and extends down through the label. */
+/** Root is centered on the *border box*, not the whole item — so the hitArea's vertical span is deliberately asymmetric (see buildComposeModeFrame()): it starts exactly at the box's own top edge (no wasted margin that would creep into the row above) and extends down through the label. */
 const FRAME_HIT_TOP = -PREVIEW_H / 2;
 
-/** The effects bar's unified gold identity — same color/filter recipe as the header and the planning screen's icon column, applied to every frame's border so the whole app reads as one visual language. */
+/** The mode row's unified gold identity — same color/filter recipe as the header and the planning screen's icon column, applied to every frame's border so the whole app reads as one visual language. */
 const EFFECT_GOLD = 0xfff6df;
-const FRAME_BORDER_IDLE_COLOR = 0xffffff;
 const FRAME_BORDER_IDLE_ALPHA = 0.22;
 const FRAME_BORDER_ACTIVE_ALPHA = 0.9;
 const LABEL_IDLE_COLOR = 0xffffff;
@@ -212,14 +190,13 @@ const INPUT_TEXT_COLOR = 0xffe9b3;
 /** Same gold/fire identity as the text itself — "وكأن الحرف نفسه قد احترق". */
 const DELETE_SPARK_COLORS = [EFFECT_GOLD, 0xffb04c, INPUT_TEXT_COLOR];
 /**
- * Composing-time behavior modes — a second, exclusive-select icon row
- * (mirrors the effects bar's own single-active-at-a-time radio pattern,
- * see syncEffectFrames()) sitting *below* it, with its own "off" state:
- * `'none'` (the default — matches every mode being unconditionally off
- * until the player deliberately opts in) and tapping the currently-active
- * icon again returns to `'none'`, unlike the effects bar (whose tap always
- * commits and closes the composer — these three stay live *while* still
- * typing, so a commit-on-tap would defeat the whole point).
+ * Composing-time behavior modes — an exclusive-select icon row below the
+ * input, with its own "off" state: `'none'` (the default — matches every
+ * mode being unconditionally off until the player deliberately opts in) and
+ * tapping the currently-active icon again returns to `'none'`. Tapping one
+ * of these keeps composing (unlike the back arrow, which commits) — these
+ * three stay live *while* still typing, so a commit-on-tap would defeat the
+ * whole point.
  * - `'spring'` gates the input field's own insert-pop (see
  *   INPUT_BOUNCE_* constants) — previously unconditional on every keystroke
  *   that grew the string; now only while this mode is active.
@@ -256,10 +233,8 @@ const COMPOSE_MODE_ENTRIES: ComposeModeEntry[] = [
 ];
 
 /**
- * "Golden metallic" identity for the new row specifically — a warmer,
- * brighter gradient than the effects bar's own dark-navy-to-black frames
- * (see syncEffectFrames()), so this row visibly reads as its own family of
- * controls rather than more reveal-effect options. `MODE_GLOW_BASE` is the
+ * "Golden metallic" identity for the mode row — a warm gradient that reads
+ * as its own family of controls. `MODE_GLOW_BASE` is the
  * *idle* dim halo every icon in this row always carries (per "توهج ناعم" —
  * a soft ambient glow, not fully dark); `MODE_GLOW_ACTIVE` is the sustained
  * brighter level for whichever mode is currently selected;
@@ -372,21 +347,22 @@ function diffChangedRange(shorter: string, longer: string): { start: number; end
 }
 
 /**
- * Free-text composing flow for the "T" icon: a live top input + an effects
- * bar (each icon auto-loops its own demo continuously — no tap needed to
- * preview, a tap only confirms that effect), a back arrow that closes all of
- * that and reveals the player's real text in a draggable + pinch-resizable
- * + rotatable control box, and tapping outside commits it (bare text, no
- * chrome) at whatever position/scale/rotation was left. Tapping the
- * committed text later reopens this whole flow pre-filled. Position/scale/
- * rotation persist in memory for as long as the mood instance lives (see
- * fireworksMood.ts's module doc).
+ * Free-text composing flow for the "T" icon: a live top input + a golden
+ * mode row (fuse/spark-eraser/spring/smoke-cloud — see ComposeMode/RowMode's
+ * own doc comments), a back arrow that closes all of that and reveals the
+ * player's real text in a draggable + pinch-resizable + rotatable control
+ * box, and tapping outside commits it (bare text, no chrome) at whatever
+ * position/scale/rotation was left. Tapping the committed text later reopens
+ * this whole flow pre-filled. Position/scale/rotation persist in memory for
+ * as long as the mood instance lives (see fireworksMood.ts's module doc).
+ * There is no reveal-effect picker here — the real show always reveals via
+ * `CharacterReveal` (see TextReveal.ts), the sole reveal path.
  *
  * Every visible pixel of this class is genuine Pixi: the back button, the
  * input field (background pill, live text, placeholder, blinking gold
- * caret, the horizontal-scroll mask/pan from refreshInputVisual()), the
- * effects bar's 7 frames, the control box (border + two dedicated corner
- * handles), and the full-screen "tap outside to commit" backdrop are all
+ * caret, the horizontal-scroll mask/pan from refreshInputVisual()), the mode
+ * row, the control box (border + two dedicated corner handles), and the
+ * full-screen "tap outside to commit" backdrop are all
  * `Graphics`/`Container`/`Text` objects living on `app.stage`, positioned
  * via Pixi's own `position`/`rotation` — never CSS, never DOM.
  *
@@ -413,16 +389,6 @@ function diffChangedRange(shorter: string, longer: string): { start: number; end
  * gesture results back up via callbacks (`onMove`/`onRotate`/`onScale`,
  * see `transformerTarget()`/`syncTransforms()`) and redraws itself against
  * whatever state this class hands it.
- *
- * The effects bar's demo previews reuse the exact same TextReveal engine as
- * the real final reveal (same particle physics, no CSS/static-image
- * stand-in) via a dedicated instance, cycling through smoke/flame/none one
- * at a time (never more than one running at once, a sequential loop rather
- * than 7 simultaneous animations, for performance) for as long as the input
- * row is open. `previewMask` clips whichever frame is currently animating to
- * that frame's own Pixi-computed rectangle, so particles never spill past a
- * frame's rounded border — the same mask is reused for every frame in turn
- * since only one is ever live at once.
  */
 export class TextComposer {
   private readonly deps: TextComposerDeps;
@@ -431,7 +397,6 @@ export class TextComposer {
   private readonly catchAll: Graphics;
   private readonly backButton: { root: Container; bg: Graphics };
   private readonly inputField: InputFieldObj;
-  private readonly effectFrames: EffectFrameObj[];
   /** The one real DOM element in this class — see buildGhostInput()'s own doc comment. */
   private readonly ghostInput: HTMLTextAreaElement;
   /** Set each time layoutComposer() runs — the input pill's own available width, used by refreshInputVisual()'s auto-scroll. */
@@ -500,15 +465,11 @@ export class TextComposer {
   /** The committed text's pulsing halo — one instance, reused every frame (see GLOW_* constants' own doc comment); never recreated per-tick. */
   private readonly previewGlow: GlowFilter;
   private readonly baseFontSize: number;
-  private readonly previewReveal: TextReveal;
-  /** Clips the preview reveal's text+particles to the current icon slot's rectangle — nothing may render outside it, however the particles naturally move. */
-  private readonly previewMask: Graphics;
 
   /** Full-screen, invisible-but-hit-testable — catches "tap outside the box" to commit. Sits directly under the Transformer's own box/handles on `uiContainer` so they always win the hit test over it. */
   private readonly backdrop: Graphics;
 
   private text = SAMPLE_PHRASE;
-  private effect: TextRevealEffect = 'none';
   private posX: number;
   private posY: number;
   private scale = 1;
@@ -518,11 +479,6 @@ export class TextComposer {
   /** Exists only between openControlBox() and closeControlBox() — see Transformer.ts's own doc comment for why nothing here keeps a permanent gated listener for it. */
   private transformer: Transformer | null = null;
 
-  private previewCycleActive = false;
-  private previewGeneration = 0;
-  private previewIndex = 0;
-  private previewCycleTimer: TickerTimerHandle | undefined;
-
   constructor(deps: TextComposerDeps) {
     this.deps = deps;
 
@@ -530,20 +486,6 @@ export class TextComposer {
     this.posX = width / 2;
     this.posY = height / 2;
     this.baseFontSize = Math.max(36, Math.min(width, height) * 0.09);
-
-    this.previewReveal = new TextReveal(deps.app);
-    // TextReveal's own constructor always self-parents to app.stage — reparent
-    // into uiContainer since this specific instance only ever plays the
-    // effects-bar's demo preview (editing-time UI, not final art). Contrast
-    // with fireworksMood.ts's own separate TextReveal instance for the real
-    // committed reveal, which stays in worldContainer.
-    deps.uiContainer.addChild(this.previewReveal.container);
-    deps.app.ticker.add((ticker) => this.previewReveal.update(ticker.deltaTime));
-
-    // Not added to the stage — Graphics used purely as a mask don't need to
-    // be part of the render tree, only assigned via `.mask`.
-    this.previewMask = new Graphics();
-    this.previewReveal.container.mask = this.previewMask;
 
     this.previewText = new Text({ text: this.text, style: this.textStyle() });
     this.previewText.anchor.set(0.5);
@@ -574,8 +516,7 @@ export class TextComposer {
     // tap inside its own box by default. This replicates that: real drawn
     // geometry (Pixi hit-tests a Graphics against its own shape when no
     // explicit hitArea is set), sized to the composer's full content box in
-    // layoutComposer()/layoutEffectFrames(), doing nothing but swallowing
-    // the tap.
+    // layoutComposer(), doing nothing but swallowing the tap.
     this.catchAll = new Graphics();
     this.catchAll.eventMode = 'static';
     this.catchAll.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
@@ -629,9 +570,6 @@ export class TextComposer {
 
     this.backButton = this.buildBackButton();
 
-    this.effectFrames = TEXT_EFFECTS.map((entry) => this.buildEffectFrame(entry.id, entry.label));
-    for (const frame of this.effectFrames) this.composerContainer.addChild(frame.root);
-
     this.composeModeFrames = COMPOSE_MODE_ENTRIES.map((entry) => this.buildComposeModeFrame(entry.mode, entry.icon, entry.label, entry.stackable));
     for (const frame of this.composeModeFrames) this.composerContainer.addChild(frame.root);
     this.wireComposeModeButtons();
@@ -650,12 +588,12 @@ export class TextComposer {
     deps.app.ticker.add((ticker) => this.syncFuseEffect(ticker));
 
     // Added last, deliberately — Pixi renders later-added children on top,
-    // so this guarantees the back arrow always sits visually above the
-    // effects bar, the mode row, and the fuse rope/ember, regardless of
-    // whatever any of those are doing (a bounce mid-pop, the fuse ember
-    // riding past its own row). Per the standing "السهم هو القائد العام"
-    // rule: no effect icon may ever visually cover or intercept it, now or
-    // after any future addition to this composer.
+    // so this guarantees the back arrow always sits visually above the mode
+    // row and the fuse rope/ember, regardless of whatever any of those are
+    // doing (a bounce mid-pop, the fuse ember riding past its own row). Per
+    // the standing "السهم هو القائد العام" rule: no mode icon may ever
+    // visually cover or intercept it, now or after any future addition to
+    // this composer.
     this.composerContainer.addChild(this.backButton.root);
 
     this.ghostInput = this.buildGhostInput();
@@ -683,7 +621,6 @@ export class TextComposer {
       this.backdrop.clear().rect(0, 0, screen.width, screen.height).fill({ color: 0x000000, alpha: 0.001 });
     });
 
-    this.wireEffectButtons();
     this.wireBack();
 
     deps.app.stage.on('pointermove', this.handleInputPointerMove);
@@ -691,15 +628,13 @@ export class TextComposer {
     deps.app.stage.on('pointerupoutside', this.handleInputPointerEnd);
   }
 
-  /** Opens the composer pre-filled with whatever text/effect is currently set — used by the T icon and by tapping the committed text. Starts on the effects bar; the OS keyboard only opens once the player actually taps the input pill (see buildGhostInput()), not automatically here. */
+  /** Opens the composer pre-filled with whatever text is currently set — used by the T icon and by tapping the committed text. The OS keyboard only opens once the player actually taps the input pill (see buildGhostInput()), not automatically here. */
   open(): void {
     this.closeControlBox();
     this.previewText.visible = false;
     this.refreshInputVisual();
-    this.syncEffectFrames();
     this.composerContainer.visible = true;
     this.deps.onComposingChange(true);
-    this.startPreviewCycle();
   }
 
   /**
@@ -725,13 +660,12 @@ export class TextComposer {
     const smokeCloud = this.previewText.visible ? this.committedSmokeActive : this.smokeCloudActive;
     // Defensive: the show can start (via the header's always-available
     // "ابدأ العرض") while the composer or control box is still open.
-    this.stopPreviewCycle();
     this.composerContainer.visible = false;
     this.ghostInput.blur();
     this.closeControlBox();
     this.previewText.visible = false;
     if (!this.hasCommittedOnce) return null;
-    return { text: this.text, effect: this.effect, x: this.posX, y: this.posY, fontScale: this.scale, rotation: this.rotation, smokeCloud };
+    return { text: this.text, x: this.posX, y: this.posY, fontScale: this.scale, rotation: this.rotation, smokeCloud };
   }
 
   private textStyle(): TextStyle {
@@ -746,73 +680,9 @@ export class TextComposer {
     });
   }
 
-  /**
-   * Picking an effect is the player's confirmation that they're done
-   * composing — same as tapping the back arrow, just one tap instead of
-   * two. `syncEffectFrames()` still runs first so the tapped card visibly
-   * lights up gold for one frame before the whole effects bar disappears
-   * underneath it, confirming which effect was actually picked.
-   */
-  private wireEffectButtons(): void {
-    for (const frame of this.effectFrames) {
-      frame.root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
-      frame.root.on('pointertap', (event: FederatedPointerEvent) => {
-        event.stopPropagation();
-        this.deps.audio.playUiClick();
-        this.effect = frame.effect;
-        this.syncEffectFrames();
-        this.confirmAndOpenControlBox();
-      });
-    }
-  }
 
   /**
-   * Soft-depth flat design: a subtle top-to-bottom gradient fill (suggests
-   * a light source from above, the same cue neumorphism reaches for) plus
-   * a faint inner top highlight band — kept deliberately understated rather
-   * than true neumorphism's near-equal-luminosity background+shape, which
-   * has well-documented contrast/accessibility problems for anything that
-   * needs to read as clearly tappable. The active state stays high-contrast
-   * (solid gold stroke + brighter fill + a slight scale lift) precisely
-   * because legibility of "which effect is selected" matters more than
-   * aesthetic purity here.
-   */
-  private syncEffectFrames(): void {
-    for (const frame of this.effectFrames) {
-      const active = frame.effect === this.effect;
-      const fill = new FillGradient({
-        type: 'linear',
-        start: { x: 0, y: 0 },
-        end: { x: 0, y: 1 },
-        textureSpace: 'local',
-        colorStops: active
-          ? [{ offset: 0, color: 0x2c2410 }, { offset: 1, color: 0x0c0a04 }]
-          : [{ offset: 0, color: 0x171922 }, { offset: 1, color: 0x08090d }],
-      });
-      frame.border
-        .clear()
-        .roundRect(-PREVIEW_W / 2, -PREVIEW_H / 2, PREVIEW_W, PREVIEW_H, PREVIEW_RADIUS)
-        .fill(fill)
-        .stroke({
-          width: 1.5,
-          color: active ? EFFECT_GOLD : FRAME_BORDER_IDLE_COLOR,
-          alpha: active ? FRAME_BORDER_ACTIVE_ALPHA : FRAME_BORDER_IDLE_ALPHA,
-        })
-        .roundRect(-PREVIEW_W / 2 + 3, -PREVIEW_H / 2 + 3, PREVIEW_W - 6, PREVIEW_H * 0.42, PREVIEW_RADIUS - 3)
-        .fill({ color: 0xffffff, alpha: active ? 0.1 : 0.05 });
-      frame.root.scale.set(active ? 1.05 : 1);
-      frame.label.style = new TextStyle({
-        fontFamily: 'Tajawal, system-ui, sans-serif',
-        fontSize: LABEL_FONT_SIZE,
-        fontWeight: active ? '700' : '400',
-        fill: active ? LABEL_ACTIVE_COLOR : LABEL_IDLE_COLOR,
-      });
-      frame.label.alpha = active ? 1 : LABEL_IDLE_ALPHA;
-    }
-  }
-
-  /**
-   * Unlike wireEffectButtons() (whose tap always commits and closes the
+   * Unlike the back arrow (whose tap always commits and closes the
    * composer), tapping a mode icon toggles it and keeps composing —
    * tapping the already-active one deselects it back to `'none'`, tapping
    * a different one switches directly (see ComposeMode's own doc comment).
@@ -900,10 +770,9 @@ export class TextComposer {
   }
 
   /**
-   * One compose-mode row item — same border/label recipe as
-   * buildEffectFrame() but with a centered icon glyph instead of a live
-   * preview, and its own dedicated GlowFilter (see MODE_* constants' own
-   * doc comment).
+   * One compose-mode row item — a rounded golden-metallic frame with a
+   * centered icon glyph and its own dedicated GlowFilter (see MODE_*
+   * constants' own doc comment).
    *
    * `root.origin.set(0, 0)` is here on purpose, not as a no-op: `origin`
    * (Container's real v8 property — a `PointData`/number, *not* a string;
@@ -1040,9 +909,9 @@ export class TextComposer {
   }
 
   /**
-   * Leaves the input+effects bar and reveals the committed text in its
-   * draggable/resizable/rotatable control box — the one transition both the
-   * back arrow and picking an effect (see wireEffectButtons()) trigger.
+   * Leaves the input and reveals the committed text in its
+   * draggable/resizable/rotatable control box — the transition the back
+   * arrow triggers.
    *
    * `composeMode`/`smokeCloudActive` reset to their own defaults here —
    * once a mode has actually been used (this commit *is* that use), it has
@@ -1054,7 +923,6 @@ export class TextComposer {
    * on this still-idle control-box preview).
    */
   private confirmAndOpenControlBox(): void {
-    this.stopPreviewCycle();
     this.ghostInput.blur();
     this.composerContainer.visible = false;
     this.text = this.text.trim() ? this.text : SAMPLE_PHRASE;
@@ -1066,69 +934,6 @@ export class TextComposer {
     this.syncComposeModeFrames(this.deps.app.ticker);
     this.syncPreviewTransform();
     this.openControlBox();
-  }
-
-  /** Runs smoke -> flame -> none -> smoke -> ... forever, one at a time, using the exact same TextReveal engine as the real final reveal — only ever one preview actually animating. Independent of tapping an icon to select it. */
-  private startPreviewCycle(): void {
-    if (this.previewCycleActive) return;
-    this.previewCycleActive = true;
-    this.previewGeneration++;
-    void this.runPreviewStep(this.previewGeneration);
-  }
-
-  private stopPreviewCycle(): void {
-    this.previewCycleActive = false;
-    this.previewGeneration++;
-    this.previewCycleTimer?.cancel();
-    this.previewReveal.clear();
-  }
-
-  /**
-   * Per frame: show "مرحبا" plainly and statically first, hold briefly so
-   * it's clearly read, then (for smoke/flame/...) run the real dissolve over
-   * it — the exact same TextReveal engine as the final reveal, clipped via
-   * `previewMask` to this frame's own Pixi-computed rectangle (`getGlobalPosition()`
-   * plus the fixed PREVIEW_W/PREVIEW_H — every frame is drawn at that exact
-   * size, see buildEffectFrame()) so nothing ever escapes it. One frame
-   * animates at a time — a sequential loop, not 7 concurrent particle
-   * systems — for performance. 'none' just holds the static word for a
-   * comparable beat, since it has no effect to demonstrate. Advances to the
-   * next frame once done, looping forever.
-   */
-  private async runPreviewStep(generation: number): Promise<void> {
-    if (!this.previewCycleActive || generation !== this.previewGeneration) return;
-
-    const effect = PREVIEW_ORDER[this.previewIndex];
-    const frame = this.effectFrames.find((f) => f.effect === effect)!;
-    const { x, y } = frame.root.getGlobalPosition();
-    const fontScale = (PREVIEW_H * 0.4) / this.baseFontSize;
-
-    this.previewMask.clear().rect(x - PREVIEW_W / 2, y - PREVIEW_H / 2, PREVIEW_W, PREVIEW_H).fill(0xffffff);
-
-    // Static, clearly-readable "مرحبا" first — no effect yet.
-    await this.previewReveal.reveal(PREVIEW_PHRASE, { effect: 'none', x, y, fontScale });
-    if (!this.previewCycleActive || generation !== this.previewGeneration) return;
-
-    if (effect === 'none') {
-      await this.previewWait(PREVIEW_NONE_HOLD_MS);
-    } else {
-      await this.previewWait(PREVIEW_HOLD_BEFORE_MS);
-      if (!this.previewCycleActive || generation !== this.previewGeneration) return;
-      // Now the real dissolve passes over the already-visible word.
-      await this.previewReveal.reveal(PREVIEW_PHRASE, { effect, x, y, fontScale });
-      if (!this.previewCycleActive || generation !== this.previewGeneration) return;
-      await this.previewWait(PREVIEW_HOLD_AFTER_MS);
-    }
-    if (!this.previewCycleActive || generation !== this.previewGeneration) return;
-
-    this.previewIndex = (this.previewIndex + 1) % PREVIEW_ORDER.length;
-    void this.runPreviewStep(generation);
-  }
-
-  private previewWait(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-      this.previewCycleTimer = tickerSetTimeout(this.deps.app.ticker, resolve, ms);
-    });
   }
 
   /**
@@ -1750,36 +1555,6 @@ export class TextComposer {
     return { root, bg };
   }
 
-  /**
-   * One effects-bar frame: a rounded, glass-dark box (the "small
-   * rounded-corner rectangle" preview slot) with a gold-identity border —
-   * real `AdvancedBloomFilter` + `DropShadowFilter`, brighter/opaque when
-   * this is the selected effect, dim when it isn't (see syncEffectFrames()) —
-   * plus a plain white label below it (labels stay white across every
-   * converted window, only icon-like marks carry the gold). The animated
-   * preview itself (the dissolving "مرحبا" text/particles) is drawn
-   * separately by the single shared `previewReveal`/`previewMask` pair and
-   * only ever occupies one frame's rectangle at a time — see
-   * runPreviewStep().
-   */
-  private buildEffectFrame(effect: TextRevealEffect, labelText: string): EffectFrameObj {
-    const root = new Container();
-    root.eventMode = 'static';
-    root.cursor = 'pointer';
-    root.hitArea = new Rectangle(-FRAME_HIT_WIDTH / 2, FRAME_HIT_TOP, FRAME_HIT_WIDTH, FRAME_HIT_HEIGHT);
-
-    const border = new Graphics();
-    border.filters = effectFrameFilters();
-    root.addChild(border);
-
-    const label = new Text({ text: labelText, style: new TextStyle({ fontFamily: 'Tajawal, system-ui, sans-serif', fontSize: LABEL_FONT_SIZE, fill: LABEL_IDLE_COLOR }) });
-    label.anchor.set(0.5, 0);
-    label.position.set(0, PREVIEW_H / 2 + LABEL_GAP);
-    root.addChild(label);
-
-    return { effect, root, border, label };
-  }
-
   /** Recomputes every position from the current screen size — called once at construction and again on every resize, same pattern as PlanningIconColumn.layout(). */
   private layoutComposer(): void {
     const screen = this.deps.app.screen;
@@ -1799,9 +1574,8 @@ export class TextComposer {
       .fill({ color: 0xffffff, alpha: 0.08 });
 
     // A Pixi mask never added to the display tree is evaluated in *global*
-    // space (the same convention this file's own previewMask already relies
-    // on, see syncEffectFrames()) — so the clip rectangle has to be drawn at
-    // the pill's real on-screen position, not root's local origin.
+    // space — so the clip rectangle has to be drawn at the pill's real
+    // on-screen position, not root's local origin.
     const availWidth = Math.max(0, inputWidth - CURSOR_WIDTH - CURSOR_GAP * 2);
     const pillGlobal = this.inputField.root.getGlobalPosition();
     this.inputField.mask
@@ -1809,8 +1583,7 @@ export class TextComposer {
       .rect(pillGlobal.x - availWidth / 2, pillGlobal.y - INPUT_HEIGHT / 2, availWidth, INPUT_HEIGHT)
       .fill(0xffffff);
 
-    const effectsBottom = this.layoutEffectFrames(composerWidth);
-    const contentBottom = this.layoutComposeModeRow(composerWidth, effectsBottom);
+    const contentBottom = this.layoutComposeModeRow(composerWidth, TOPBAR_HEIGHT + EFFECTS_MARGIN_TOP - MODE_ROW_MARGIN_TOP);
     this.catchAll.clear().rect(0, 0, composerWidth, contentBottom).fill({ color: 0x000000, alpha: 0.001 });
 
     // Re-applies the auto-scroll against the (possibly just-changed) input
@@ -1819,40 +1592,9 @@ export class TextComposer {
     this.refreshInputVisual();
   }
 
-
-  /**
-   * Replicates the old `.mzj-text-composer-effects { display: flex;
-   * flex-wrap: wrap; justify-content: center; gap: 12px 14px; }` in Pixi
-   * coordinates: pack frames into rows of `itemsPerRow` (however many fit
-   * the current composer width, so this reflows exactly like the old flex
-   * grid did on a narrower/wider screen), then center each row and place
-   * its items right-to-left (RTL — the first frame in the array lands at
-   * the row's right edge, matching `TEXT_EFFECTS`' own declared order).
-   */
-  /** Returns the content's bottom y (composer-local) once every row is placed, so layoutComposer() can size the catch-all backdrop to match. */
-  private layoutEffectFrames(composerWidth: number): number {
-    const itemsPerRow = Math.max(1, Math.floor((composerWidth + ITEM_GAP_X) / (PREVIEW_W + ITEM_GAP_X)));
-    let rowTop = TOPBAR_HEIGHT + EFFECTS_MARGIN_TOP;
-
-    for (let start = 0; start < this.effectFrames.length; start += itemsPerRow) {
-      const row = this.effectFrames.slice(start, start + itemsPerRow);
-      const rowContentWidth = row.length * PREVIEW_W + (row.length - 1) * ITEM_GAP_X;
-      let rightEdge = composerWidth / 2 + rowContentWidth / 2;
-
-      for (const frame of row) {
-        frame.root.position.set(rightEdge - PREVIEW_W / 2, rowTop + PREVIEW_H / 2);
-        rightEdge -= PREVIEW_W + ITEM_GAP_X;
-      }
-      rowTop += ITEM_HEIGHT + ITEM_GAP_Y;
-    }
-
-    this.syncEffectFrames();
-    return rowTop - ITEM_GAP_Y;
-  }
-
-  /** The second, exclusive icon row (fuse/spark-eraser/spring — see ComposeMode's own doc comment), centered as one row directly under the effects grid. Only ever 3 items, so — unlike layoutEffectFrames() — there's no multi-row wrapping to handle. */
-  private layoutComposeModeRow(composerWidth: number, effectsBottom: number): number {
-    const rowTop = effectsBottom + MODE_ROW_MARGIN_TOP;
+  /** The mode row (fuse/spark-eraser/spring/smoke-cloud — see ComposeMode's own doc comment), centered as one row directly under the input field (there's no more effects bar above it to sit below). `aboveRowBottom` is a synthetic offset — MODE_ROW_MARGIN_TOP below it lands the row exactly where the input's own bottom margin already sat. */
+  private layoutComposeModeRow(composerWidth: number, aboveRowBottom: number): number {
+    const rowTop = aboveRowBottom + MODE_ROW_MARGIN_TOP;
     const rowContentWidth = this.composeModeFrames.length * PREVIEW_W + (this.composeModeFrames.length - 1) * ITEM_GAP_X;
     let rightEdge = composerWidth / 2 + rowContentWidth / 2;
 

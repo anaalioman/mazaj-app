@@ -168,7 +168,7 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
   });
   worldContainer.addChild(fireworks.layer);
 
-  const textReveal = new TextReveal(app);
+  const textReveal = new TextReveal(app, worldContainer, fireworks);
   worldContainer.addChild(textReveal.container);
   // recordCanvas, not app.canvas — see this file's own "worldContainer-only
   // pixel source" doc comment above for why the recorded stream must come
@@ -356,12 +356,16 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
     // position, scale); falls back to the plain default only if they never
     // touched it at all this session — see TextComposer.consumeForReveal().
     const textConfig = planningScreen.consumeTextRevealConfig();
+    const revealPhrase = textConfig?.text ?? FALLBACK_GREETING;
     audio.playReveal();
+    // CharacterReveal launches one real rocket per letter, staggered — the
+    // reveal's own total duration scales with the phrase's length (unlike
+    // the old single dissolve-effect reveal, which took a fixed ~2-3s
+    // regardless of text length), so the timeout has to scale with it too,
+    // not stay a flat guess.
     void withTimeout(
-      textConfig
-        ? textReveal.reveal(textConfig.text, textConfig)
-        : textReveal.reveal(FALLBACK_GREETING),
-      5000,
+      textConfig ? textReveal.reveal(textConfig.text, textConfig) : textReveal.reveal(FALLBACK_GREETING),
+      revealPhrase.length * 900 + 7000,
       'TextReveal.reveal',
     ).catch((error) => {
       console.error('تعذّر عرض عبارة الافتتاح (سيستمر العرض على أي حال):', error);

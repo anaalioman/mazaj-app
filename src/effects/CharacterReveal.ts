@@ -7,6 +7,8 @@ export interface CharacterRevealOptions {
   x: number;
   y: number;
   style: TextStyle;
+  /** Radians, same convention as Pixi's own `rotation` — rotates the whole revealed line as a rigid body around (x, y). Default 0 (upright). */
+  rotation?: number;
 }
 
 interface CharacterSlice {
@@ -78,6 +80,7 @@ export class CharacterReveal {
   /** Slices the word, then launches one rocket per character (staggered by LAUNCH_STAGGER_MS), each revealing/settling its own slice into place when its own rocket's burst finishes. Resolves once the last character has settled. Empty string resolves immediately. */
   play(options: CharacterRevealOptions): Promise<void> {
     const { text, x, y, style } = options;
+    const rotation = options.rotation ?? 0;
     if (text.length === 0) return Promise.resolve();
 
     const measureText = new Text({ text, style });
@@ -89,6 +92,8 @@ export class CharacterReveal {
 
     const prefixWidths = measurePrefixWidths(text, style);
     const totalWidth = prefixWidths[prefixWidths.length - 1];
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
 
     this.slices = [];
     for (let i = 0; i < text.length; i++) {
@@ -102,12 +107,18 @@ export class CharacterReveal {
       const sprite = new Sprite(sliceTexture);
       sprite.anchor.set(0, 0.5);
       sprite.visible = false;
+      sprite.rotation = rotation;
       this.root.addChild(sprite);
 
+      // Offset from the line's own center, along its unrotated baseline —
+      // rotated by (cos, sin) around the pivot (x, y) so the whole line of
+      // slices reads as one rigid, correctly-tilted row (matches whatever
+      // rotation the player set via the control box's rotate handle).
+      const dx = sliceLeft - totalWidth / 2;
       this.slices.push({
         sprite,
-        targetX: x - totalWidth / 2 + sliceLeft,
-        targetY: y,
+        targetX: x + dx * cos,
+        targetY: y + dx * sin,
       });
     }
 
