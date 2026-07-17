@@ -510,7 +510,28 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
   const LIFT_RISE_DISTANCE = 160;
   const LIFT_END_SCALE = 0.62;
 
-  function playSnapshotLiftUp(texture: Texture): void {
+  /**
+   * Wraps the one Texture takeSnapshot() extracts per capture so its GPU
+   * disposal is a single, idempotent call rather than a comment-enforced
+   * "only destroy this exactly once, from exactly one place" convention —
+   * a second (or third) `destroySafely()` call from anywhere is always a
+   * safe no-op instead of a double-free, structurally, not by discipline.
+   */
+  class SnapshotTexture {
+    readonly texture: Texture;
+    private destroyed = false;
+    constructor(texture: Texture) {
+      this.texture = texture;
+    }
+    destroySafely(): void {
+      if (this.destroyed) return;
+      this.destroyed = true;
+      this.texture.destroy(true);
+    }
+  }
+
+  function playSnapshotLiftUp(snapshotTexture: SnapshotTexture): void {
+    const texture = snapshotTexture.texture;
     const frameWidth = Math.min(app.screen.width, app.screen.height) * LIFT_THUMB_WIDTH_RATIO;
     const frameHeight = (texture.height / texture.width) * frameWidth;
     const centerX = app.screen.width / 2;
@@ -587,14 +608,12 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
       app.stage.removeChild(frame);
       app.stage.removeChild(thumb);
       frame.destroy();
-      // `texture` (the shared extracted GPU texture both frame's fill and
-      // thumb's Sprite ultimately depend on for their draw call) is only
-      // ever referenced here and in takeSnapshot()'s own base64() read,
-      // which has always finished by this point — destroying it via
-      // thumb's own texture:true teardown, right as alpha reaches zero, is
-      // both correct and sufficient; a second explicit texture.destroy()
-      // call after this would double-free the same GPU resource.
-      thumb.destroy({ texture: true, textureSource: true });
+      // Sprite only — `texture` itself is a shared resource takeSnapshot()
+      // still owns via `snapshotTexture`, disposed through its own
+      // idempotent destroySafely() below, not through this sprite's own
+      // teardown.
+      thumb.destroy({ texture: false, textureSource: false });
+      snapshotTexture.destroySafely();
     };
     app.ticker.add(tick);
   }
@@ -605,23 +624,21 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
     // same frame — fireworks animate every tick, so extracting twice could
     // otherwise show the player a thumbnail that doesn't match what landed
     // in their gallery.
-    const texture = app.renderer.extract.texture({
-      target: worldContainer,
-      resolution: Math.min(app.renderer.resolution * 1.5, 3),
-    });
+    const snapshotTexture = new SnapshotTexture(
+      app.renderer.extract.texture({
+        target: worldContainer,
+        resolution: Math.min(app.renderer.resolution * 1.5, 3),
+      }),
+    );
 
     flashScreen();
-    // Ownership of `texture`'s GPU lifetime transfers here: playSnapshotLiftUp()
-    // is solely responsible for destroying it (via its own thumb sprite's
-    // `texture: true` teardown) once its lift-up animation finishes — see
-    // that function's own doc comment on why a second destroy() call here
-    // would double-free it. Nothing below this line touches `texture`'s
-    // disposal again; only its pixels, via base64().
-    //
     // The shutter sound itself fires from inside playSnapshotLiftUp(),
     // synced to the exact frame the thumbnail starts rising — see its own
-    // doc comment.
-    playSnapshotLiftUp(texture);
+    // doc comment. playSnapshotLiftUp() alone calls destroySafely() once
+    // its lift animation finishes; a second call from anywhere else
+    // (including a bug added here later) is a guaranteed no-op, not a
+    // double-free — see SnapshotTexture's own doc comment.
+    playSnapshotLiftUp(snapshotTexture);
     // `extract.base64()` reads pixels back from the GPU via a canvas
     // readback. While debugging in this sandbox's headless/software-WebGL
     // browser, new display objects sometimes stopped rendering after this
@@ -640,7 +657,7 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
       // container-tree doc comment. Every UI control (including the flash
       // and the lift-up thumbnail itself) lives in the sibling uiContainer
       // and is structurally invisible to this capture.
-      const dataUrl = await app.renderer.extract.base64(texture);
+      const dataUrl = await app.renderer.extract.base64(snapshotTexture.texture);
       // "لقطة" ≠ "تنزيل": on the real app, this must land straight in the
       // device's own photo gallery, never a file-download prompt — see
       // GallerySaver's own doc comment. The `<a download>` browser pattern

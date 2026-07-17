@@ -16,13 +16,17 @@ const FADE_OUT_MS = 180;
 
 /**
  * Fades a set of Pixi containers out after a period of no pointer activity
- * anywhere on the page, and instantly brings them back on the next
- * movement/tap. Both directions ease `alpha` via the shared Ticker; hiding
- * additionally sets `eventMode = 'none'` the instant the fade starts (not
- * once it finishes) so the header stops intercepting taps immediately even
- * though it's still fading out, and only sets `visible = false` once fully
- * transparent (a genuinely zero-cost, zero-hit-testable rest state, not
- * just alpha 0 forever).
+ * anywhere on the page. Before arming (idle/setup screen), any touch
+ * instantly brings them back — a normal "wake up the UI" gesture. Once
+ * armed (a show is running), that reversal stops: full immersion means
+ * nothing brings the header back except the dedicated exit button calling
+ * `disarmAndShow()` — a stray tap near the fireworks (or the shutter
+ * button) must never resurrect it. Both directions ease `alpha` via the
+ * shared Ticker; hiding additionally sets `eventMode = 'none'` the instant
+ * the fade starts (not once it finishes) so the header stops intercepting
+ * taps immediately even though it's still fading out, and only sets
+ * `visible = false` once fully transparent (a genuinely zero-cost,
+ * zero-hit-testable rest state, not just alpha 0 forever).
  *
  * The idle countdown is disarmed until `arm()` (or `hideNow()`) is called.
  * Before that, targets are shown unconditionally and never auto-hide — the
@@ -80,9 +84,16 @@ export class IdleFadeController {
     this.show();
   }
 
+  /**
+   * While armed (a show is running), a stray touch anywhere on the page must
+   * not resurrect the header — full immersion means the *only* way back is
+   * the dedicated exit button (never gated by this class at all), not an
+   * accidental tap near the fireworks. Before arming (idle/setup screen),
+   * any touch still brings the header straight back, same as always.
+   */
   private handleActivity = (): void => {
+    if (this.armed) return;
     this.show();
-    if (this.armed) this.resetTimer();
   };
 
   private resetTimer(): void {
