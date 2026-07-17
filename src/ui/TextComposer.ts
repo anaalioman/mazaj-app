@@ -1028,7 +1028,26 @@ export class TextComposer {
     });
   }
 
-  /** Leaves the input+effects bar and reveals the committed text in its draggable/resizable/rotatable control box — the one transition both the back arrow and picking an effect (see wireEffectButtons()) trigger. */
+  /**
+   * Leaves the input+effects bar and reveals the committed text in its
+   * draggable/resizable/rotatable control box — the one transition both the
+   * back arrow and picking an effect (see wireEffectButtons()) trigger.
+   *
+   * `smokeDriftY`/`previewText.alpha` are reset here — a real bug, caught
+   * live (a fresh commit's text rendering fully invisible, no blur, no
+   * fade, just gone): `smokeDriftY` only ever accumulates while
+   * `previewText.visible` (see syncSmokeCloudEffect()'s own gate), which is
+   * true for exactly as long as some *previous* commit sat in its control
+   * box — smokeCloudActive deliberately persists across composer open/
+   * close (see its own doc comment), but the drift/fade it had already
+   * accumulated has no business surviving into a *new* commit. Left alone,
+   * enough accumulated drift from an earlier viewing already had this
+   * text's alpha faded to 0 (or its position clipped out by
+   * previewSmokeMask entirely) *before* the very first frame the new text
+   * ever rendered — every future commit inherited that same already-faded
+   * state and compounded it further. Each fresh commit now always starts
+   * its own smoke, if any, from a clean 0.
+   */
   private confirmAndOpenControlBox(): void {
     this.stopPreviewCycle();
     this.ghostInput.blur();
@@ -1036,6 +1055,9 @@ export class TextComposer {
     this.text = this.text.trim() ? this.text : SAMPLE_PHRASE;
     this.previewText.text = this.text;
     this.previewText.visible = true;
+    this.smokeDriftY = 0;
+    this.smokeReturnStart = -1;
+    this.previewText.alpha = 1;
     this.syncPreviewTransform();
     this.openControlBox();
   }
