@@ -309,10 +309,11 @@ const FUSE_EMBER_SPAWN_INTERVAL_MS = 140;
  * field: `previewText` and the composer's own input+mode row are never
  * visible at the same time (open() hides previewText; commit hides the
  * composer and shows it — see confirmAndOpenControlBox()), so toggling this
- * mid-typing has no *visible* effect yet, by design — `smokeCloudActive`
- * persists across that transition, and the very next frame after
- * previewText becomes visible again (i.e. once the player finishes
- * composing) picks the animation up already running. See
+ * mid-typing has no *visible* effect yet, by design. `smokeCloudActive`
+ * survives just long enough to be read at the moment of commit (snapshotted
+ * into `committedSmokeActive`, see that field's own doc comment) and then
+ * resets — the *next* word's mode row starts clean rather than showing the
+ * previous word's choice as if it were still selected. See
  * syncSmokeCloudEffect() for the actual per-frame drift/blur/mask logic.
  */
 const SMOKE_DRIFT_SPEED = 0.14; // px per ticker.deltaTime unit — gentle, per "زحف هادئة"
@@ -468,7 +469,15 @@ export class TextComposer {
   private sparkParticles: Particle[] = [];
   /** Dead sparks ready for immediate reuse — see spawnDeleteSparks(); never destroyed, only ever `kill()`ed and pushed back here. */
   private readonly sparkDeadPool: Particle[] = [];
-  /** Which second-row icon (if any) is active — see ComposeMode's own doc comment. Gates the input bounce, the delete-spark burst, and the fuse effect. */
+  /**
+   * Which second-row icon (if any) is active — see ComposeMode's own doc
+   * comment. Gates the input bounce, the delete-spark burst, and the fuse
+   * effect. Reset to `'none'` by confirmAndOpenControlBox() every commit —
+   * once a mode has actually been used (applied to the just-committed
+   * text), reopening the composer for the *next* word starts every icon
+   * back at off rather than carrying the previous word's choice forward as
+   * if it were still selected.
+   */
   private composeMode: ComposeMode = 'none';
   private readonly composeModeFrames: ComposeModeFrameObj[];
   /** `ticker.lastTime` the current tap's bounce+glow-boost spike started at, or -1 once it's settled — same eased-decay pattern as inputBounceStart. Keyed by frame so only the tapped icon spikes, not every frame in the row. */
@@ -479,8 +488,19 @@ export class TextComposer {
   private readonly fuseEmber: Graphics;
   private readonly fuseEmberGlow: GlowFilter;
   private fuseEmberSpawnAccumulator = 0;
-  /** The row's one stackable/independent toggle — see RowMode's own doc comment. Persists across open()/confirmAndOpenControlBox() on purpose: it's set *while composing* but only actually visible on previewText, which only shows *after* the composer closes (see syncSmokeCloudEffect()'s own doc comment on this two-screen split). */
+  /**
+   * The row's one stackable/independent toggle — see RowMode's own doc
+   * comment. Like `composeMode`, reset to `false` by
+   * confirmAndOpenControlBox() every commit for the exact same reason —
+   * see that field's own doc comment. The currently-*displayed* text's own
+   * smoke animation does not depend on this staying true: that's
+   * `committedSmokeActive`'s job, a separate snapshot taken at the moment
+   * of commit specifically so resetting this one for the *next* word never
+   * reverses the effect already baked into the *current* one.
+   */
   private smokeCloudActive = false;
+  /** Snapshot of `smokeCloudActive` taken at the exact moment of commit (see confirmAndOpenControlBox()) — what syncSmokeCloudEffect() actually reads to animate the currently-displayed previewText, independent of whatever the (possibly since-reset, possibly since-reselected-for-the-next-word) live `smokeCloudActive` is doing. */
+  private committedSmokeActive = false;
   /** Accumulated upward offset added on top of `posY` while smoke is active — negative-going. Eases back to exactly 0 (not snapped) once the mode turns off, via smokeReturnStart/smokeReturnFromY, the same eased-decay shape as modeBounceStart. */
   private smokeDriftY = 0;
   private smokeReturnStart = -1;
@@ -1034,17 +1054,26 @@ export class TextComposer {
    * `smokeDriftY` is reset here — `smokeDriftY` only ever accumulates
    * while `previewText.visible` (see syncSmokeCloudEffect()'s own gate),
    * which is true for exactly as long as some *previous* commit sat in its
-   * control box — smokeCloudActive deliberately persists across composer
-   * open/close (see its own doc comment), but the drift a prior viewing
-   * had already accumulated has no business surviving into a *new* commit.
-   * Without this, a fresh commit's text would render already displaced
-   * upward from wherever an earlier, unrelated viewing had drifted to,
-   * instead of starting from its own true committed position every time.
+   * control box, and the drift a prior viewing had already accumulated has
+   * no business surviving into a *new* commit. Without this, a fresh
+   * commit's text would render already displaced upward from wherever an
+   * earlier, unrelated viewing had drifted to, instead of starting from
+   * its own true committed position every time.
    * `previewText.alpha` is reset defensively alongside it — nothing in the
    * current smoke logic touches alpha anymore (see syncSmokeCloudEffect()'s
    * own doc comment on why it clamps position instead of fading), but a
    * fresh commit should never inherit a non-1 alpha from any past state
    * regardless of which system might have set it.
+   *
+   * `composeMode`/`smokeCloudActive` reset to their own defaults here too —
+   * once a mode has actually been used (this commit *is* that use), it has
+   * no business still showing "selected" the next time the composer opens
+   * for a new word. `committedSmokeActive` is snapshotted from
+   * `smokeCloudActive` *before* that reset specifically so the animation
+   * already playing on *this* just-committed text keeps running off its
+   * own frozen snapshot — resetting the live `smokeCloudActive` for the
+   * next word must never reach backward and reverse an effect already
+   * baked into a previous one.
    */
   private confirmAndOpenControlBox(): void {
     this.stopPreviewCycle();
@@ -1056,6 +1085,10 @@ export class TextComposer {
     this.smokeDriftY = 0;
     this.smokeReturnStart = -1;
     this.previewText.alpha = 1;
+    this.committedSmokeActive = this.smokeCloudActive;
+    this.composeMode = 'none';
+    this.smokeCloudActive = false;
+    this.syncComposeModeFrames(this.deps.app.ticker);
     this.syncPreviewTransform();
     this.openControlBox();
   }
@@ -1209,11 +1242,17 @@ export class TextComposer {
    * `previewSmokeMask` still exists purely as a hard safety net should the
    * clamp math ever be off by a pixel — it never actually clips anything
    * once the clamp itself is correct.
+   *
+   * Reads `committedSmokeActive`, not the live `smokeCloudActive` — see
+   * that field's own doc comment: `smokeCloudActive` resets to `false` the
+   * moment a commit actually uses it, so the *next* word's mode row starts
+   * clean, while `committedSmokeActive` keeps the *current* word's already-
+   * playing animation running off its own frozen snapshot regardless.
    */
   private syncSmokeCloudEffect(ticker: Ticker): void {
     if (!this.previewText.visible) return;
 
-    if (this.smokeCloudActive) {
+    if (this.committedSmokeActive) {
       // Reassigned every active frame, same as syncComposeModeFrames()
       // rebuilds its own FillGradient every frame — a 2-element array
       // literal is cheap enough that tracking "is it already attached"
