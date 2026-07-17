@@ -62,7 +62,8 @@ interface InputFieldObj {
   cursor: Graphics;
 }
 
-const SAMPLE_PHRASE = 'مبروك';
+/** No default text — an empty composer/commit stays empty (see confirmAndOpenControlBox() and TextReveal.reveal()'s own empty-string guard), rather than falling back to a canned greeting. */
+const SAMPLE_PHRASE = '';
 
 /**
  * Geometry ported 1:1 from the old `#mzj-text-composer`/`.mzj-text-composer-*`

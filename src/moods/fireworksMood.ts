@@ -275,7 +275,10 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
   // actually exited (see endShow() below) is a real, working restart:
   // endShow() clears the previous reveal's sprites before handing back
   // control, so a second reveal has a clean slate to play into.
-  const FALLBACK_GREETING = 'مبروك';
+  // No canned fallback — a show started without ever touching the composer
+  // reveals nothing (TextReveal.reveal()'s own empty-string guard resolves
+  // immediately with no text created), rather than a default greeting.
+  const FALLBACK_GREETING = '';
   let showStarted = false;
   // Mirrors PlanningScreen's own "العرض التلقائي" state — the exit button
   // must stay visible for this continuous-launch screen too, not just the
