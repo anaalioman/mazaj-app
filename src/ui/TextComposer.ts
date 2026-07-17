@@ -1,5 +1,5 @@
-import { Application, CanvasTextMetrics, Container, FillGradient, Graphics, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent } from 'pixi.js';
-import { AdvancedBloomFilter, DropShadowFilter } from 'pixi-filters';
+import { Application, CanvasTextMetrics, Container, FillGradient, Graphics, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent, type Ticker } from 'pixi.js';
+import { AdvancedBloomFilter, DropShadowFilter, GlowFilter } from 'pixi-filters';
 import { iconTexture } from './svgIconTexture';
 import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
 import { TEXT_EFFECTS } from '../effects/textEffects/registry';
@@ -107,6 +107,24 @@ const FRAME_BORDER_ACTIVE_ALPHA = 0.9;
 const LABEL_IDLE_COLOR = 0xffffff;
 const LABEL_IDLE_ALPHA = 0.65;
 const LABEL_ACTIVE_COLOR = 0xffffff;
+
+/**
+ * The committed text's "breathing" glow: outerStrength oscillates between
+ * these two bounds via a plain sine wave driven by `ticker.lastTime`
+ * (radians/ms — one full breath roughly every 2.6s) rather than any
+ * timer — see syncPreviewGlow(). `GlowFilter`, not `BlurFilter`: a blur
+ * would soften the glyphs themselves, while GlowFilter (knockout: false)
+ * always draws the original source untouched and only adds a halo outward
+ * from its edges — that's what keeps the letters reading crisp underneath
+ * the glow, not any MSDF/distance-field font technique (this app has
+ * never used one; every `Text` here is Pixi's ordinary Canvas-rasterized
+ * text, see this class's own module-level doc comment).
+ */
+const GLOW_PULSE_MIN = 1.4;
+const GLOW_PULSE_MAX = 3.4;
+const GLOW_PULSE_SPEED = 0.0024;
+const GLOW_DISTANCE = 10;
+const GLOW_QUALITY = 0.3;
 
 /** Plain glass chrome, matching HeaderBar's own back/home buttons — not part of the gold identity, which belongs to content (the effect frames), not navigation. */
 const BACK_BG_COLOR = 0xffffff;
@@ -229,6 +247,8 @@ export class TextComposer {
   private inputDragStartScrollY = 0;
   private cursorBlinkTimer: TickerTimerHandle | undefined;
   private readonly previewText: Text;
+  /** The committed text's pulsing halo — one instance, reused every frame (see GLOW_* constants' own doc comment); never recreated per-tick. */
+  private readonly previewGlow: GlowFilter;
   private readonly baseFontSize: number;
   private readonly previewReveal: TextReveal;
   /** Clips the preview reveal's text+particles to the current icon slot's rectangle — nothing may render outside it, however the particles naturally move. */
@@ -280,6 +300,9 @@ export class TextComposer {
     this.previewText.visible = false;
     this.previewText.eventMode = 'static';
     this.previewText.cursor = 'pointer';
+    this.previewGlow = new GlowFilter({ distance: GLOW_DISTANCE, outerStrength: GLOW_PULSE_MIN, innerStrength: 0, color: EFFECT_GOLD, quality: GLOW_QUALITY });
+    this.previewText.filters = [this.previewGlow];
+    deps.app.ticker.add((ticker) => this.syncPreviewGlow(ticker));
     this.previewText.on('pointerdown', (event) => {
       event.stopPropagation();
       this.open();
@@ -587,6 +610,23 @@ export class TextComposer {
     this.previewText.position.set(this.posX, this.posY);
     this.previewText.rotation = this.rotation;
     this.previewText.style = this.textStyle();
+  }
+
+  /**
+   * Drives the committed text's "breathing" glow — registered once on
+   * `deps.app.ticker` in the constructor, gated on `previewText.visible`
+   * (the ticker itself is shared and always running, see main.ts, so
+   * anything per-mode has to stand down explicitly rather than relying on
+   * the ticker being paused). `ticker.lastTime` is a plain millisecond
+   * clock the shared ticker already advances every frame — feeding it
+   * straight into `Math.sin` needs no timer, no accumulator field, no
+   * per-frame allocation: only a single `outerStrength` uniform write on
+   * the one `GlowFilter` instance built in the constructor.
+   */
+  private syncPreviewGlow(ticker: Ticker): void {
+    if (!this.previewText.visible) return;
+    const pulse = 0.5 + 0.5 * Math.sin(ticker.lastTime * GLOW_PULSE_SPEED);
+    this.previewGlow.outerStrength = GLOW_PULSE_MIN + pulse * (GLOW_PULSE_MAX - GLOW_PULSE_MIN);
   }
 
   /** A plain snapshot of everything the Transformer needs to draw itself — `previewText.width/height` already reflect the current `scale` (see textStyle(), which drives fontSize from it), so the border always matches the text's real on-screen size with no separate scaling step of its own. */
