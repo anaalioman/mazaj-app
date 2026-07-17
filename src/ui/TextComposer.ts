@@ -1,4 +1,4 @@
-import { Application, CanvasTextMetrics, Container, FillGradient, Graphics, ParticleContainer, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent, type Ticker } from 'pixi.js';
+import { Application, BlurFilter, CanvasTextMetrics, Container, FillGradient, Graphics, ParticleContainer, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent, type Ticker } from 'pixi.js';
 import { AdvancedBloomFilter, DropShadowFilter, GlowFilter } from 'pixi-filters';
 import { iconTexture } from './svgIconTexture';
 import type { IconName } from './icons';
@@ -42,9 +42,10 @@ interface EffectFrameObj {
   label: Text;
 }
 
-/** One compose-mode-row item — see ComposeMode's own doc comment. `glow` is a dedicated GlowFilter instance per icon (not shared) so each can carry its own independent idle/active/tap-boost level every frame — see syncComposeModeFrames(). */
+/** One compose-mode-row item — see ComposeMode's/RowMode's own doc comments. `glow` is a dedicated GlowFilter instance per icon (not shared) so each can carry its own independent idle/active/tap-boost level every frame — see syncComposeModeFrames(). `stackable` mirrors its own ComposeModeEntry (copied here rather than re-looked-up every frame). */
 interface ComposeModeFrameObj {
-  mode: ComposeMode;
+  mode: RowMode;
+  stackable: boolean;
   root: Container;
   border: Graphics;
   glyph: Sprite;
@@ -227,16 +228,29 @@ const DELETE_SPARK_COLORS = [EFFECT_GOLD, 0xffb04c, INPUT_TEXT_COLOR];
  */
 export type ComposeMode = 'none' | 'fuse' | 'spark-eraser' | 'spring';
 
-/** One entry per new-row icon: its mode id, its 24x24 line-icon name (see ui/icons.ts), and its Arabic label. */
+/**
+ * `'smoke-cloud'` is the row's odd one out — every other entry is a value
+ * of the single exclusive `ComposeMode` enum above, but this one is a
+ * genuinely independent on/off toggle (see `smokeCloudActive`) that stacks
+ * freely alongside whichever `ComposeMode` (if any) is also active, per its
+ * own explicit "stackable" requirement. `RowMode` exists purely so
+ * `ComposeModeFrameObj.mode` can still identify *which* icon a frame is
+ * without forcing this one into the exclusive enum it doesn't belong to.
+ */
+export type RowMode = ComposeMode | 'smoke-cloud';
+
+/** One entry per new-row icon: its mode id, its 24x24 line-icon name (see ui/icons.ts), its Arabic label, and whether it's this row's one stackable/independent toggle rather than a member of the exclusive ComposeMode selection. */
 interface ComposeModeEntry {
-  mode: ComposeMode;
+  mode: RowMode;
   icon: IconName;
   label: string;
+  stackable: boolean;
 }
 const COMPOSE_MODE_ENTRIES: ComposeModeEntry[] = [
-  { mode: 'fuse', icon: 'fuse', label: 'فتيل مشتعل' },
-  { mode: 'spark-eraser', icon: 'sparkEraser', label: 'ممحاة نارية' },
-  { mode: 'spring', icon: 'spring', label: 'نابض مرن' },
+  { mode: 'fuse', icon: 'fuse', label: 'فتيل مشتعل', stackable: false },
+  { mode: 'spark-eraser', icon: 'sparkEraser', label: 'ممحاة نارية', stackable: false },
+  { mode: 'spring', icon: 'spring', label: 'نابض مرن', stackable: false },
+  { mode: 'smoke-cloud', icon: 'cloud', label: 'سحابة دخان', stackable: true },
 ];
 
 /**
@@ -287,6 +301,30 @@ const FUSE_EMBER_RADIUS = 3.5;
 const FUSE_EMBER_GLOW = 2.4;
 const FUSE_EMBER_SPEED = 0.0016;
 const FUSE_EMBER_SPAWN_INTERVAL_MS = 140;
+
+/**
+ * "سحابة دخان ذهبية" — unlike the other three ComposeMode entries, this one
+ * animates `previewText` (the already-committed word shown in the scene,
+ * see fireworksMood.ts's own container-tree doc comment), not the input
+ * field: `previewText` and the composer's own input+mode row are never
+ * visible at the same time (open() hides previewText; commit hides the
+ * composer and shows it — see confirmAndOpenControlBox()), so toggling this
+ * mid-typing has no *visible* effect yet, by design — `smokeCloudActive`
+ * persists across that transition, and the very next frame after
+ * previewText becomes visible again (i.e. once the player finishes
+ * composing) picks the animation up already running. See
+ * syncSmokeCloudEffect() for the actual per-frame drift/blur/mask logic.
+ */
+const SMOKE_DRIFT_SPEED = 0.14; // px per ticker.deltaTime unit — gentle, per "زحف هادئة"
+const SMOKE_RETURN_DURATION_MS = 500;
+/** BlurFilter's `legacy` option (default false) already applies Pixi v8's own "optimized halving" pass-strength scheme — no extra code needed to get it, just not overriding it back to the pre-v8 uniform one. */
+const SMOKE_BLUR_MIN = 1.5;
+const SMOKE_BLUR_MAX = 5;
+const SMOKE_BLUR_PULSE_SPEED = 0.0011;
+/** Reuses this file's own COMPOSER_TOP_Y (where the composer itself starts, just clear of the header) as "the top of the safe display area" — a real existing boundary rather than a new guessed-at header height. */
+const SMOKE_MASK_TOP_Y = COMPOSER_TOP_Y;
+/** How far below the mask's top edge the text starts fading — reaches alpha 0 exactly at the mask boundary, never a hard visible cutoff. */
+const SMOKE_FADE_BAND = 90;
 
 const PLACEHOLDER_TEXT = 'اكتب عبارتك هنا';
 const PLACEHOLDER_COLOR = 0xffffff;
@@ -443,6 +481,16 @@ export class TextComposer {
   private readonly fuseEmber: Graphics;
   private readonly fuseEmberGlow: GlowFilter;
   private fuseEmberSpawnAccumulator = 0;
+  /** The row's one stackable/independent toggle — see RowMode's own doc comment. Persists across open()/confirmAndOpenControlBox() on purpose: it's set *while composing* but only actually visible on previewText, which only shows *after* the composer closes (see syncSmokeCloudEffect()'s own doc comment on this two-screen split). */
+  private smokeCloudActive = false;
+  /** Accumulated upward offset added on top of `posY` while smoke is active — negative-going. Eases back to exactly 0 (not snapped) once the mode turns off, via smokeReturnStart/smokeReturnFromY, the same eased-decay shape as modeBounceStart. */
+  private smokeDriftY = 0;
+  private smokeReturnStart = -1;
+  private smokeReturnFromY = 0;
+  /** Applied only while smoke is active or still easing back — see syncSmokeCloudEffect(). previewText's *other* filter, previewGlow, stays in the array either way; this one is added/removed around it rather than the whole array ever going empty, since the halo is permanent and this effect isn't. */
+  private readonly smokeBlur: BlurFilter;
+  /** Unparented (evaluated in global space, same convention previewMask/inputField.mask already use) — confines the drifting text to "شاشة العرض", fading it out before it would otherwise cross above where the header/composer chrome sits. */
+  private readonly previewSmokeMask: Graphics;
   private readonly previewText: Text;
   /** The committed text's pulsing halo — one instance, reused every frame (see GLOW_* constants' own doc comment); never recreated per-tick. */
   private readonly previewGlow: GlowFilter;
@@ -500,6 +548,14 @@ export class TextComposer {
     this.previewGlow = new GlowFilter({ distance: GLOW_DISTANCE, outerStrength: GLOW_PULSE_MIN, innerStrength: 0, color: EFFECT_GOLD, quality: GLOW_QUALITY });
     this.previewText.filters = [this.previewGlow];
     deps.app.ticker.add((ticker) => this.syncPreviewGlow(ticker));
+
+    // Smoke-cloud's own filter/mask — see SMOKE_* constants' own doc
+    // comment. `legacy` deliberately left at its default `false` so
+    // BlurFilter uses Pixi v8's own "optimized halving" pass-strength
+    // scheme rather than opting back into the pre-v8 uniform one.
+    this.smokeBlur = new BlurFilter({ strength: SMOKE_BLUR_MIN, quality: 3 });
+    this.previewSmokeMask = new Graphics();
+    deps.app.ticker.add((ticker) => this.syncSmokeCloudEffect(ticker));
     this.previewText.on('pointerdown', (event) => {
       event.stopPropagation();
       this.open();
@@ -579,7 +635,7 @@ export class TextComposer {
     this.effectFrames = TEXT_EFFECTS.map((entry) => this.buildEffectFrame(entry.id, entry.label));
     for (const frame of this.effectFrames) this.composerContainer.addChild(frame.root);
 
-    this.composeModeFrames = COMPOSE_MODE_ENTRIES.map((entry) => this.buildComposeModeFrame(entry.mode, entry.icon, entry.label));
+    this.composeModeFrames = COMPOSE_MODE_ENTRIES.map((entry) => this.buildComposeModeFrame(entry.mode, entry.icon, entry.label, entry.stackable));
     for (const frame of this.composeModeFrames) this.composerContainer.addChild(frame.root);
     this.wireComposeModeButtons();
     deps.app.ticker.add((ticker) => this.syncComposeModeFrames(ticker));
@@ -741,9 +797,12 @@ export class TextComposer {
    * composer), tapping a mode icon toggles it and keeps composing —
    * tapping the already-active one deselects it back to `'none'`, tapping
    * a different one switches directly (see ComposeMode's own doc comment).
-   * Every tap, active-going or not, still fires the micro-bounce/glow spike
-   * on *that* frame — physical feedback that the press registered, whether
-   * it turned the mode on or off.
+   * `stackable` (currently just `'smoke-cloud'` — see RowMode's own doc
+   * comment) flips its own independent boolean instead of touching
+   * `composeMode` at all, so it can be on at the same time as any of the
+   * other three. Every tap, active-going or not, still fires the
+   * micro-bounce/glow spike on *that* frame — physical feedback that the
+   * press registered, whether it turned the mode on or off.
    */
   private wireComposeModeButtons(): void {
     for (const frame of this.composeModeFrames) {
@@ -751,7 +810,11 @@ export class TextComposer {
       frame.root.on('pointertap', (event: FederatedPointerEvent) => {
         event.stopPropagation();
         this.deps.audio.playUiClick();
-        this.composeMode = this.composeMode === frame.mode ? 'none' : frame.mode;
+        if (frame.stackable) {
+          this.smokeCloudActive = !this.smokeCloudActive;
+        } else {
+          this.composeMode = this.composeMode === frame.mode ? 'none' : (frame.mode as ComposeMode);
+        }
         this.modeBounceStart = this.deps.app.ticker.lastTime;
         this.modeBounceFrame = frame;
         this.syncComposeModeFrames(this.deps.app.ticker);
@@ -787,7 +850,7 @@ export class TextComposer {
     }
 
     for (const frame of this.composeModeFrames) {
-      const active = frame.mode === this.composeMode;
+      const active = frame.stackable ? this.smokeCloudActive : frame.mode === this.composeMode;
       const isBouncing = frame === this.modeBounceFrame;
       frame.glow.outerStrength = (active ? MODE_GLOW_ACTIVE : MODE_GLOW_BASE) + (isBouncing ? spike : 0);
 
@@ -817,12 +880,30 @@ export class TextComposer {
     }
   }
 
-  /** One compose-mode row item — same border/label recipe as buildEffectFrame() but with a centered icon glyph instead of a live preview, and its own dedicated GlowFilter (see MODE_* constants' own doc comment). */
-  private buildComposeModeFrame(mode: ComposeMode, icon: IconName, labelText: string): ComposeModeFrameObj {
+  /**
+   * One compose-mode row item — same border/label recipe as
+   * buildEffectFrame() but with a centered icon glyph instead of a live
+   * preview, and its own dedicated GlowFilter (see MODE_* constants' own
+   * doc comment).
+   *
+   * `root.origin.set(0, 0)` is here on purpose, not as a no-op: `origin`
+   * (Container's real v8 property — a `PointData`/number, *not* a string;
+   * there's no `'center'` shorthand) is what makes `root.scale`'s pivot
+   * point-preserving rather than corner-preserving. It happens to already
+   * equal Pixi's own default pivot (0,0) here, because every piece of this
+   * frame's own content (border/glyph/label below) is drawn symmetric
+   * around local (0,0) already — so this line changes nothing today, but
+   * states the actual invariant the bounce in syncComposeModeFrames()
+   * relies on explicitly, rather than leaving "why does scaling this not
+   * drift its position" to an accident of how the geometry happens to be
+   * centered.
+   */
+  private buildComposeModeFrame(mode: RowMode, icon: IconName, labelText: string, stackable: boolean): ComposeModeFrameObj {
     const root = new Container();
     root.eventMode = 'static';
     root.cursor = 'pointer';
     root.hitArea = new Rectangle(-FRAME_HIT_WIDTH / 2, FRAME_HIT_TOP, FRAME_HIT_WIDTH, FRAME_HIT_HEIGHT);
+    root.origin.set(0, 0);
 
     const glow = new GlowFilter({ distance: GLOW_DISTANCE, outerStrength: MODE_GLOW_BASE, innerStrength: 0, color: EFFECT_GOLD, quality: GLOW_QUALITY });
     const border = new Graphics();
@@ -844,7 +925,7 @@ export class TextComposer {
     label.position.set(0, PREVIEW_H / 2 + LABEL_GAP);
     root.addChild(label);
 
-    return { mode, root, border, glyph, glow, label };
+    return { mode, stackable, root, border, glyph, glow, label };
   }
 
   /**
@@ -1057,8 +1138,9 @@ export class TextComposer {
     this.deps.onComposingChange(false);
   }
 
+  /** `+ this.smokeDriftY` layers the smoke-cloud effect's own upward offset (see syncSmokeCloudEffect()) on top of the "true" committed position every time this runs (drag/resize/rotate gestures, or the initial reveal after commit) — without it, any gesture update mid-drift would snap the text back down to `posY` and fight the very next tick's own re-application of the offset. */
   private syncPreviewTransform(): void {
-    this.previewText.position.set(this.posX, this.posY);
+    this.previewText.position.set(this.posX, this.posY + this.smokeDriftY);
     this.previewText.rotation = this.rotation;
     this.previewText.style = this.textStyle();
   }
@@ -1078,6 +1160,62 @@ export class TextComposer {
     if (!this.previewText.visible) return;
     const pulse = 0.5 + 0.5 * Math.sin(ticker.lastTime * GLOW_PULSE_SPEED);
     this.previewGlow.outerStrength = GLOW_PULSE_MIN + pulse * (GLOW_PULSE_MAX - GLOW_PULSE_MIN);
+  }
+
+  /**
+   * Drives the smoke-cloud mode's drift/blur/mask on `previewText` — see
+   * `smokeCloudActive`'s own doc comment for why this only ever does
+   * anything once the composer has closed (previewText.visible), even
+   * though the icon that toggles it lives *inside* the still-open composer.
+   * Three states, exactly one active per call: actively drifting upward
+   * (mode on), easing back down to `posY` (just turned off, still
+   * mid-return), or fully settled (nothing to do — the cheap early exit).
+   * `previewText.mask`/`.filters` are only ever touched while one of the
+   * first two states applies, so a previewText that never once had smoke
+   * toggled on carries zero extra per-frame cost beyond this one check.
+   */
+  private syncSmokeCloudEffect(ticker: Ticker): void {
+    if (!this.previewText.visible) return;
+
+    if (this.smokeCloudActive) {
+      // Reassigned every active frame, same as syncComposeModeFrames()
+      // rebuilds its own FillGradient every frame — a 2-element array
+      // literal is cheap enough that tracking "is it already attached"
+      // separately would only add state for no real saving.
+      this.previewText.filters = [this.previewGlow, this.smokeBlur];
+      this.smokeReturnStart = -1;
+      this.smokeDriftY -= SMOKE_DRIFT_SPEED * ticker.deltaTime;
+      const pulse = 0.5 + 0.5 * Math.sin(ticker.lastTime * SMOKE_BLUR_PULSE_SPEED);
+      this.smokeBlur.strength = SMOKE_BLUR_MIN + pulse * (SMOKE_BLUR_MAX - SMOKE_BLUR_MIN);
+    } else if (this.smokeDriftY !== 0) {
+      if (this.smokeReturnStart < 0) {
+        this.smokeReturnStart = ticker.lastTime;
+        this.smokeReturnFromY = this.smokeDriftY;
+      }
+      const t = Math.min(1, (ticker.lastTime - this.smokeReturnStart) / SMOKE_RETURN_DURATION_MS);
+      this.smokeDriftY = this.smokeReturnFromY * (1 - easeOutBounce(t));
+      if (t >= 1) {
+        this.smokeDriftY = 0;
+        this.smokeReturnStart = -1;
+        this.previewText.filters = [this.previewGlow];
+        this.previewText.mask = null;
+        this.previewText.alpha = 1;
+        return;
+      }
+    } else {
+      return;
+    }
+
+    this.previewText.position.set(this.posX, this.posY + this.smokeDriftY);
+
+    // Confines the drift to the safe display area (see SMOKE_MASK_TOP_Y's
+    // own doc comment) and fades the text out smoothly before it would
+    // otherwise reach that boundary — never a hard, sudden cutoff.
+    const screen = this.deps.app.screen;
+    this.previewSmokeMask.clear().rect(0, SMOKE_MASK_TOP_Y, screen.width, screen.height - SMOKE_MASK_TOP_Y).fill(0xffffff);
+    this.previewText.mask = this.previewSmokeMask;
+    const distanceToTop = this.posY + this.smokeDriftY - SMOKE_MASK_TOP_Y;
+    this.previewText.alpha = clampNumber(distanceToTop / SMOKE_FADE_BAND, 0, 1);
   }
 
   /**

@@ -65,6 +65,7 @@ const PATHS = {
   sparkEraser:
     '<rect x="3.3" y="12.5" width="12" height="7" rx="1.5" transform="rotate(-22 9.3 16)"/><path d="M18.5 4.5l1 2.3 2.3 1-2.3 1-1 2.3-1-2.3-2.3-1 2.3-1 1-2.3Z"/><path d="M20 12.5l1.8 1.8M21.3 15.8l1.3 1.3"/>',
   spring: '<path d="M12 2.5v3M12 5.5 7 8l10 3-10 3 10 3-7 2.5M12 19.5V22"/>',
+  cloud: '<path d="M7.5 18a4 4 0 0 1-1-7.87 4.5 4.5 0 0 1 8.55-2.62A5 5 0 0 1 21.5 12a3.5 3.5 0 0 1-.5 6H7.5Z"/>',
 } as const;
 
 export type IconName = keyof typeof PATHS;
