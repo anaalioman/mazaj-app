@@ -1,4 +1,4 @@
-import { Application, CanvasTextMetrics, Container, FillGradient, Graphics, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent, type Ticker } from 'pixi.js';
+import { Application, CanvasTextMetrics, Container, FillGradient, Graphics, ParticleContainer, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent, type Ticker } from 'pixi.js';
 import { AdvancedBloomFilter, DropShadowFilter, GlowFilter } from 'pixi-filters';
 import { iconTexture } from './svgIconTexture';
 import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
@@ -7,6 +7,8 @@ import type { AudioManager } from '../audio/AudioManager';
 import { tickerSetInterval, tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
 import { createHiddenTextArea } from '../dom/shadowServices';
 import { Transformer, type TransformerTarget } from './Transformer';
+import { Particle } from '../fireworks/Particle';
+import { getParticleTexture } from '../fireworks/textures';
 
 export type { TextRevealEffect };
 
@@ -151,6 +153,29 @@ const INPUT_BOUNCE_DURATION_MS = 220;
 const INPUT_GLOW_BASE = 0.6;
 const INPUT_GLOW_BOOST = 2.6;
 
+/**
+ * "الخروج الدرامي" — a deleted character bursts into a handful of embers
+ * instead of just vanishing. Reuses `Particle` (src/fireworks/Particle.ts)
+ * as-is rather than a parallel particle system: it already renders through
+ * two `ParticleContainer`s (trail + core, additive-blended, the exact
+ * mechanism FireworksSystem.ts's own bursts use), already fades via alpha
+ * and falls via gravity every frame, and already pools cleanly (`kill()`
+ * hides instead of destroying — see that class's own doc comment) — the
+ * same object, the same texture, the same battle-tested per-frame cost as
+ * every rocket burst already on screen elsewhere in this app. `sparkPool`
+ * below is this class's *own* pool (a fresh Particle per slot the very
+ * first time it's needed, reused forever after), independent of
+ * FireworksSystem's — TextComposer has no reference to that instance and
+ * doesn't need one for a two-container, ~12-particle effect this small.
+ */
+const DELETE_SPARK_COUNT_MIN = 10;
+const DELETE_SPARK_COUNT_MAX = 15;
+const DELETE_SPARK_LIFE_MIN = 26;
+const DELETE_SPARK_LIFE_MAX = 46; // frames — well under 60 (~1s at 60fps), per the "less than a second" requirement
+/** Sized to actually read as a burst against the input pill's own busy background (small glyphs, gold glow) — not the microscopic 2-3px a literal "one burnt character" scale would give, which live-testing showed was nearly invisible. */
+const DELETE_SPARK_SIZE_MIN = 5;
+const DELETE_SPARK_SIZE_MAX = 8;
+
 /** Plain glass chrome, matching HeaderBar's own back/home buttons — not part of the gold identity, which belongs to content (the effect frames), not navigation. */
 const BACK_BG_COLOR = 0xffffff;
 const BACK_BG_ALPHA = 0.06;
@@ -170,6 +195,8 @@ const INPUT_FONT_SIZE = 15;
 /** Explicit, not left to Pixi's own fontSize-based default — multi-line spacing has to be predictable since refreshInputVisual() computes the vertical auto-scroll/caret position from it directly. */
 const INPUT_LINE_HEIGHT = Math.round(INPUT_FONT_SIZE * 1.3);
 const INPUT_TEXT_COLOR = 0xffe9b3;
+/** Same gold/fire identity as the text itself — "وكأن الحرف نفسه قد احترق". */
+const DELETE_SPARK_COLORS = [EFFECT_GOLD, 0xffb04c, INPUT_TEXT_COLOR];
 const PLACEHOLDER_TEXT = 'اكتب عبارتك هنا';
 const PLACEHOLDER_COLOR = 0xffffff;
 const PLACEHOLDER_ALPHA = 0.4;
@@ -200,6 +227,26 @@ function easeOutBounce(t: number): number {
   if (t < 2 / d1) return n1 * (t -= 1.5 / d1) * t + 0.75;
   if (t < 2.5 / d1) return n1 * (t -= 2.25 / d1) * t + 0.9375;
   return n1 * (t -= 2.625 / d1) * t + 0.984375;
+}
+
+/**
+ * The `[start, end)` range in `longer` that isn't in `shorter` — a plain
+ * common-prefix/common-suffix diff. Used both directions: called as
+ * `diffChangedRange(oldText, newText)` it finds what a keystroke just
+ * *inserted*; called as `diffChangedRange(newText, oldText)` (arguments
+ * swapped) it finds what a deletion just *removed*, since the same
+ * "shorter vs longer" logic applies symmetrically either way. Returns an
+ * empty range if `longer` isn't actually longer than `shorter`.
+ */
+function diffChangedRange(shorter: string, longer: string): { start: number; end: number } {
+  if (longer.length <= shorter.length) return { start: 0, end: 0 };
+  const maxPrefix = Math.min(shorter.length, longer.length);
+  let prefix = 0;
+  while (prefix < maxPrefix && shorter[prefix] === longer[prefix]) prefix++;
+  const maxSuffix = Math.min(shorter.length, longer.length) - prefix;
+  let suffix = 0;
+  while (suffix < maxSuffix && shorter[shorter.length - 1 - suffix] === longer[longer.length - 1 - suffix]) suffix++;
+  return { start: prefix, end: longer.length - suffix };
 }
 
 /**
@@ -287,6 +334,13 @@ export class TextComposer {
   private inputBounceStart = -1;
   /** The live input field's own halo, synced frame-for-frame to the pop (see syncInputBounce()) — a separate instance from previewGlow, since it lives on a different Text object. */
   private readonly inputGlow: GlowFilter;
+  /** Deleted-character embers — additive-blended, matching every rocket burst's own trail/core split elsewhere in this app (see DELETE_SPARK_* constants' own doc comment). Unclipped (added to worldContainer, not inside the input pill's scrollGroup/mask — see the constructor's own doc comment on why worldContainer specifically), so a burst is free to spill past the tiny pill. */
+  private readonly sparkTrailsContainer: ParticleContainer;
+  private readonly sparkCoresContainer: ParticleContainer;
+  /** Currently-alive spark particles, updated/culled every frame — see syncDeleteSparks(). */
+  private sparkParticles: Particle[] = [];
+  /** Dead sparks ready for immediate reuse — see spawnDeleteSparks(); never destroyed, only ever `kill()`ed and pushed back here. */
+  private readonly sparkDeadPool: Particle[] = [];
   private readonly previewText: Text;
   /** The committed text's pulsing halo — one instance, reused every frame (see GLOW_* constants' own doc comment); never recreated per-tick. */
   private readonly previewGlow: GlowFilter;
@@ -375,6 +429,47 @@ export class TextComposer {
     this.inputField = this.buildInputField();
     deps.app.ticker.add((ticker) => this.syncInputBounce(ticker));
     this.composerContainer.addChild(this.inputField.root);
+
+    const sparkTexture = getParticleTexture(deps.app);
+    this.sparkTrailsContainer = new ParticleContainer({
+      texture: sparkTexture,
+      blendMode: 'add',
+      dynamicProperties: { position: true, rotation: true, vertex: true, uvs: false, color: true },
+    });
+    this.sparkCoresContainer = new ParticleContainer({
+      texture: sparkTexture,
+      blendMode: 'add',
+      dynamicProperties: { position: true, rotation: false, vertex: true, uvs: false, color: true },
+    });
+    // Deliberately parented under `worldContainer`, not the sibling
+    // `uiContainer` every other piece of this class's own chrome lives in —
+    // confirmed live (particles spawn and age correctly in the model, zero
+    // pixels ever hit the screen) that a `ParticleContainer` doesn't work
+    // inside `uiContainer`: it's a render group (`{ isRenderGroup: true }`,
+    // see fireworksMood.ts's own doc comment) cached into its own render
+    // target, rebuilt only when Pixi's ordinary dirty-propagation fires
+    // (children added/removed, transforms changed). A live particle's own
+    // per-frame motion is deliberately *outside* that system — `Particle`
+    // mutates plain x/y/alpha properties on its pooled `PixiParticle`s every
+    // tick (see Particle.ts's own update()), relying on `ParticleContainer`'s
+    // separate "dynamicProperties" fast path (re-read fresh every render,
+    // no dirty flag) to reach the screen — which only actually runs when
+    // something *does* re-render that subtree every frame, true for
+    // `worldContainer` (never cached, redrawn continuously for the fireworks
+    // simulation itself) but not for a cached render group. `FireworksSystem`
+    // hit this same interaction once already and settled on a plain
+    // (non-render-group) container for exactly this reason (see its own
+    // constructor's doc comment) — same fix, applied here by picking the
+    // sibling layer that was already plain rather than by changing
+    // `uiContainer` itself, which is shared, app-wide chrome this class
+    // doesn't own. Sparks are purely transient composing-time feedback
+    // (dead within under a second — see DELETE_SPARK_LIFE_MAX), and the
+    // composer and the snapshot-capable immersive viewing mode are mutually
+    // exclusive (committing text closes the composer before that mode is
+    // ever reachable), so living in `worldContainer` never risks one
+    // leaking into a captured snapshot.
+    deps.worldContainer.addChild(this.sparkTrailsContainer, this.sparkCoresContainer);
+    deps.app.ticker.add((ticker) => this.syncDeleteSparks(ticker));
 
     this.backButton = this.buildBackButton();
     this.composerContainer.addChild(this.backButton.root);
@@ -701,6 +796,82 @@ export class TextComposer {
     this.inputGlow.outerStrength = INPUT_GLOW_BASE + eased * INPUT_GLOW_BOOST;
   }
 
+  /**
+   * Fired from buildGhostInput()'s `input` listener *before* `this.text` is
+   * reassigned to `newText` — so `this.text`/`this.inputField.text` here
+   * still reflect `oldText`'s own layout, which is exactly what's needed:
+   * the deleted character's on-screen position only exists in the *old*
+   * layout, not the new (shorter) one. `diffChangedRange(newText, oldText)`
+   * (arguments swapped from the "what got inserted" call — see that
+   * function's own doc comment) finds the `[start, end)` slice of
+   * `oldText` that vanished; `start` is used as the caret index to locate
+   * (a multi-character deletion, e.g. selecting a run and pressing
+   * Backspace, still gets one burst at the run's own start — the same
+   * spot the caret lands at afterward).
+   */
+  private triggerDeleteSpark(oldText: string, newText: string): void {
+    const { start } = diffChangedRange(newText, oldText);
+    const lines = oldText.split('\n');
+    const { lineIndex, offsetInLine } = this.locateCaretPosition(lines, start);
+    const lineText = lines[lineIndex];
+    const prefixWidth = offsetInLine ? CanvasTextMetrics.measureText(lineText.slice(0, offsetInLine), this.inputField.text.style).width : 0;
+
+    // Same math as refreshInputVisual()'s own caretLocalX/Y — reproduced
+    // here rather than shared since that method reads `this.text` (already
+    // reassigned to `newText` by the time it next runs) while this one
+    // deliberately measures `oldText`'s layout instead.
+    const availWidth = Math.max(0, this.inputFieldWidth - CURSOR_WIDTH - CURSOR_GAP * 2);
+    const bottomPad = (INPUT_HEIGHT - INPUT_FONT_SIZE) / 2;
+    const anchorY = INPUT_HEIGHT / 2 - bottomPad;
+    const localX = availWidth / 2 - prefixWidth - CURSOR_GAP;
+    const linesFromBottom = lines.length - 1 - lineIndex;
+    const localY = anchorY - linesFromBottom * INPUT_LINE_HEIGHT - INPUT_LINE_HEIGHT / 2;
+
+    const global = this.inputField.scrollGroup.toGlobal({ x: localX, y: localY });
+    this.spawnDeleteSparks(global.x, global.y);
+  }
+
+  /** One dead-pooled Particle (or a fresh one on a genuine pool miss) — see sparkDeadPool's own doc comment. Mirrors FireworksSystem.spawnParticle()'s own pop-or-construct pattern. */
+  private getPooledSparkParticle(): Particle {
+    return this.sparkDeadPool.pop() ?? new Particle(getParticleTexture(this.deps.app), this.sparkTrailsContainer, this.sparkCoresContainer);
+  }
+
+  /** Radial burst of 10-15 embers at a global (x, y) — see this class's own DELETE_SPARK_* doc comment for why Particle/ParticleContainer are reused wholesale rather than built fresh. */
+  private spawnDeleteSparks(x: number, y: number): void {
+    const count = DELETE_SPARK_COUNT_MIN + Math.floor(Math.random() * (DELETE_SPARK_COUNT_MAX - DELETE_SPARK_COUNT_MIN + 1));
+    for (let i = 0; i < count; i++) {
+      const particle = this.getPooledSparkParticle();
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 1.2 + Math.random() * 2.4;
+      particle.init({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 1, // slight upward kick so gravity's own pull down reads clearly
+        color: DELETE_SPARK_COLORS[Math.floor(Math.random() * DELETE_SPARK_COLORS.length)],
+        size: DELETE_SPARK_SIZE_MIN + Math.random() * (DELETE_SPARK_SIZE_MAX - DELETE_SPARK_SIZE_MIN),
+        life: DELETE_SPARK_LIFE_MIN + Math.random() * (DELETE_SPARK_LIFE_MAX - DELETE_SPARK_LIFE_MIN),
+        gravity: 0.12, // matches this codebase's own established burst-particle gravity range (see fireworks/patterns/*.ts)
+        drag: 0.97,
+        twinkle: true,
+      });
+      this.sparkParticles.push(particle);
+    }
+  }
+
+  /** Ages/culls every live delete-spark — same filter-and-recycle loop FireworksSystem.update() itself uses for its own particle pool. Gated on an empty array so an idle composer costs nothing per frame. */
+  private syncDeleteSparks(ticker: Ticker): void {
+    if (this.sparkParticles.length === 0) return;
+    this.sparkParticles = this.sparkParticles.filter((particle) => {
+      const alive = particle.update(ticker.deltaTime);
+      if (!alive) {
+        particle.kill();
+        this.sparkDeadPool.push(particle);
+      }
+      return alive;
+    });
+  }
+
   /** A plain snapshot of everything the Transformer needs to draw itself — `previewText.width/height` already reflect the current `scale` (see textStyle(), which drives fontSize from it), so the border always matches the text's real on-screen size with no separate scaling step of its own. */
   private transformerTarget(): TransformerTarget {
     return {
@@ -887,7 +1058,10 @@ export class TextComposer {
   private buildGhostInput(): HTMLTextAreaElement {
     const input = createHiddenTextArea();
     input.addEventListener('input', () => {
-      this.text = input.value;
+      const oldText = this.text;
+      const newText = input.value;
+      if (newText.length < oldText.length) this.triggerDeleteSpark(oldText, newText);
+      this.text = newText;
       this.refreshInputVisual();
       this.previewText.text = this.text || SAMPLE_PHRASE;
     });
