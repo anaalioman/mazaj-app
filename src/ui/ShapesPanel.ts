@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js';
+import { Application, Container, Graphics, Rectangle, Sprite, Text, TextStyle } from 'pixi.js';
 import type { BurstType } from '../fireworks/FireworksSystem';
 import { iconTexture } from './svgIconTexture';
 import type { IconName } from './icons';
@@ -86,6 +86,11 @@ export class ShapesPanel extends SideDockPanel {
     group.position.set(this.panelWidth / 2, y);
     group.eventMode = 'static';
     group.cursor = 'pointer';
+    // A real hitArea (same convention HeaderBar/TextComposer already use)
+    // instead of a separate near-invisible Graphics rectangle: Pixi hit-tests
+    // a plain rectangle-vs-point check directly rather than against drawn
+    // geometry, and it's one fewer child object per row.
+    group.hitArea = new Rectangle(-this.panelWidth / 2 + 4, -ROW_HEIGHT / 2 + 2, this.panelWidth - 8, ROW_HEIGHT - 4);
 
     const ring = new Graphics();
     ring.blendMode = 'add';
@@ -116,11 +121,6 @@ export class ShapesPanel extends SideDockPanel {
     label.anchor.set(0.5, 0);
     label.position.set(0, 10);
     group.addChild(label);
-
-    const hitArea = new Graphics()
-      .rect(-this.panelWidth / 2 + 4, -ROW_HEIGHT / 2 + 2, this.panelWidth - 8, ROW_HEIGHT - 4)
-      .fill({ color: 0xffffff, alpha: 0.001 });
-    group.addChild(hitArea);
 
     // `pointerdown` must be stopped independently of `pointertap` — see
     // SideDockPanel's own doc comment for why (raw `pointerdown` bubbles to

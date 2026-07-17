@@ -103,7 +103,12 @@ export class PlanningMode {
 
   private handlePointerDown = (event: FederatedPointerEvent): void => {
     if (!this.active) return;
-    const { x, y } = event.global;
+    // Converts through `layer`'s own transform rather than reading
+    // event.global directly — a no-op today (layer sits untransformed
+    // directly on app.stage, so this equals event.global exactly), but
+    // keeps pin placement correct if layer is ever nested/offset/scaled
+    // in the future without silently drifting.
+    const { x, y } = this.layer.toLocal(event.global);
 
     const hitIndex = this.pins.findIndex((pin) => Math.hypot(pin.x - x, pin.y - y) <= PIN_HIT_RADIUS);
     if (hitIndex >= 0) {
@@ -122,7 +127,7 @@ export class PlanningMode {
 
   private handlePointerMove = (event: FederatedPointerEvent): void => {
     if (!this.active || !this.pressStart) return;
-    const { x, y } = event.global;
+    const { x, y } = this.layer.toLocal(event.global);
     if (Math.hypot(x - this.pressStart.x, y - this.pressStart.y) > MOVE_CANCEL_PX) this.cancelPress();
   };
 

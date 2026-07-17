@@ -623,8 +623,10 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
     // deterministic engine bug, but unresolved either way. Waiting for one
     // real rendered frame here before calling base64() is a cheap,
     // harmless precaution regardless of the root cause; this whole
-    // sequence still needs verification on a real device build.
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    // sequence still needs verification on a real device build. Goes
+    // through app.ticker like every other frame-wait in this file, rather
+    // than a raw requestAnimationFrame call.
+    await new Promise<void>((resolve) => { tickerSetTimeout(app.ticker, resolve, 0); });
 
     try {
       // Targets worldContainer exclusively — see this file's own
