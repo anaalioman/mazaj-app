@@ -43,35 +43,40 @@ export function createLoopingVideoElement(objectUrl: string): HTMLVideoElement {
 }
 
 /**
- * A real `<input type="text">` — the only way to raise the OS's own
- * keyboard (autocorrect, predictive text, voice input) on a tap, which no
- * Canvas API can invoke. Never positioned over anything and never itself a
- * touch target (`pointer-events: none`): the caller's own Pixi hit-testing
- * decides when a tap counts and calls `.focus()` programmatically, so this
- * element needs no on-screen placement to work — `opacity: 0` alone is
- * enough to keep it invisible. Pixi renders the actual glyphs the player
- * sees; this element exists solely to receive OS text-input events.
+ * A real `<textarea>` — the only way to raise the OS's own keyboard
+ * (autocorrect, predictive text, voice input, a real Return key that
+ * inserts an actual newline) on a tap, which no Canvas API can invoke. A
+ * plain `<input type="text">` can't do this job: browsers silently drop
+ * the Enter keystroke on a single-line input instead of putting `\n` in
+ * `.value`, which is exactly the character a multi-line caller needs to
+ * receive. Never positioned over anything and never itself a touch target
+ * (`pointer-events: none`): the caller's own Pixi hit-testing decides when
+ * a tap counts and calls `.focus()` programmatically, so this element
+ * needs no on-screen placement to work — `opacity: 0` alone is enough to
+ * keep it invisible. Pixi renders the actual glyphs the player sees; this
+ * element exists solely to receive OS text-input events.
  */
-export function createHiddenTextInput(): HTMLInputElement {
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.autocomplete = 'off';
-  input.setAttribute('autocapitalize', 'off');
-  input.setAttribute('autocorrect', 'on');
-  input.style.position = 'fixed';
-  input.style.top = '0';
-  input.style.left = '0';
-  input.style.opacity = '0';
-  input.style.pointerEvents = 'none';
-  input.style.border = 'none';
-  input.style.outline = 'none';
-  input.style.padding = '0';
-  input.style.background = 'transparent';
-  input.style.caretColor = 'transparent';
-  input.style.color = 'transparent';
-  input.style.fontSize = '16px'; // Prevents iOS Safari's auto-zoom-on-focus.
-  document.body.appendChild(input);
-  return input;
+export function createHiddenTextArea(): HTMLTextAreaElement {
+  const textarea = document.createElement('textarea');
+  textarea.autocomplete = 'off';
+  textarea.setAttribute('autocapitalize', 'off');
+  textarea.setAttribute('autocorrect', 'on');
+  textarea.rows = 1;
+  textarea.style.position = 'fixed';
+  textarea.style.top = '0';
+  textarea.style.left = '0';
+  textarea.style.opacity = '0';
+  textarea.style.pointerEvents = 'none';
+  textarea.style.resize = 'none';
+  textarea.style.border = 'none';
+  textarea.style.outline = 'none';
+  textarea.style.padding = '0';
+  textarea.style.background = 'transparent';
+  textarea.style.caretColor = 'transparent';
+  textarea.style.color = 'transparent';
+  textarea.style.fontSize = '16px'; // Prevents iOS Safari's auto-zoom-on-focus.
+  document.body.appendChild(textarea);
+  return textarea;
 }
 
 /** Same as createLoopingVideoElement, sourced from a live MediaStream (the device camera) instead of a file. */

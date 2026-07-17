@@ -1,11 +1,11 @@
-import { Application, Container, FillGradient, Graphics, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent } from 'pixi.js';
+import { Application, CanvasTextMetrics, Container, FillGradient, Graphics, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent } from 'pixi.js';
 import { AdvancedBloomFilter, DropShadowFilter } from 'pixi-filters';
 import { iconTexture } from './svgIconTexture';
 import { TextReveal, type TextRevealEffect } from '../effects/TextReveal';
 import { TEXT_EFFECTS } from '../effects/textEffects/registry';
 import type { AudioManager } from '../audio/AudioManager';
 import { tickerSetInterval, tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
-import { createHiddenTextInput } from '../dom/shadowServices';
+import { createHiddenTextArea } from '../dom/shadowServices';
 import { Transformer, type TransformerTarget } from './Transformer';
 
 export type { TextRevealEffect };
@@ -124,9 +124,9 @@ const BACK_HIT_SIZE = 44;
  * (and therefore this display) its characters via the OS's own keyboard.
  */
 const INPUT_FONT_SIZE = 15;
+/** Explicit, not left to Pixi's own fontSize-based default — multi-line spacing has to be predictable since refreshInputVisual() computes the vertical auto-scroll/caret position from it directly. */
+const INPUT_LINE_HEIGHT = Math.round(INPUT_FONT_SIZE * 1.3);
 const INPUT_TEXT_COLOR = 0xffe9b3;
-/** Pointer movement (px) below which a press-and-release on the input pill still counts as a tap (opens the keyboard) rather than a pan. */
-const INPUT_DRAG_TAP_TOLERANCE = 6;
 const PLACEHOLDER_TEXT = 'اكتب عبارتك هنا';
 const PLACEHOLDER_COLOR = 0xffffff;
 const PLACEHOLDER_ALPHA = 0.4;
@@ -207,17 +207,22 @@ export class TextComposer {
   private readonly inputField: InputFieldObj;
   private readonly effectFrames: EffectFrameObj[];
   /** The one real DOM element in this class — see buildGhostInput()'s own doc comment. */
-  private readonly ghostInput: HTMLInputElement;
+  private readonly ghostInput: HTMLTextAreaElement;
   /** Set each time layoutComposer() runs — the input pill's own available width, used by refreshInputVisual()'s auto-scroll. */
   private inputFieldWidth = 0;
-  /** Current pan offset applied to inputField.scrollGroup — 0 is fully right-aligned (resting position); positive values shift the group right, revealing more of the line's left (most-recently-typed) end. Clamped to [0, inputMaxScrollX]. */
+  /** Current pan offset applied to inputField.scrollGroup.x — 0 is fully right-aligned (resting position, the last line's own trailing edge at the window's right edge); positive values shift the group right, revealing more of that line's left (most-recently-typed) end. Clamped to [0, inputMaxScrollX]. */
   private inputScrollX = 0;
-  /** How far inputScrollX can go — 0 once the line fits the pill outright; recomputed every refreshInputVisual() call. */
+  /** How far inputScrollX can go — 0 once the last line fits the pill outright; recomputed every refreshInputVisual() call from that line alone (not the whole multi-line block). */
   private inputMaxScrollX = 0;
+  /** Current pan offset applied to inputField.scrollGroup.y — 0 is fully bottom-aligned (the last line visible, every earlier line clipped above by `mask`, exactly the same free "auto-follow" effect right-anchoring already gives the X axis); positive values shift the group down, revealing earlier lines. Clamped to [0, inputMaxScrollY]. */
+  private inputScrollY = 0;
+  /** How far inputScrollY can go — 0 once every line already fits the pill's one-line-tall window; recomputed every refreshInputVisual() call from the full block's height. */
+  private inputMaxScrollY = 0;
   private inputDragPointerId: number | null = null;
   private inputDragStartX = 0;
+  private inputDragStartY = 0;
   private inputDragStartScrollX = 0;
-  private inputDragMoved = false;
+  private inputDragStartScrollY = 0;
   private cursorBlinkTimer: TickerTimerHandle | undefined;
   private readonly previewText: Text;
   private readonly baseFontSize: number;
@@ -591,10 +596,11 @@ export class TextComposer {
    * text (gold `#ffe9b3`, same as before), a dimmed placeholder shown only
    * while empty, and a blinking gold caret with the same
    * `AdvancedBloomFilter`/`DropShadowFilter` recipe as the effects bar's
-   * frames — "مؤشر ذهبي متسق مع الهوية الملكية". Tapping anywhere in the
-   * field's hitArea focuses `ghostInput` (see buildGhostInput()), which
-   * opens the device's own OS keyboard; a drag instead pans a long line to
-   * review it (see handleInputPointerMove()).
+   * frames — "مؤشر ذهبي متسق مع الهوية الملكية". Focus fires the instant a
+   * finger touches the pill (`pointerdown`, not the later `pointertap`) so
+   * the OS keyboard opens with no extra delay waiting for release; a drag
+   * instead (or in addition — focusing does not cancel it) pans the text to
+   * review earlier content (see handleInputPointerMove()).
    * `hitArea`/`bg` are sized in layoutComposer() once the pill's width is
    * known; everything here is built root-centered on local (0, 0), same
    * convention as every other control in this file.
@@ -620,19 +626,35 @@ export class TextComposer {
     // real size once the pill's width is known, in layoutComposer().
     const mask = new Graphics();
 
-    // Right-edge anchored (RTL: the first typed character's own edge sits
-    // fixed at the pill's right inner edge; the line grows leftward,
-    // unbounded, as more is typed) and clipped by `mask` — panned via
-    // refreshInputVisual()'s inputScrollX once the line outgrows the pill.
+    // Bottom-right anchored (see `text.anchor` below): both axes grow
+    // *away* from a fixed corner as more is typed — right-to-left for a
+    // line's own characters (RTL), upward for additional lines — clipped by
+    // `mask`, panned via refreshInputVisual()'s inputScrollX/Y once content
+    // outgrows the pill's one-line-tall window.
     const scrollGroup = new Container();
     scrollGroup.mask = mask;
     root.addChild(scrollGroup);
 
     const text = new Text({
       text: '',
-      style: new TextStyle({ fontFamily: 'Tajawal, system-ui, sans-serif', fontSize: INPUT_FONT_SIZE, fontWeight: '700', fill: INPUT_TEXT_COLOR }),
+      style: new TextStyle({
+        fontFamily: 'Tajawal, system-ui, sans-serif',
+        fontSize: INPUT_FONT_SIZE,
+        fontWeight: '700',
+        fill: INPUT_TEXT_COLOR,
+        lineHeight: INPUT_LINE_HEIGHT,
+      }),
     });
-    text.anchor.set(1, 0.5);
+    // (1, 1): anchored at the block's own bottom-right corner. For a single
+    // line this reproduces the old vertically-centered look (see
+    // refreshInputVisual()'s INPUT_TEXT_BOTTOM_PAD offset); for multiple
+    // lines the block simply grows *upward* past the window from that fixed
+    // corner, so the most-recently-typed line always sits at the bottom —
+    // the exact same "auto-follow via a fixed anchor + a stationary mask"
+    // trick the X axis already used before multi-line existed, now doing
+    // the same job on Y for free, with no separate scroll math needed for
+    // the default (non-dragged) case.
+    text.anchor.set(1, 1);
     scrollGroup.addChild(text);
 
     const cursor = new Graphics().rect(-CURSOR_WIDTH / 2, -CURSOR_HEIGHT / 2, CURSOR_WIDTH, CURSOR_HEIGHT).fill(EFFECT_GOLD);
@@ -642,35 +664,52 @@ export class TextComposer {
 
     root.on('pointerdown', (event: FederatedPointerEvent) => {
       event.stopPropagation();
+      // The browser's own default mousedown/pointerdown action runs *after*
+      // this listener and blurs whatever is currently focused whenever the
+      // down-target isn't itself a focusable element — true here, since the
+      // down-target is the shared `<canvas>`. Left alone, that default
+      // action fires immediately after `.focus()` below and silently steals
+      // focus straight back to `<body>` in the very same event. This is
+      // exactly what the browser's own default is for — never call it
+      // without a concrete reason — and this is one: suppress it so the
+      // focus below actually sticks.
+      event.preventDefault();
       this.inputDragPointerId = event.pointerId;
       this.inputDragStartX = event.global.x;
+      this.inputDragStartY = event.global.y;
       this.inputDragStartScrollX = this.inputScrollX;
-      this.inputDragMoved = false;
+      this.inputDragStartScrollY = this.inputScrollY;
+      // Fires immediately on touch-down, not on release — see this
+      // method's own doc comment. A drag that follows doesn't cancel it;
+      // reviewing text by panning while the OS keyboard stays open is the
+      // same experience any native multi-line field gives.
+      this.ghostInput.focus();
     });
     root.on('pointertap', (event: FederatedPointerEvent) => {
+      // Focus already happened on pointerdown above — this only still
+      // exists to stop the tap from bubbling to app.stage's tap-to-fire
+      // rocket listener underneath.
       event.stopPropagation();
-      // A real pan (see handleInputPointerMove) already did its job; a tap
-      // that barely moved still focuses the ghost input (raising the OS
-      // keyboard), same as before panning existed at all.
-      if (this.inputDragMoved) return;
-      this.ghostInput.focus();
     });
 
     return { root, bg, scrollGroup, mask, text, placeholder, cursor };
   }
 
   /**
-   * Touch-panning for the input line — "التحكم بالإصبع" alongside the
-   * auto-scroll refreshInputVisual() already does while typing. Registered
-   * once, globally, same pattern as wireControlBox()'s own stage-level
-   * pointermove/pointerup pair right below it; both gate themselves on
+   * Touch-panning for the input field — "التحكم بالإصبع" alongside the
+   * auto-scroll refreshInputVisual() already does on both axes while
+   * typing. Registered once, globally, same pattern as wireControlBox()'s
+   * own stage-level pointermove/pointerup pair; both gate themselves on
    * their own piece of state so they never interfere with each other.
    */
   private handleInputPointerMove = (event: FederatedPointerEvent): void => {
     if (this.inputDragPointerId === null || event.pointerId !== this.inputDragPointerId) return;
-    const delta = event.global.x - this.inputDragStartX;
-    if (Math.abs(delta) > INPUT_DRAG_TAP_TOLERANCE) this.inputDragMoved = true;
-    this.inputScrollX = this.clampInputScrollX(this.inputDragStartScrollX + delta);
+    const deltaX = event.global.x - this.inputDragStartX;
+    const deltaY = event.global.y - this.inputDragStartY;
+    this.inputScrollX = this.clampInputScrollX(this.inputDragStartScrollX + deltaX);
+    // Dragging the finger down (positive deltaY) reveals earlier lines —
+    // the same direction a chat log or any bottom-anchored feed scrolls.
+    this.inputScrollY = this.clampInputScrollY(this.inputDragStartScrollY + deltaY);
     this.applyInputScroll();
   };
 
@@ -680,27 +719,30 @@ export class TextComposer {
   };
 
   /**
-   * The one deliberate DOM element in this class — a real `<input>`,
-   * invisible (`opacity: 0`, `pointer-events: none`, see
-   * createHiddenTextInput()) and never positioned over anything: Pixi's own
-   * hit-testing on the input pill is what decides whether a tap counts, and
-   * `input.focus()` needs no visual placement to raise the OS keyboard, so
-   * there is nothing to keep in sync on layout/resize. Focusing it
-   * (buildInputField()'s tap handler) raises the device's own OS keyboard —
-   * autocorrect, predictive text, personal dictionary, voice input, all
-   * free. Its `input` event is the single bridge back into Pixi:
-   * `this.text = ghostInput.value` feeds the exact same
-   * refreshInputVisual() pipeline every other change to `this.text` already
-   * goes through, so the horizontal-scroll mask/pan built for it works
-   * identically regardless of where a character came from.
+   * The one deliberate DOM element in this class — a real `<textarea>`
+   * (not `<input>`: a single-line input silently drops the Enter key,
+   * which is exactly the key that has to survive here to produce a real
+   * `\n` in `this.text`), invisible (`opacity: 0`, `pointer-events: none`,
+   * see createHiddenTextArea()) and never positioned over anything: Pixi's
+   * own hit-testing on the input pill is what decides whether a tap
+   * counts, and `.focus()` needs no visual placement to raise the OS
+   * keyboard, so there is nothing to keep in sync on layout/resize.
+   * Focusing it (buildInputField()'s `pointerdown` handler) raises the
+   * device's own OS keyboard — autocorrect, predictive text, personal
+   * dictionary, voice input, a real Return key, all free. Its `input`
+   * event is the single bridge back into Pixi: `this.text =
+   * ghostInput.value` feeds the exact same refreshInputVisual() pipeline
+   * every other change to `this.text` already goes through, so the
+   * scroll/mask built for it works identically regardless of where a
+   * character (or a newline) came from.
    *
    * A prior revision of this class instead hand-drew every key of a full
    * Arabic keyboard in Pixi, trading every one of the OS features above
    * away for zero DOM. Both are legitimate, deliberate architectural
    * choices — this is the second one.
    */
-  private buildGhostInput(): HTMLInputElement {
-    const input = createHiddenTextInput();
+  private buildGhostInput(): HTMLTextAreaElement {
+    const input = createHiddenTextArea();
     input.addEventListener('input', () => {
       this.text = input.value;
       this.refreshInputVisual();
@@ -708,41 +750,34 @@ export class TextComposer {
     });
     input.addEventListener('focus', () => this.startCursorBlink());
     input.addEventListener('blur', () => this.stopCursorBlink());
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        input.blur();
-      }
-    });
     return input;
   }
-
 
   /**
    * Repaints the field's live text/placeholder/caret from `this.text` —
    * called on every keystroke from ghostInput's own `input` event (see
    * buildGhostInput()) and once up front so the field never starts blank
    * when it should show a pre-filled value (e.g. reopening the composer on
-   * previously-committed text). The caret sits at the *leading* edge of the
-   * rendered text block (its left side) because Arabic is RTL — typing
-   * appends new glyphs to the left, so that is where the next character
-   * will actually land, and `-text.width / 2` tracks that precisely as the
-   * string grows or shrinks.
-   */
-  /**
+   * previously-committed text).
+   *
    * Text stays at its one true `INPUT_FONT_SIZE` always — never shrunk,
-   * never wrapped. This pill sits in a fixed-height top bar, alongside the
-   * back button, with the effects bar/keyboard positioned at a fixed offset
-   * below it — wrapping to a second line would grow the pill and cascade
-   * into re-laying out everything beneath it, and shrinking a long phrase
-   * down to fit works against the very thing a preview is for (reading back
-   * what you typed). Instead, a line longer than the pill pans horizontally
-   * — `scrollGroup` (see buildInputField()) is right-edge anchored, so it
-   * grows leftward, unbounded, clipped by `mask`; this method keeps the
-   * caret in view by panning `scrollGroup` exactly enough whenever the
-   * caret would otherwise fall outside the visible window, the same way a
-   * native phone keyboard's own text field does. handleInputPointerMove()
-   * lets the player pan further by hand to review earlier characters.
+   * never wrapped to fit a fixed-size pill. What *does* grow now is line
+   * count: pressing the OS keyboard's Return key inserts a real `\n` (see
+   * buildGhostInput()), and `text.text` renders every line Pixi's own
+   * canvas text engine always could — multi-line was never a rendering
+   * gap, only a matter of this method's own math and the field's fixed
+   * one-line-tall window (`INPUT_HEIGHT`, unchanged: the top bar's height
+   * still doesn't cascade into the rest of the layout below it).
+   *
+   * Both axes use the exact same trick: `text.anchor` (see
+   * buildInputField()) is pinned to the block's own bottom-right corner, so
+   * the *last* line's *own* trailing edge always sits at that fixed corner
+   * with zero extra math — a line longer than the pill grows leftward
+   * (RTL) past the corner, a second-or-later line grows upward past it,
+   * both simply clipped by the stationary `mask`. `inputMaxScrollX`/`Y`
+   * only have to account for how far *that* corner already sits outside
+   * the visible window; `handleInputPointerMove()` lets the player pan
+   * beyond either default position by hand to review earlier text.
    */
   private refreshInputVisual(): void {
     // Keeps ghostInput in sync even when this.text changed from a source
@@ -757,28 +792,59 @@ export class TextComposer {
     this.inputField.placeholder.visible = !hasText;
 
     const availWidth = Math.max(0, this.inputFieldWidth - CURSOR_WIDTH - CURSOR_GAP * 2);
-    // Fixed reference point: the text's own right edge always sits at the
-    // window's right edge in scrollGroup's un-panned local space — the line
-    // grows only leftward from there as more is typed (RTL).
-    this.inputField.text.position.set(availWidth / 2, 0);
+    // Reproduces the single-line field's old vertically-centered look
+    // exactly (INPUT_HEIGHT=36, INPUT_FONT_SIZE=15 leaves 21px of slack —
+    // this anchors the bottom line's own baseline area at the same y a
+    // (1, 0.5)-anchored single line used to sit at) while still leaving
+    // room above for earlier lines to scroll up into, unseen, behind
+    // `mask`.
+    const bottomPad = (INPUT_HEIGHT - INPUT_FONT_SIZE) / 2;
+    const anchorY = INPUT_HEIGHT / 2 - bottomPad;
+    this.inputField.text.position.set(availWidth / 2, anchorY);
 
-    const caretLocalX = availWidth / 2 - this.inputField.text.width - CURSOR_GAP;
+    const lines = this.text.split('\n');
+    const lastLine = lines[lines.length - 1] ?? '';
+    const lastLineWidth = lastLine.length
+      ? CanvasTextMetrics.measureText(lastLine, this.inputField.text.style).width
+      : 0;
+
+    const caretLocalX = availWidth / 2 - lastLineWidth - CURSOR_GAP;
     this.inputMaxScrollX = hasText ? Math.max(0, -availWidth / 2 - caretLocalX) : 0;
-    // Auto-follow the caret while actively typing — a manual pan (see
-    // handleInputPointerMove) can scroll away from this afterward, and the
-    // very next keystroke snaps back to it, same as a native text field.
+    // How far scrollGroup has to shift down to bring the *top* of the
+    // (possibly multi-line) block flush with the window's own top edge —
+    // not simply `text.height - INPUT_HEIGHT`, which ignores that the
+    // block's bottom already sits `bottomPad` above the window's bottom
+    // edge at rest, not flush against it.
+    this.inputMaxScrollY = hasText ? Math.max(0, this.inputField.text.height - INPUT_HEIGHT + bottomPad) : 0;
+    // Auto-follow the caret's line while actively typing. X and Y need
+    // opposite defaults here, not a copy-paste of the same value: on X the
+    // fixed right-edge anchor is where the *oldest* part of the current
+    // line sits (RTL: typing grows the line *away* from it, leftward), so
+    // showing the caret needs an actual scroll (inputMaxScrollX). On Y the
+    // bottom-right anchor *is* where the newest content sits (the last,
+    // most-recently-added line is always the bottom-most one), so the
+    // caret's own line is already exactly where it needs to be at rest —
+    // inputScrollY stays 0 here; only a manual pan (see
+    // handleInputPointerMove) ever moves it away from that, to reveal
+    // earlier lines, and the very next keystroke snaps back to 0.
     this.inputScrollX = this.inputMaxScrollX;
+    this.inputScrollY = 0;
     this.applyInputScroll();
 
-    this.inputField.cursor.position.set(caretLocalX, 0);
+    this.inputField.cursor.position.set(caretLocalX, anchorY - INPUT_LINE_HEIGHT / 2);
   }
 
   private clampInputScrollX(x: number): number {
     return Math.max(0, Math.min(this.inputMaxScrollX, x));
   }
 
+  private clampInputScrollY(y: number): number {
+    return Math.max(0, Math.min(this.inputMaxScrollY, y));
+  }
+
   private applyInputScroll(): void {
     this.inputField.scrollGroup.x = this.inputScrollX;
+    this.inputField.scrollGroup.y = this.inputScrollY;
   }
 
   private startCursorBlink(): void {
