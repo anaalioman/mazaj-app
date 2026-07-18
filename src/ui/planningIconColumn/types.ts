@@ -23,7 +23,6 @@ export const ROW_HEIGHT = 38;
 export const ROW_GAP = 20;
 export const ROW_SPACING = ROW_HEIGHT + ROW_GAP;
 export const ICON_SIZE = 22;
-export const ICON_SOURCE_SIZE = 44;
 /**
  * Minimum touch target on both axes (Android's own accessibility guideline
  * is 48dp; 44 matches what the rest of this codebase already standardized
@@ -52,13 +51,13 @@ export const RECORD_PULSE_MS = 1000;
  * metallic family already established for TextComposer's compose-mode row
  * (dark-navy-to-black idle, warming to gold when active), so this column
  * reads as the same visual language rather than a separately-invented look.
+ * Both looks are pre-baked pixel sprites (`planningPlateIdle`/
+ * `planningPlateActive`, see scripts/generateIconAtlas.mjs) — the app only
+ * ever toggles their alpha (see ColumnContainer's setActive()), never
+ * redraws geometry, so the BG_* color/radius constants that used to drive a
+ * live Graphics().fill(FillGradient) redraw now live only in the generator
+ * script, not here.
  */
-/** Diameter (40) stays just inside HIT_MIN_SIZE (44) so the visible plate never pokes out past its own row's tappable hitArea. */
-export const BG_RADIUS = 20;
-export const BG_METALLIC_TOP = 0x201c14;
-export const BG_METALLIC_BOTTOM = 0x0a0906;
-export const BG_METALLIC_TOP_ACTIVE = 0x5a4620;
-export const BG_METALLIC_BOTTOM_ACTIVE = 0x1c1508;
 /**
  * "تتنفس بنعومة" — a slow, continuous idle glow every row always carries
  * (never fully off), oscillating between these two bounds via a plain sine
@@ -69,7 +68,10 @@ export const BG_METALLIC_BOTTOM_ACTIVE = 0x1c1508;
  * `GLOW_TAP_BOOST` is a further transient spike on top of that, decaying
  * back down over BOUNCE_DURATION_MS via the same eased-decay technique
  * TextComposer's mode row already uses (easeOutBounce/BounceState, see
- * AnimationEngine.ts).
+ * AnimationEngine.ts). This is the one part of the row's look that's
+ * genuinely live every frame — a GlowFilter's `outerStrength` is a real,
+ * continuously-varying value, not something a static baked pixel could
+ * reproduce.
  */
 export const GLOW_BREATHE_MIN = 0.4;
 export const GLOW_BREATHE_MAX = 0.9;
@@ -78,8 +80,6 @@ export const GLOW_ACTIVE_BOOST = 1.1;
 export const GLOW_TAP_BOOST = 2.4;
 export const BOUNCE_MIN_SCALE = 0.86;
 export const BOUNCE_DURATION_MS = 260;
-/** Freshly-resolved icon textures fade in over this long instead of popping in abruptly — see RowComponent's own iconTexture().then(). */
-export const ICON_FADE_IN_MS = 150;
 
 export interface IconRowSpec {
   id: string;
@@ -94,8 +94,12 @@ export interface IconRowSpec {
 export interface Row {
   id: string;
   root: Container;
-  /** The golden-metallic plate behind icon+label — see BG_* constants' own doc comment. Redrawn every frame (breathing glow + active/tap state), see AnimationEngine.ts's syncRowGlow(). */
-  bg: Graphics;
+  /** Wraps `plateIdle`/`plateActive` and carries the row's one live GlowFilter (Pixi filters aren't safely shareable across multiple display objects, so both plate sprites sit under one filtered parent instead of each needing their own). */
+  plateGroup: Container;
+  /** The golden-metallic plate's idle look — a pre-baked pixel sprite (`planningPlateIdle`), alpha 1 unless the row is active. */
+  plateIdle: Sprite;
+  /** The plate's active look (`planningPlateActive`) — alpha 1 only while the row is active; ColumnContainer's setActive() toggles both, once, on the actual state change (not every frame). */
+  plateActive: Sprite;
   /** Dedicated per-row GlowFilter driving the continuous idle breathing pulse plus the active/tap boosts — not shared, so each row's own animation phase/state stays independent. */
   glow: GlowFilter;
   icon: Sprite | Text;

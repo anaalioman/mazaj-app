@@ -1,6 +1,6 @@
 import { Application, Circle, Container, Graphics, Rectangle, Sprite, Text, TextStyle, type Texture, type Ticker } from 'pixi.js';
 import { BackdropBlurFilter } from 'pixi-filters';
-import { iconTexture } from '../ui/svgIconTexture';
+import { iconTexture, preloadIconAtlas } from '../ui/svgIconTexture';
 import { FireworksSystem } from '../fireworks/FireworksSystem';
 import { TextReveal } from '../effects/TextReveal';
 import { MortarField } from '../effects/MortarField';
@@ -888,6 +888,14 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
     // capturing yet.
     shutterButton.visible = showStarted || autoShowActive;
   }
+
+  // PlanningIconColumn (built inside PlanningScreen below) needs every icon
+  // texture synchronously — no per-row `.then()`/fade-in — so the atlas must
+  // already be resolved before it's constructed. Every other icon consumer
+  // in this file (HeaderBar, TextComposer, ShapesPanel) still uses the async
+  // iconTexture() and doesn't need this, but awaiting it once up front here
+  // is harmless for them too since Assets.load() is idempotent.
+  await preloadIconAtlas();
 
   const header = new HeaderBar({
     app,

@@ -1,11 +1,7 @@
-import { FillGradient, Graphics, type Container, type Ticker } from 'pixi.js';
+import { Sprite, type Container, type Ticker } from 'pixi.js';
+import { atlasTexture } from '../svgIconTexture';
 import { tickerSetTimeout } from '../../utils/tickerTimers';
 import {
-  BG_METALLIC_BOTTOM,
-  BG_METALLIC_BOTTOM_ACTIVE,
-  BG_METALLIC_TOP,
-  BG_METALLIC_TOP_ACTIVE,
-  BG_RADIUS,
   BOUNCE_DURATION_MS,
   BOUNCE_MIN_SCALE,
   FLASH_COLOR,
@@ -15,7 +11,6 @@ import {
   GLOW_BREATHE_MIN,
   GLOW_BREATHE_SPEED,
   GLOW_TAP_BOOST,
-  ICON_GOLD,
   type Row,
 } from './types';
 
@@ -52,11 +47,14 @@ export function triggerBounce(state: BounceState, ticker: Ticker, row: Row): voi
 }
 
 /**
- * Per-frame visual sync for every row's golden-metallic plate — cheap even
- * mid-bounce: the eased spike only computes for `state.row`, every other
- * row just re-reads its own static idle/active breathing level. Runs for
- * all rows every frame (not just the bouncing one) since the idle breathe
- * itself is continuous, not triggered.
+ * Per-frame sync for every row's breathing glow — the only thing here that
+ * genuinely needs to run every tick, since `GlowFilter.outerStrength` is a
+ * live, continuously-varying shader parameter, not something a static baked
+ * pixel could reproduce. The plate's own idle/active look is two pre-baked
+ * sprites now (see RowComponent's plateIdle/plateActive) whose alpha
+ * ColumnContainer's setActive() toggles once on actual state change — this
+ * function never touches them, so there's no per-frame Graphics redraw left
+ * in this loop at all.
  */
 export function syncRowGlow(rows: Map<string, Row>, state: BounceState, ticker: Ticker): void {
   let spike = 0;
@@ -77,34 +75,18 @@ export function syncRowGlow(rows: Map<string, Row>, state: BounceState, ticker: 
   for (const row of rows.values()) {
     const isBouncing = row === state.row;
     row.glow.outerStrength = breathe + (row.active ? GLOW_ACTIVE_BOOST : 0) + (isBouncing ? spike : 0);
-
-    const fill = new FillGradient({
-      type: 'linear',
-      start: { x: 0, y: 0 },
-      end: { x: 0, y: 1 },
-      textureSpace: 'local',
-      colorStops: row.active
-        ? [{ offset: 0, color: BG_METALLIC_TOP_ACTIVE }, { offset: 1, color: BG_METALLIC_BOTTOM_ACTIVE }]
-        : [{ offset: 0, color: BG_METALLIC_TOP }, { offset: 1, color: BG_METALLIC_BOTTOM }],
-    });
-    row.bg
-      .clear()
-      .circle(0, 0, BG_RADIUS)
-      .fill(fill)
-      .stroke({ width: 1.2, color: ICON_GOLD, alpha: row.active ? 0.55 : 0.22 });
   }
 }
 
-/** Tactile tap feedback (the old `.mzj-flash` cyan glow) — a temporary additive halo, not a CSS box-shadow. */
+/** Tactile tap feedback (the old `.mzj-flash` cyan glow) — a pre-baked radial-falloff sprite (`planningFlashHalo`, see scripts/generateIconAtlas.mjs) tinted at runtime, instead of tessellating fresh Graphics geometry on every tap. */
 export function flashTap(target: Container, ticker: Ticker): void {
-  const halo = new Graphics();
-  const steps = 5;
-  const radius = 26;
-  for (let i = steps; i > 0; i--) {
-    const t = i / steps;
-    halo.circle(0, 0, radius * t).fill({ color: FLASH_COLOR, alpha: (1 - t) * 0.55 });
-  }
+  const halo = new Sprite(atlasTexture('planningFlashHalo'));
+  halo.anchor.set(0.5);
+  halo.tint = FLASH_COLOR;
   halo.blendMode = 'add';
+  const diameter = 52; // matches the old halo's outer radius (26) * 2
+  halo.width = diameter;
+  halo.height = diameter;
   target.addChildAt(halo, 0);
   tickerSetTimeout(
     ticker,

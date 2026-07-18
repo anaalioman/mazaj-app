@@ -1,14 +1,12 @@
-import { Container, Graphics, Rectangle, Sprite, Text, TextStyle, type Application, type FederatedPointerEvent, type Ticker } from 'pixi.js';
-import { AdvancedBloomFilter, DropShadowFilter, GlowFilter } from 'pixi-filters';
-import { iconTexture } from '../svgIconTexture';
+import { Container, Graphics, Rectangle, Sprite, Text, TextStyle, type Application, type FederatedPointerEvent } from 'pixi.js';
+import { GlowFilter } from 'pixi-filters';
+import { atlasTexture } from '../svgIconTexture';
 import {
   GLOW_BREATHE_MIN,
   HIT_MIN_SIZE,
   HIT_PADDING,
-  ICON_FADE_IN_MS,
   ICON_GOLD,
   ICON_SIZE,
-  ICON_SOURCE_SIZE,
   IDLE_ALPHA,
   LABEL_TINT,
   RECORD_COLOR,
@@ -51,14 +49,6 @@ export function computeHitArea(icon: Sprite | Text, label: Text): Rectangle {
   return new Rectangle(left, top, right - left, bottom - top);
 }
 
-/** A fresh filter pair per icon (Pixi filters aren't safely shareable across multiple display objects) — real bloom (bright-pass + blur + additive composite, not a flat glow) plus a real drop shadow for depth, same techniques already used for the fireworks glow (FireworksSystem.ts) and the text control box's handles (TextComposer.ts). */
-function iconFilters(): (AdvancedBloomFilter | DropShadowFilter)[] {
-  return [
-    new AdvancedBloomFilter({ threshold: 0.3, blur: 3, quality: 4, bloomScale: 1.2, brightness: 1.05 }),
-    new DropShadowFilter({ color: 0x000000, alpha: 0.5, blur: 2, offset: { x: 0, y: 2 } }),
-  ];
-}
-
 /** The row label's TextStyle for a given active state — exported so ColumnContainer's setActive() can re-apply it without duplicating the font spec. */
 export function labelStyle(active: boolean): TextStyle {
   return new TextStyle({
@@ -76,6 +66,14 @@ export function labelStyle(active: boolean): TextStyle {
  * `onTap` is called with the row and its spec on `pointertap` — the actual
  * click-sound/flash/bounce bookkeeping lives in ColumnContainer since it
  * owns the shared bounce state across all rows.
+ *
+ * Every icon here (and the plate) is a pre-baked pixel sprite pulled
+ * synchronously from the atlas via `atlasTexture()` — no `.then()`, no
+ * fade-in, no live AdvancedBloomFilter/DropShadowFilter per row: the atlas
+ * already has bloom+shadow baked into these specific icon frames (see
+ * scripts/generateIconAtlas.mjs's `planningIcon_*` cells). Requires
+ * `preloadIconAtlas()` (see fireworksMood.ts) to have resolved before this
+ * runs — PlanningIconColumn is only ever constructed after that await.
  */
 export function buildRow(
   app: Application,
@@ -90,15 +88,25 @@ export function buildRow(
 
   const iconCenterY = -(ROW_HEIGHT - ICON_SIZE) / 2 - 2;
 
-  // The golden-metallic plate — added first so it renders behind
-  // everything else in this row (recordGlow/icon/label), redrawn every
-  // frame by AnimationEngine's syncRowGlow() for the continuous breathing
-  // pulse.
+  // The golden-metallic plate — two pre-baked pixel looks (idle/active)
+  // stacked in one group, alpha-toggled by ColumnContainer's setActive()
+  // rather than redrawn. One live GlowFilter on the whole group drives the
+  // continuous breathing pulse (see AnimationEngine's syncRowGlow()) — the
+  // one part of this that's genuinely animated every frame.
   const glow = new GlowFilter({ distance: 8, outerStrength: GLOW_BREATHE_MIN, innerStrength: 0, color: ICON_GOLD, quality: 0.3 });
-  const bg = new Graphics();
-  bg.filters = [glow];
-  bg.position.set(0, iconCenterY);
-  root.addChild(bg);
+  const plateGroup = new Container();
+  plateGroup.filters = [glow];
+  plateGroup.position.set(0, iconCenterY);
+  root.addChild(plateGroup);
+
+  const plateIdle = new Sprite(atlasTexture('planningPlateIdle'));
+  plateIdle.anchor.set(0.5);
+  plateGroup.addChild(plateIdle);
+
+  const plateActive = new Sprite(atlasTexture('planningPlateActive'));
+  plateActive.anchor.set(0.5);
+  plateActive.alpha = 0;
+  plateGroup.addChild(plateActive);
 
   let iconDisplay: Sprite | Text;
   let recordGlow: Graphics | undefined;
@@ -106,7 +114,9 @@ export function buildRow(
     // Behind the icon: a soft red halo (same layered-alpha additive
     // technique as the text control box's handle glow), hidden until
     // recording starts, pulsing via the ticker instead of a CSS
-    // keyframe animation.
+    // keyframe animation. Built once (never re-cleared/redrawn) — only its
+    // `alpha` changes per frame, so this was never subject to the "no
+    // Graphics redraw in the ticker" rule the plate/glow rework addresses.
     recordGlow = new Graphics();
     const steps = 5;
     const radius = ICON_SIZE * 1.3;
@@ -132,31 +142,16 @@ export function buildRow(
     });
     glyph.anchor.set(0.5);
     glyph.alpha = IDLE_ALPHA;
-    glyph.filters = iconFilters();
     root.addChild(glyph);
     iconDisplay = glyph;
   } else {
-    const sprite = new Sprite();
+    const sprite = new Sprite(atlasTexture(`planningIcon_${spec.icon}`));
     sprite.anchor.set(0.5);
     sprite.tint = ICON_GOLD;
     sprite.width = ICON_SIZE;
     sprite.height = ICON_SIZE;
-    sprite.filters = iconFilters();
-    // Starts invisible and fades in once its own texture actually resolves
-    // — see ICON_FADE_IN_MS's own doc comment — rather than popping in
-    // abruptly the instant iconTexture()'s promise settles.
-    sprite.alpha = 0;
+    sprite.alpha = IDLE_ALPHA;
     root.addChild(sprite);
-    let fadeElapsed = 0;
-    const fadeIn = (ticker: Ticker): void => {
-      fadeElapsed += ticker.deltaMS;
-      sprite.alpha = Math.min(1, fadeElapsed / ICON_FADE_IN_MS) * IDLE_ALPHA;
-      if (fadeElapsed >= ICON_FADE_IN_MS) app.ticker.remove(fadeIn);
-    };
-    void iconTexture(spec.icon, ICON_SOURCE_SIZE, '#ffffff').then((texture) => {
-      sprite.texture = texture;
-      app.ticker.add(fadeIn);
-    });
     iconDisplay = sprite;
   }
   iconDisplay.position.set(0, iconCenterY);
@@ -176,7 +171,7 @@ export function buildRow(
   // itself) never inflates its own tappable area relative to every other row.
   root.hitArea = computeHitArea(iconDisplay, label);
 
-  const row: Row = { id: spec.id, root, bg, glow, icon: iconDisplay, label, active: false, recordGlow };
+  const row: Row = { id: spec.id, root, plateGroup, plateIdle, plateActive, glow, icon: iconDisplay, label, active: false, recordGlow };
 
   root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
   root.on('pointertap', (event: FederatedPointerEvent) => {

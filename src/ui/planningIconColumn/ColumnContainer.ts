@@ -1,7 +1,7 @@
 import { Application, Container, Sprite, type FederatedPointerEvent } from 'pixi.js';
 import type { AudioManager } from '../../audio/AudioManager';
-import { iconTexture } from '../svgIconTexture';
-import { ICON_SOURCE_SIZE, IDLE_ALPHA, type IconRowSpec, type Row } from './types';
+import { atlasTexture } from '../svgIconTexture';
+import { IDLE_ALPHA, type IconRowSpec, type Row } from './types';
 import { buildRow, labelStyle } from './RowComponent';
 import { createBounceState, flashTap, syncRowGlow, triggerBounce } from './AnimationEngine';
 import { getColumnLeftEdgeX, layoutColumn } from './LayoutManager';
@@ -59,23 +59,29 @@ export class PlanningIconColumn {
     spec.onTap();
   }
 
-  /** Toggles a row's "active" look (`color:#fff; font-weight:700` in the old CSS) — used for mode selection, subpanel-open state, and any other on/off trigger. */
+  /**
+   * Toggles a row's "active" look (`color:#fff; font-weight:700` in the old
+   * CSS) — used for mode selection, subpanel-open state, and any other
+   * on/off trigger. The plate's idle/active pixel look (see RowComponent)
+   * only needs to change on this actual state transition, not every ticker
+   * frame, so the alpha swap lives here rather than in the animation loop.
+   */
   setActive(id: string, active: boolean): void {
     const row = this.rows.get(id);
     if (!row) return;
     row.active = active;
     row.label.style = labelStyle(active);
     row.icon.alpha = active ? 1 : IDLE_ALPHA;
+    row.plateIdle.alpha = active ? 0 : 1;
+    row.plateActive.alpha = active ? 1 : 0;
   }
 
-  /** Swaps its own icon/label text and grows a pulsing red glow (the old `@keyframes mzj-rec-pulse`) instead of the generic active/idle look. Always built with a Sprite icon (never the 'T' glyph), so the cast is safe. */
+  /** Swaps its own icon/label text and grows a pulsing red glow (the old `@keyframes mzj-rec-pulse`) instead of the generic active/idle look. Always built with a Sprite icon (never the 'T' glyph), so the cast is safe. Synchronous — both textures are pre-baked `planningIcon_*` atlas frames already resolved by the time this column exists. */
   setRecording(isRecording: boolean): void {
     const row = this.rows.get('mzj-planning-record');
     if (!row || !row.recordGlow) return;
     const sprite = row.icon as Sprite;
-    void iconTexture(isRecording ? 'squareStop' : 'recordDot', ICON_SOURCE_SIZE, '#ffffff').then((texture) => {
-      sprite.texture = texture;
-    });
+    sprite.texture = atlasTexture(isRecording ? 'planningIcon_squareStop' : 'planningIcon_recordDot');
     row.label.text = isRecording ? 'إيقاف التسجيل' : 'تسجيل فيديو';
     row.recordGlow.visible = isRecording;
   }
