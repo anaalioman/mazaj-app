@@ -1,5 +1,5 @@
-import { Application, Container, Graphics, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent } from 'pixi.js';
-import { AdvancedBloomFilter, DropShadowFilter } from 'pixi-filters';
+import { Application, Container, FillGradient, Graphics, Rectangle, Sprite, Text, TextStyle, type FederatedPointerEvent, type Ticker } from 'pixi.js';
+import { AdvancedBloomFilter, DropShadowFilter, GlowFilter } from 'pixi-filters';
 import { iconTexture } from './svgIconTexture';
 import type { IconName } from './icons';
 import type { AudioManager } from '../audio/AudioManager';
@@ -48,6 +48,49 @@ const FLASH_COLOR = 0x06b6d4;
 const FLASH_MS = 180;
 const RECORD_COLOR = 0xff5a63;
 const RECORD_PULSE_MS = 1000;
+
+/**
+ * The soft rounded "premium button" plate behind every icon — same golden-
+ * metallic family already established for TextComposer's compose-mode row
+ * (dark-navy-to-black idle, warming to gold when active), so this column
+ * reads as the same visual language rather than a separately-invented look.
+ */
+/** Diameter (40) stays just inside HIT_MIN_SIZE (44) so the visible plate never pokes out past its own row's tappable hitArea. */
+const BG_RADIUS = 20;
+const BG_METALLIC_TOP = 0x201c14;
+const BG_METALLIC_BOTTOM = 0x0a0906;
+const BG_METALLIC_TOP_ACTIVE = 0x5a4620;
+const BG_METALLIC_BOTTOM_ACTIVE = 0x1c1508;
+/**
+ * "تتنفس بنعومة" — a slow, continuous idle glow every row always carries
+ * (never fully off), oscillating between these two bounds via a plain sine
+ * wave driven by `ticker.lastTime` — the same technique syncPreviewGlow()
+ * (TextComposer.ts) already uses for the committed text's own breathing
+ * halo. `GLOW_ACTIVE_BOOST` is the sustained brighter floor for whichever
+ * row is currently "active" (see setActive()); `GLOW_TAP_BOOST` is a
+ * further transient spike on top of that, decaying back down over
+ * BOUNCE_DURATION_MS via the same eased-decay technique TextComposer's mode
+ * row already uses (easeOutBounce/bounceStart, mirrored below).
+ */
+const GLOW_BREATHE_MIN = 0.4;
+const GLOW_BREATHE_MAX = 0.9;
+const GLOW_BREATHE_SPEED = 0.0018;
+const GLOW_ACTIVE_BOOST = 1.1;
+const GLOW_TAP_BOOST = 2.4;
+const BOUNCE_MIN_SCALE = 0.86;
+const BOUNCE_DURATION_MS = 260;
+/** Freshly-resolved icon textures fade in over this long instead of popping in abruptly — see buildRow()'s own iconTexture().then(). */
+const ICON_FADE_IN_MS = 150;
+
+/** Standard "ease out bounce" (easings.net) — a ball dropped and settling, three diminishing bounces, never overshooting past 1. `t` and the return value are both 0..1. Mirrors TextComposer.ts's own copy (kept file-local rather than shared, same reasoning as this file's other small pure-math helpers). */
+function easeOutBounce(t: number): number {
+  const n1 = 7.5625;
+  const d1 = 2.75;
+  if (t < 1 / d1) return n1 * t * t;
+  if (t < 2 / d1) return n1 * (t -= 1.5 / d1) * t + 0.75;
+  if (t < 2.5 / d1) return n1 * (t -= 2.25 / d1) * t + 0.9375;
+  return n1 * (t -= 2.625 / d1) * t + 0.984375;
+}
 
 /** A fresh filter pair per icon (Pixi filters aren't safely shareable across multiple display objects) — real bloom (bright-pass + blur + additive composite, not a flat glow) plus a real drop shadow for depth, same techniques already used for the fireworks glow (FireworksSystem.ts) and the text control box's handles (TextComposer.ts). */
 function iconFilters(): (AdvancedBloomFilter | DropShadowFilter)[] {
@@ -103,6 +146,10 @@ export interface IconRowSpec {
 interface Row {
   id: string;
   root: Container;
+  /** The golden-metallic plate behind icon+label — see BG_* constants' own doc comment. Redrawn every frame (breathing glow + active/tap state), same pattern as TextComposer's compose-mode row. */
+  bg: Graphics;
+  /** Dedicated per-row GlowFilter driving the continuous idle breathing pulse plus the active/tap boosts — not shared, so each row's own animation phase/state stays independent. */
+  glow: GlowFilter;
   icon: Sprite | Text;
   label: Text;
   active: boolean;
@@ -122,6 +169,9 @@ export class PlanningIconColumn {
   readonly container: Container;
   private readonly app: Application;
   private readonly audio: AudioManager;
+  /** `ticker.lastTime` the current tap's bounce+glow-boost spike started at, or -1 once it's settled — same eased-decay pattern TextComposer's mode row uses. Keyed by row so only the tapped one spikes. */
+  private bounceStart = -1;
+  private bounceRow: Row | null = null;
   private readonly rows = new Map<string, Row>();
   /**
    * Each row only claims its own 64x44 hitArea — the 14px vertical gap
@@ -153,6 +203,51 @@ export class PlanningIconColumn {
 
     app.renderer.on('resize', () => this.layout());
     this.layout();
+    app.ticker.add((ticker) => this.syncRowGlow(ticker));
+  }
+
+  /**
+   * Per-frame visual sync for every row's golden-metallic plate — cheap even
+   * mid-bounce: the eased spike only computes for `bounceRow`, every other
+   * row just re-reads its own static idle/active breathing level. Runs for
+   * all rows every frame (not just the bouncing one) since the idle breathe
+   * itself is continuous, not triggered.
+   */
+  private syncRowGlow(ticker: Ticker): void {
+    let spike = 0;
+    if (this.bounceStart >= 0) {
+      const t = Math.min(1, (ticker.lastTime - this.bounceStart) / BOUNCE_DURATION_MS);
+      const eased = easeOutBounce(t);
+      this.bounceRow?.root.scale.set(BOUNCE_MIN_SCALE + eased * (1 - BOUNCE_MIN_SCALE));
+      spike = (1 - eased) * GLOW_TAP_BOOST;
+      if (t >= 1) {
+        this.bounceRow?.root.scale.set(1);
+        this.bounceStart = -1;
+        this.bounceRow = null;
+        spike = 0;
+      }
+    }
+
+    const breathe = GLOW_BREATHE_MIN + ((Math.sin(ticker.lastTime * GLOW_BREATHE_SPEED) + 1) / 2) * (GLOW_BREATHE_MAX - GLOW_BREATHE_MIN);
+    for (const row of this.rows.values()) {
+      const isBouncing = row === this.bounceRow;
+      row.glow.outerStrength = breathe + (row.active ? GLOW_ACTIVE_BOOST : 0) + (isBouncing ? spike : 0);
+
+      const fill = new FillGradient({
+        type: 'linear',
+        start: { x: 0, y: 0 },
+        end: { x: 0, y: 1 },
+        textureSpace: 'local',
+        colorStops: row.active
+          ? [{ offset: 0, color: BG_METALLIC_TOP_ACTIVE }, { offset: 1, color: BG_METALLIC_BOTTOM_ACTIVE }]
+          : [{ offset: 0, color: BG_METALLIC_TOP }, { offset: 1, color: BG_METALLIC_BOTTOM }],
+      });
+      row.bg
+        .clear()
+        .circle(0, 0, BG_RADIUS)
+        .fill(fill)
+        .stroke({ width: 1.2, color: ICON_GOLD, alpha: row.active ? 0.55 : 0.22 });
+    }
   }
 
   /** Toggles a row's "active" look (`color:#fff; font-weight:700` in the old CSS) — used for mode selection, subpanel-open state, and any other on/off trigger. */
@@ -189,6 +284,17 @@ export class PlanningIconColumn {
     root.eventMode = 'static';
     root.cursor = 'pointer';
     this.container.addChild(root);
+
+    const iconCenterY = -(ROW_HEIGHT - ICON_SIZE) / 2 - 2;
+
+    // The golden-metallic plate — added first so it renders behind
+    // everything else in this row (recordGlow/icon/label), redrawn every
+    // frame by syncRowGlow() for the continuous breathing pulse.
+    const glow = new GlowFilter({ distance: 8, outerStrength: GLOW_BREATHE_MIN, innerStrength: 0, color: ICON_GOLD, quality: 0.3 });
+    const bg = new Graphics();
+    bg.filters = [glow];
+    bg.position.set(0, iconCenterY);
+    root.addChild(bg);
 
     let iconDisplay: Sprite | Text;
     let recordGlow: Graphics | undefined;
@@ -229,17 +335,27 @@ export class PlanningIconColumn {
       const sprite = new Sprite();
       sprite.anchor.set(0.5);
       sprite.tint = ICON_GOLD;
-      sprite.alpha = IDLE_ALPHA;
       sprite.width = ICON_SIZE;
       sprite.height = ICON_SIZE;
       sprite.filters = iconFilters();
+      // Starts invisible and fades in once its own texture actually resolves
+      // — see ICON_FADE_IN_MS's own doc comment — rather than popping in
+      // abruptly the instant iconTexture()'s promise settles.
+      sprite.alpha = 0;
       root.addChild(sprite);
+      let fadeElapsed = 0;
+      const fadeIn = (ticker: Ticker): void => {
+        fadeElapsed += ticker.deltaMS;
+        sprite.alpha = Math.min(1, fadeElapsed / ICON_FADE_IN_MS) * IDLE_ALPHA;
+        if (fadeElapsed >= ICON_FADE_IN_MS) this.app.ticker.remove(fadeIn);
+      };
       void iconTexture(spec.icon, ICON_SOURCE_SIZE, '#ffffff').then((texture) => {
         sprite.texture = texture;
+        this.app.ticker.add(fadeIn);
       });
       iconDisplay = sprite;
     }
-    iconDisplay.position.set(0, -(ROW_HEIGHT - ICON_SIZE) / 2 - 2);
+    iconDisplay.position.set(0, iconCenterY);
 
     const label = new Text({ text: spec.label, style: this.labelStyle(false) });
     label.anchor.set(0.5, 0);
@@ -256,16 +372,20 @@ export class PlanningIconColumn {
     // itself) never inflates its own tappable area relative to every other row.
     root.hitArea = computeHitArea(iconDisplay, label);
 
+    const row: Row = { id: spec.id, root, bg, glow, icon: iconDisplay, label, active: false, recordGlow };
+
     root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
     root.on('pointertap', (event: FederatedPointerEvent) => {
       event.stopPropagation();
       if (!spec.skipDefaultClickSound) this.audio.playUiClick();
       this.flash(root);
+      this.bounceStart = this.app.ticker.lastTime;
+      this.bounceRow = row;
       spec.onTap();
     });
 
     // Position is assigned by layout(), which runs once synchronously right after every row exists.
-    return { id: spec.id, root, icon: iconDisplay, label, active: false, recordGlow };
+    return row;
   }
 
   private labelStyle(active: boolean): TextStyle {
