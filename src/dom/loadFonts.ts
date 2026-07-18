@@ -11,14 +11,30 @@ import { Assets } from 'pixi.js';
 // loading.
 const TAJAWAL_WEIGHTS = ['400', '500', '700', '800'] as const;
 
-export async function loadTajawalFonts(): Promise<void> {
-  await Promise.all(
-    TAJAWAL_WEIGHTS.map((weight) =>
-      Assets.load({
-        alias: [`tajawal-${weight}`],
-        src: `/fonts/tajawal-${weight}.woff2`,
-        data: { family: 'Tajawal', weights: [weight], style: 'normal', display: 'swap' },
-      }),
-    ),
-  );
+let readyPromise: Promise<void> | null = null;
+
+/**
+ * Memoized: main.ts's own fire-and-forget call and any later `await
+ * loadTajawalFonts()` (see CharacterReveal.ts) share the exact same
+ * in-flight/resolved promise rather than issuing a second redundant load.
+ * Callers that only need the DOM-visible swap-in behavior (every panel's
+ * own Text) can keep firing-and-forgetting this exactly as before; callers
+ * that are about to permanently bake text into a texture (a one-time,
+ * irreversible rasterization — see CharacterReveal.play()) must await it
+ * first, since a bake that runs mid-load would freeze in the fallback font
+ * forever, with no swap-in possible after the fact.
+ */
+export function loadTajawalFonts(): Promise<void> {
+  if (!readyPromise) {
+    readyPromise = Promise.all(
+      TAJAWAL_WEIGHTS.map((weight) =>
+        Assets.load({
+          alias: [`tajawal-${weight}`],
+          src: `/fonts/tajawal-${weight}.woff2`,
+          data: { family: 'Tajawal', weights: [weight], style: 'normal', display: 'swap' },
+        }),
+      ),
+    ).then(() => undefined);
+  }
+  return readyPromise;
 }

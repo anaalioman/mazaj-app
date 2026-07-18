@@ -1,5 +1,6 @@
 import { CanvasTextMetrics, Container, Rectangle, Sprite, Text, TextStyle, Texture, type Application, type Ticker } from 'pixi.js';
 import type { FireworksSystem } from '../fireworks/FireworksSystem';
+import { loadTajawalFonts } from '../dom/loadFonts';
 import { tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
 
 export interface CharacterRevealOptions {
@@ -78,10 +79,19 @@ export class CharacterReveal {
   }
 
   /** Slices the word, then launches one rocket per character (staggered by LAUNCH_STAGGER_MS), each revealing/settling its own slice into place when its own rocket's burst finishes. Resolves once the last character has settled. Empty string resolves immediately. */
-  play(options: CharacterRevealOptions): Promise<void> {
+  async play(options: CharacterRevealOptions): Promise<void> {
     const { text, x, y, style } = options;
     const rotation = options.rotation ?? 0;
-    if (text.length === 0) return Promise.resolve();
+    if (text.length === 0) return;
+
+    // Guarantees the one-time texture bake just below uses the real
+    // Tajawal font, never a fallback caught mid-load — see loadFonts.ts's
+    // own doc comment on why this specific call site is the one that must
+    // await rather than fire-and-forget. Resolves instantly in the
+    // overwhelmingly common case (the font finished loading in the
+    // background during all the interaction it takes to reach this point:
+    // opening the mood, composing text, tapping "ابدأ العرض").
+    await loadTajawalFonts();
 
     const measureText = new Text({ text, style });
     measureText.anchor.set(0.5);
