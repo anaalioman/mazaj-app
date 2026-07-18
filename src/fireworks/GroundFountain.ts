@@ -26,6 +26,12 @@ interface FountainSpark {
  * shared soft-circle particle texture for visual consistency, but is a
  * self-contained emitter (not built on the generic age-based Particle class)
  * since its fade/kill rule is driven by height climbed, not elapsed life.
+ *
+ * Sparks are pooled exactly like FireworksSystem's own `deadPool` (see its
+ * doc comment): a dead spark's sprite is hidden (`alpha = 0`) and pushed to
+ * `deadPool` instead of `removeChild()`+`destroy()`'d, so a 5s activation at
+ * up to ~90 concurrent sparks does zero Sprite allocation/GC and zero
+ * scenegraph child-list churn after the pool has warmed up.
  */
 export class GroundFountain {
   private readonly app: Application;
@@ -37,6 +43,7 @@ export class GroundFountain {
   private readonly glow: Graphics;
 
   private sparks: FountainSpark[] = [];
+  private readonly deadPool: Sprite[] = [];
   private age = 0;
   private emitAccumulator = 0;
   private emitting = true;
@@ -96,17 +103,24 @@ export class GroundFountain {
     const angle = -Math.PI / 2 + (Math.random() - 0.5) * 2 * CONE_HALF_ANGLE;
     const speed = 5 + Math.random() * 2;
 
-    const sprite = new Sprite(this.texture);
-    sprite.anchor.set(0.5);
-    sprite.blendMode = 'add';
+    const sprite = this.deadPool.pop() ?? this.createSprite();
     sprite.tint = Math.random() < 0.5 ? 0xffcf6b : 0xffe9b3;
     const size = 5 + Math.random() * 3;
     sprite.width = size;
     sprite.height = size;
+    sprite.alpha = 1;
     sprite.position.set(this.baseX + (Math.random() - 0.5) * 4, this.baseY);
-    this.container.addChild(sprite);
 
     this.sparks.push({ sprite, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed });
+  }
+
+  /** Only ever called on a genuine pool miss (see `deadPool`'s own doc comment) — added to `container` exactly once, for its entire reused lifetime. */
+  private createSprite(): Sprite {
+    const sprite = new Sprite(this.texture);
+    sprite.anchor.set(0.5);
+    sprite.blendMode = 'add';
+    this.container.addChild(sprite);
+    return sprite;
   }
 
   /** Returns false once the spark should be removed (hit the height cap or fully faded). */
@@ -123,8 +137,8 @@ export class GroundFountain {
     spark.sprite.alpha = Math.max(0, alpha);
 
     if (rise >= this.maxRise || alpha <= 0) {
-      this.container.removeChild(spark.sprite);
-      spark.sprite.destroy();
+      spark.sprite.alpha = 0;
+      this.deadPool.push(spark.sprite);
       return false;
     }
     return true;
