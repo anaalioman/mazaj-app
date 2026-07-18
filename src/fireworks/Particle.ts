@@ -1,6 +1,11 @@
 import { Particle as PixiParticle, ParticleContainer, Texture } from 'pixi.js';
 import { applyDrag, applyDragAndGravity, integratePosition } from './ParticlePhysics';
-import { fastSin } from './SineTable';
+import { fastSin, TWO_PI } from './SineTable';
+
+// Twinkle's wave speed — same 2.4 rad/frame the original Math.sin(this.age
+// * 2.4 + this.x) advanced at; only the wrapping mechanism changed (see
+// `twinkleTimer`'s own doc comment).
+const TWINKLE_SPEED = 2.4;
 
 // Thermal Color Decay: the trail cools from a brief white flash into its
 // assigned shell color almost immediately, then ages into dim ember ash near
@@ -113,6 +118,17 @@ export class Particle {
   private baseSize = 1;
   private baseColor = 0xffffff;
   private twinkle = false;
+  /**
+   * Twinkle's phase angle, always kept in `[0, TWO_PI)` — advanced by a
+   * plain `+=` and wrapped with a single `if` each frame (see update()),
+   * never a `%` in the per-frame path. Seeded once per spawn from the
+   * particle's own launch position (`this.x % TWO_PI`, a one-time modulo in
+   * init() — not the ticker) so different sparks in the same burst still
+   * start their flicker at different phases, same as the original
+   * `Math.sin(this.age * 2.4 + this.x)` did every frame with the live x —
+   * just evaluated once at birth instead of continuously.
+   */
+  private twinkleTimer = 0;
 
   private sparkleInterval?: number;
   private onSparkle?: (x: number, y: number) => void;
@@ -170,6 +186,8 @@ export class Particle {
     this.baseSize = size;
     this.baseColor = color;
     this.twinkle = twinkle;
+    // One-time modulo at spawn (see `twinkleTimer`'s own doc comment) — never repeated per frame.
+    this.twinkleTimer = ((x % TWO_PI) + TWO_PI) % TWO_PI;
     this.sparkleInterval = sparkleInterval;
     this.onSparkle = onSparkle;
     this.sparkleAccumulator = 0;
@@ -222,7 +240,9 @@ export class Particle {
     const fade = 1 - lifeRatio;
     let alpha = fade * fade;
     if (this.twinkle) {
-      alpha *= 0.55 + 0.45 * fastSin(this.age * 2.4 + this.x);
+      this.twinkleTimer += delta * TWINKLE_SPEED;
+      if (this.twinkleTimer >= TWO_PI) this.twinkleTimer -= TWO_PI;
+      alpha *= 0.55 + 0.45 * fastSin(this.twinkleTimer);
     }
     if (this.strobe) {
       this.strobeTimer -= delta;
