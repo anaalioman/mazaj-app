@@ -25,6 +25,15 @@
 //     in the original live version), baked once as a smooth radial falloff
 //     tinted at runtime via `sprite.tint`, same convention as every other
 //     icon in this atlas.
+//   - `textComposerFuseBar`: a plain solid-white bar, tinted at runtime via
+//     `sprite.tint` — replaces TextComposer's ModeRowEngine
+//     .clear().moveTo().lineTo().stroke() fuse-rope redraw (live every
+//     frame while 'fuse' mode is active) with a single Sprite whose own
+//     `width`/`height` the app just stretches. Flat rectangle, not a
+//     rounded-cap capsule: at the rope's actual 3px thickness the
+//     difference from a round cap is imperceptible, and a plain rectangle
+//     scales to any rope length with zero distortion (a baked rounded cap
+//     would stretch into an oval under the same non-uniform width scaling).
 //
 // Uses the Chromium already bundled for this project's own Playwright
 // testing (no new rasterization dependency) purely as an offline renderer:
@@ -98,6 +107,16 @@ function flashHaloSvg() {
   </svg>`;
 }
 
+function fuseBarSvg() {
+  // A solid rectangle filling most of the cell (small margin so edge
+  // antialiasing never bleeds against a neighboring cell) — stretched
+  // arbitrarily at runtime via sprite.width, tinted via sprite.tint.
+  const margin = 8;
+  return `<svg width="${CELL_SIZE}" height="${CELL_SIZE}">
+    <rect x="${margin}" y="${margin}" width="${CELL_SIZE - margin * 2}" height="${CELL_SIZE - margin * 2}" fill="#ffffff"/>
+  </svg>`;
+}
+
 // Every baked cell as { name, html } — plain icons first (unchanged
 // rendering, so every existing consumer's fill-fraction/appearance is
 // untouched), then the PlanningIconColumn-only additions.
@@ -113,6 +132,7 @@ const cells = [
   { name: 'planningPlateIdle', html: plateSvg(PLATE_IDLE) },
   { name: 'planningPlateActive', html: plateSvg(PLATE_ACTIVE) },
   { name: 'planningFlashHalo', html: flashHaloSvg() },
+  { name: 'textComposerFuseBar', html: fuseBarSvg() },
 ];
 
 const rows = Math.ceil(cells.length / COLUMNS);
@@ -158,4 +178,4 @@ const manifest = {
 };
 writeFileSync(path.join(outDir, 'icons-atlas.json'), JSON.stringify(manifest, null, 2));
 
-console.log(`Wrote ${pngPath} (${atlasWidth}x${atlasHeight}, ${cells.length} cells in a ${COLUMNS}x${rows} grid: ${ALL_ICON_NAMES.length} plain icons + ${PLANNING_GLOW_ICONS.length} glow-baked + 2 plates + 1 flash halo).`);
+console.log(`Wrote ${pngPath} (${atlasWidth}x${atlasHeight}, ${cells.length} cells in a ${COLUMNS}x${rows} grid: ${ALL_ICON_NAMES.length} plain icons + ${PLANNING_GLOW_ICONS.length} glow-baked + 2 plates + 1 flash halo + 1 fuse bar).`);

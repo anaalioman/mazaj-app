@@ -1,6 +1,6 @@
 import { CanvasTextMetrics, Container, FillGradient, Graphics, ParticleContainer, Rectangle, Sprite, Text, TextStyle, type Application, type FederatedPointerEvent, type Ticker } from 'pixi.js';
 import { GlowFilter } from 'pixi-filters';
-import { iconTexture } from '../svgIconTexture';
+import { atlasTexture, iconTexture } from '../svgIconTexture';
 import type { IconName } from '../icons';
 import type { AudioManager } from '../../audio/AudioManager';
 import { Particle } from '../../fireworks/Particle';
@@ -105,7 +105,8 @@ export class ModeRowEngine {
   private modeBounceStart = -1;
   private modeBounceFrame: ComposeModeFrameObj | null = null;
 
-  private readonly fuseRope: Graphics;
+  /** Pre-baked flat white bar (`textComposerFuseBar`, see scripts/generateIconAtlas.mjs), tinted FUSE_ROPE_COLOR — stretched via `width` only every frame in syncFuseEffect(); no Graphics redraw. */
+  private readonly fuseRope: Sprite;
   private readonly fuseEmber: Graphics;
   private readonly fuseEmberGlow: GlowFilter;
   private fuseEmberSpawnAccumulator = 0;
@@ -138,7 +139,10 @@ export class ModeRowEngine {
     for (const frame of this.frames) composerContainer.addChild(frame.root);
     this.wireComposeModeButtons();
 
-    this.fuseRope = new Graphics();
+    this.fuseRope = new Sprite(atlasTexture('textComposerFuseBar'));
+    this.fuseRope.anchor.set(0.5);
+    this.fuseRope.tint = FUSE_ROPE_COLOR;
+    this.fuseRope.height = FUSE_ROPE_WIDTH;
     this.fuseRope.visible = false;
     composerContainer.addChild(this.fuseRope);
     this.fuseEmberGlow = new GlowFilter({ distance: GLOW_DISTANCE, outerStrength: FUSE_EMBER_GLOW, innerStrength: 0.4, color: FUSE_EMBER_COLOR, quality: GLOW_QUALITY });
@@ -414,11 +418,10 @@ export class ModeRowEngine {
     // Y never needs to track it.
     const ropeY = TOPBAR_HEIGHT + FUSE_ROPE_GAP_BELOW_TEXT;
 
-    this.fuseRope
-      .clear()
-      .moveTo(ropeCenterX - ropeHalfWidth, ropeY)
-      .lineTo(ropeCenterX + ropeHalfWidth, ropeY)
-      .stroke({ width: FUSE_ROPE_WIDTH, color: FUSE_ROPE_COLOR, cap: 'round' });
+    // Pure Sprite stretch — no Graphics geometry rebuild. `height` stays
+    // fixed (set once at construction); only `width`/`position` change here.
+    this.fuseRope.position.set(ropeCenterX, ropeY);
+    this.fuseRope.width = Math.max(1, ropeWidth);
 
     const emberT = 0.5 + 0.5 * Math.sin(ticker.lastTime * FUSE_EMBER_SPEED);
     const emberX = ropeCenterX - ropeHalfWidth + emberT * (ropeHalfWidth * 2);

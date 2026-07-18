@@ -971,6 +971,24 @@
         "w": 128,
         "h": 128
       }
+    },
+    "textComposerFuseBar": {
+      "frame": {
+        "x": 640,
+        "y": 896,
+        "w": 128,
+        "h": 128
+      },
+      "sourceSize": {
+        "w": 128,
+        "h": 128
+      },
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 128,
+        "h": 128
+      }
     }
   },
   "meta": {

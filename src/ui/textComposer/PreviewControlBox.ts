@@ -108,7 +108,7 @@ export class PreviewControlBox {
 
   private textStyle(): TextStyle {
     return new TextStyle({
-      fontFamily: 'system-ui, "Segoe UI", Tahoma, sans-serif',
+      fontFamily: 'Tajawal, system-ui, "Segoe UI", Tahoma, sans-serif',
       fontSize: Math.round(this.baseFontSize * this.scale),
       fontWeight: '800',
       fill: 0xffe9b3,
