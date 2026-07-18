@@ -180,6 +180,16 @@ export class PlanningIconColumn {
     this.container = new Container();
     app.stage.addChild(this.container);
 
+    // The column's own hitArea (sized in layout()) absorbs taps landing in
+    // the gaps between rows — no Graphics node, no draw calls, so unlike the
+    // old catchAll this costs nothing at render time. Pixi hit-tests a
+    // container's children before falling back to the container itself, so
+    // a real row's own hitArea still wins first; only genuinely empty space
+    // resolves to this container and stops here instead of reaching
+    // app.stage's tap-to-fire listener.
+    this.container.eventMode = 'static';
+    this.container.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
+
     for (const spec of specs) {
       this.rows.set(spec.id, this.buildRow(spec));
     }
@@ -442,5 +452,26 @@ export class PlanningIconColumn {
       const row = this.rows.get(id)!;
       row.root.position.set(centerX, firstRowCenterY + index * rowSpacing);
     });
+
+    // The column's own hitArea only needs to be at least as wide/tall as the
+    // widest row's own real hitArea (see computeHitArea()) so no row's
+    // content ever pokes out past it — computed from the rows' actual
+    // hitAreas, not a repeated flat guess. Purely a hit-testing rectangle
+    // (see the constructor's own doc comment); never drawn or rendered.
+    let maxHalfWidth = HIT_MIN_SIZE / 2;
+    let maxHalfHeight = HIT_MIN_SIZE / 2;
+    for (const row of this.rows.values()) {
+      const area = row.root.hitArea as Rectangle;
+      maxHalfWidth = Math.max(maxHalfWidth, -area.left, area.right);
+      maxHalfHeight = Math.max(maxHalfHeight, -area.top, area.bottom);
+    }
+
+    const lastRowCenterY = firstRowCenterY + (ids.length - 1) * rowSpacing;
+    this.container.hitArea = new Rectangle(
+      centerX - maxHalfWidth,
+      firstRowCenterY - maxHalfHeight,
+      maxHalfWidth * 2,
+      lastRowCenterY - firstRowCenterY + maxHalfHeight * 2,
+    );
   }
 }
