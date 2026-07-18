@@ -173,29 +173,12 @@ export class PlanningIconColumn {
   private bounceStart = -1;
   private bounceRow: Row | null = null;
   private readonly rows = new Map<string, Row>();
-  /**
-   * Each row only claims its own 64x44 hitArea — the 14px vertical gap
-   * between adjacent rows' hit boxes (ROW_SPACING=58 vs HIT_HEIGHT=44)
-   * belonged to nobody, so a tap landing exactly between two rows fell
-   * straight through this column to `app.stage`'s tap-to-fire rocket
-   * listener. Confirmed via an actual reproduced rocket burst (three, from
-   * three gap taps) before this fix — same bug class as TextComposer's
-   * effects-bar gaps, just found later via a full-column audit. Added as
-   * the column's first child so real rows (added after) still win their
-   * own bounds; this only ever catches genuinely empty space.
-   */
-  private readonly catchAll: Graphics;
 
   constructor(app: Application, audio: AudioManager, specs: IconRowSpec[]) {
     this.app = app;
     this.audio = audio;
     this.container = new Container();
     app.stage.addChild(this.container);
-
-    this.catchAll = new Graphics();
-    this.catchAll.eventMode = 'static';
-    this.catchAll.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
-    this.container.addChild(this.catchAll);
 
     for (const spec of specs) {
       this.rows.set(spec.id, this.buildRow(spec));
@@ -459,23 +442,5 @@ export class PlanningIconColumn {
       const row = this.rows.get(id)!;
       row.root.position.set(centerX, firstRowCenterY + index * rowSpacing);
     });
-
-    // catchAll only needs to be at least as wide/tall as the widest row's
-    // own real hitArea (see computeHitArea()) so no row's own content ever
-    // pokes out past the gap-filling rectangle below — computed from the
-    // rows' actual hitAreas, not a repeated flat guess.
-    let maxHalfWidth = HIT_MIN_SIZE / 2;
-    let maxHalfHeight = HIT_MIN_SIZE / 2;
-    for (const row of this.rows.values()) {
-      const area = row.root.hitArea as Rectangle;
-      maxHalfWidth = Math.max(maxHalfWidth, -area.left, area.right);
-      maxHalfHeight = Math.max(maxHalfHeight, -area.top, area.bottom);
-    }
-
-    const lastRowCenterY = firstRowCenterY + (ids.length - 1) * rowSpacing;
-    this.catchAll
-      .clear()
-      .rect(centerX - maxHalfWidth, firstRowCenterY - maxHalfHeight, maxHalfWidth * 2, lastRowCenterY - firstRowCenterY + maxHalfHeight * 2)
-      .fill({ color: 0x000000, alpha: 0.001 });
   }
 }

@@ -69,6 +69,8 @@ const PATHS = {
 } as const;
 
 export type IconName = keyof typeof PATHS;
+/** Every valid icon name, in declaration order — the atlas generator (scripts/generateIconAtlas.mjs) iterates this so the pre-baked spritesheet always covers exactly the current icon set, never a stale hand-copied list. */
+export const ALL_ICON_NAMES = Object.keys(PATHS) as IconName[];
 
 /**
  * A self-contained SVG document (own xmlns + a literal color instead of
