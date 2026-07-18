@@ -1,6 +1,7 @@
-import { Application, ColorMatrixFilter, Container, ParticleContainer, Rectangle, type Texture } from 'pixi.js';
+import { Application, ColorMatrixFilter, Container, ParticleContainer, Rectangle } from 'pixi.js';
 import { AdvancedBloomFilter } from 'pixi-filters';
 import { Particle, type ParticleOptions } from './Particle';
+import { ParticlePool } from './ParticlePool';
 import { Rocket } from './Rocket';
 import { GroundFountain } from './GroundFountain';
 import { getParticleTexture } from './textures';
@@ -85,14 +86,16 @@ export class FireworksSystem {
   private pendingSpawns: Particle[] = [];
   // Which particles belong to which tracked burst — see BurstCompletion.
   private readonly particleWatchers = new Map<Particle, BurstCompletion>();
-  // Object pool (see Particle.ts's own doc comment): dead particles land
+  // Object pool (see ParticlePool.ts's own doc comment): dead particles land
   // here via `kill()` instead of being discarded, and `spawnParticle()`
   // reuses one via `init()` before ever allocating a new instance. A show's
   // first few bursts still allocate (the pool starts empty and grows to the
   // high-water mark of concurrent live particles), but every burst after
   // that reuses entirely — zero `new Particle(...)`, zero
-  // `ParticleContainer.addParticle()`/`removeParticle()` calls.
-  private readonly deadPool: Particle[] = [];
+  // `ParticleContainer.addParticle()`/`removeParticle()` calls. Constructed
+  // in the constructor body (not inline here) since its factory closes over
+  // `trailsContainer`/`coresContainer`, which don't exist yet at this point.
+  private readonly particlePool: ParticlePool<Particle>;
 
   private settings: BurstSettings = { ...DEFAULT_BURST_SETTINGS };
   private enabledTypes: BurstType[] = [...ALL_BURST_TYPES];
@@ -157,6 +160,8 @@ export class FireworksSystem {
       dynamicProperties: { position: true, rotation: false, vertex: true, uvs: false, color: true },
     });
     this.layer.addChild(this.coresContainer);
+
+    this.particlePool = new ParticlePool<Particle>(() => new Particle(texture, this.trailsContainer, this.coresContainer));
 
     // True bloom (bright-pass extract + blur + additive-style composite),
     // not a flat blur — only genuinely bright pixels (white-hot ignition,
@@ -249,7 +254,7 @@ export class FireworksSystem {
       const alive = particle.update(delta);
       if (!alive) {
         particle.kill();
-        this.deadPool.push(particle);
+        this.particlePool.push(particle);
         this.resolveWatcher(particle);
       }
       return alive;
@@ -315,13 +320,12 @@ export class FireworksSystem {
    * into its final position" moment.
    */
   spawnSettleSparkle(x: number, y: number, color?: number): void {
-    const texture = getParticleTexture(this.app);
     const burstColor = color ?? this.activeColor ?? randomColor(randomPalette());
     const count = 16;
     for (let i = 0; i < count; i++) {
       const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
       const speed = (1.4 + Math.random() * 1.2) * this.settings.explosionScale;
-      const particle = this.spawnParticle(texture, {
+      const particle = this.spawnParticle({
         x,
         y,
         vx: Math.cos(angle) * speed,
@@ -348,7 +352,7 @@ export class FireworksSystem {
    * (see fireworksMood.ts's endShow()) so the sky is genuinely empty the
    * moment the player leaves, not fading out over the next several seconds.
    * Killed particles still go through the normal pool (`kill()` + push to
-   * `deadPool`), so the next show reuses them exactly like an ordinary
+   * `particlePool`), so the next show reuses them exactly like an ordinary
    * natural death would.
    */
   clearActive(): void {
@@ -360,7 +364,7 @@ export class FireworksSystem {
 
     for (const particle of [...this.particles, ...this.pendingSpawns]) {
       particle.kill();
-      this.deadPool.push(particle);
+      this.particlePool.push(particle);
       this.resolveWatcher(particle);
     }
     this.particles = [];
@@ -383,9 +387,9 @@ export class FireworksSystem {
     this.layer.filters = strength > 0.05 ? [this.glowFilter, this.colorFilter] : [this.colorFilter];
   }
 
-  /** Every burst pattern constructs particles through here — reuses a dead pooled instance when one's available (see `deadPool`'s own doc comment), only ever allocating a fresh `Particle` on a genuine pool miss. */
-  private spawnParticle(texture: Texture, options: ParticleOptions): Particle {
-    const particle = this.deadPool.pop() ?? new Particle(texture, this.trailsContainer, this.coresContainer);
+  /** Every burst pattern constructs particles through here — reuses a dead pooled instance when one's available (see `particlePool`'s own doc comment), only ever allocating a fresh `Particle` on a genuine pool miss. Takes no `texture` argument: a pool miss's `new Particle(...)` always uses the one shared texture the pool's factory closed over in the constructor (see `particlePool`'s own initialization). */
+  private spawnParticle(options: ParticleOptions): Particle {
+    const particle = this.particlePool.pop();
     particle.init(options);
     return particle;
   }
@@ -408,10 +412,9 @@ export class FireworksSystem {
 
   /** Builds the `BurstContext` a pattern function (Peony.ts, Heart.ts, ...) runs against — see patterns/types.ts. */
   private buildContext(batch?: BurstCompletion): BurstContext {
-    const texture = getParticleTexture(this.app);
     return {
       spawn: (options) => {
-        const particle = this.spawnParticle(texture, options);
+        const particle = this.spawnParticle(options);
         this.addParticle(particle, batch);
         return particle;
       },
@@ -501,7 +504,7 @@ export class FireworksSystem {
 
   private spawnTrailSpark(x: number, y: number, color: number): void {
     this.addParticle(
-      this.spawnParticle(getParticleTexture(this.app), {
+      this.spawnParticle({
         x,
         y,
         vx: (Math.random() - 0.5) * 0.4,

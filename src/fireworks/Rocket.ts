@@ -1,6 +1,13 @@
 import { Sprite, Texture } from 'pixi.js';
 import type { BurstType } from './FireworksSystem';
 import { lerpColor } from './Particle';
+import { applyDragAndGravity, integratePosition } from './ParticlePhysics';
+
+// No drag on the ascending shell (a real rocket doesn't visibly decelerate
+// from air resistance over its short flight) — `drag = 1` leaves velocity
+// untouched before gravity is added, same shared equation every other
+// moving thing in `fireworks/` uses.
+const NO_DRAG = 1;
 
 // The ascending shell reads as a white-hot flare with just a hint of its
 // eventual burst color, matching a real rocket's burning propellant —
@@ -65,8 +72,8 @@ export class Rocket {
 
   /** Returns true once the shell has reached its apex and should burst. */
   update(delta: number, onTrail: (x: number, y: number) => void): boolean {
-    this.vy += this.gravity * delta;
-    this.sprite.y += this.vy * delta;
+    this.vy = applyDragAndGravity(this.vy, NO_DRAG, this.gravity, delta);
+    this.sprite.y = integratePosition(this.sprite.y, this.vy, delta);
 
     this.trailAccumulator += delta;
     if (this.trailAccumulator >= 0.8) {

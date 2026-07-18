@@ -1,4 +1,5 @@
 import { Particle as PixiParticle, ParticleContainer, Texture } from 'pixi.js';
+import { applyDrag, applyDragAndGravity, integratePosition } from './ParticlePhysics';
 
 // Thermal Color Decay: the trail cools from a brief white flash into its
 // assigned shell color almost immediately, then ages into dim ember ash near
@@ -206,11 +207,11 @@ export class Particle {
     this.age += delta;
     if (this.age >= this.life) return false;
 
-    this.vx *= this.drag;
-    this.vy = this.vy * this.drag + this.gravity * delta;
+    this.vx = applyDrag(this.vx, this.drag);
+    this.vy = applyDragAndGravity(this.vy, this.drag, this.gravity, delta);
 
-    this.x += this.vx * delta;
-    this.y += this.vy * delta;
+    this.x = integratePosition(this.x, this.vx, delta);
+    this.y = integratePosition(this.y, this.vy, delta);
     this.trail.x = this.x;
     this.trail.y = this.y;
     this.core.x = this.x;

@@ -1,5 +1,7 @@
-import { Application, Container, Graphics, Sprite, Texture } from 'pixi.js';
+import { Application, Container, Graphics, Particle as PixiParticle, ParticleContainer, Texture } from 'pixi.js';
 import { getParticleTexture } from './textures';
+import { applyDrag, applyDragAndGravity, integratePosition } from './ParticlePhysics';
+import { ParticlePool } from './ParticlePool';
 
 const DURATION_SECONDS = 5;
 // Sparks never climb higher than this fraction of the screen height above
@@ -12,9 +14,14 @@ const CONE_HALF_ANGLE = ((12 * Math.PI) / 180) / 2;
 const EMIT_RATE_PER_SEC = 90;
 const GLOW_COLOR = 0xffb347;
 const GLOW_RADIUS = 46;
+// No gravity on fountain sparks — pure drag decay is what makes them arc
+// over and hang rather than accelerate back down like a falling ember.
+const SPARK_GRAVITY = 0;
+const SPARK_VX_DRAG = 0.985;
+const SPARK_VY_DRAG = 0.965; // strong drag: visibly decelerates rather than arcing like a real burst
 
 interface FountainSpark {
-  sprite: Sprite;
+  particle: PixiParticle;
   vx: number;
   vy: number;
 }
@@ -22,28 +29,29 @@ interface FountainSpark {
 /**
  * Ground Fountain: a continuous, narrow-cone stream of sparks shooting up
  * from a fixed point for 5 seconds, capped at a strict height limit — unlike
- * every other burst here, this isn't a one-shot rocket explosion. Reuses the
- * shared soft-circle particle texture for visual consistency, but is a
- * self-contained emitter (not built on the generic age-based Particle class)
- * since its fade/kill rule is driven by height climbed, not elapsed life.
- *
- * Sparks are pooled exactly like FireworksSystem's own `deadPool` (see its
- * doc comment): a dead spark's sprite is hidden (`alpha = 0`) and pushed to
- * `deadPool` instead of `removeChild()`+`destroy()`'d, so a 5s activation at
- * up to ~90 concurrent sparks does zero Sprite allocation/GC and zero
- * scenegraph child-list churn after the pool has warmed up.
+ * every other burst here, this isn't a one-shot rocket explosion. Its
+ * fade/kill rule is driven by height climbed, not elapsed life, which is why
+ * it's its own small class rather than reusing the age-based `Particle`
+ * class — but every other piece of infrastructure is shared, not
+ * reinvented: sparks render through a real `ParticleContainer` (same
+ * technique as `FireworksSystem`'s `trailsContainer`/`coresContainer`), are
+ * recycled through the same generic `ParticlePool`, and move via the same
+ * `ParticlePhysics` equations every other moving thing in `fireworks/` uses.
+ * Contains zero logic about any of the seven burst patterns (Peony, Rose,
+ * ...) — this file is the ground fountain and nothing else.
  */
 export class GroundFountain {
   private readonly app: Application;
   private readonly container: Container;
+  private readonly sparksContainer: ParticleContainer;
   private readonly baseX: number;
   private readonly baseY: number;
   private readonly maxRise: number;
   private readonly texture: Texture;
   private readonly glow: Graphics;
+  private readonly pool: ParticlePool<PixiParticle>;
 
   private sparks: FountainSpark[] = [];
-  private readonly deadPool: Sprite[] = [];
   private age = 0;
   private emitAccumulator = 0;
   private emitting = true;
@@ -57,6 +65,22 @@ export class GroundFountain {
 
     this.container = new Container();
     parentLayer.addChild(this.container);
+
+    // Same batched-rendering technique as FireworksSystem's own particle
+    // containers: every spark is a flat, same-texture PixiJS `Particle`
+    // (not a Sprite/Container), so ~90 concurrent sparks cost one draw call.
+    this.sparksContainer = new ParticleContainer({
+      texture: this.texture,
+      blendMode: 'add',
+      dynamicProperties: { position: true, rotation: false, vertex: true, uvs: false, color: true },
+    });
+    this.container.addChild(this.sparksContainer);
+
+    this.pool = new ParticlePool<PixiParticle>(() => {
+      const particle = new PixiParticle({ texture: this.texture, anchorX: 0.5, anchorY: 0.5 });
+      this.sparksContainer.addParticle(particle);
+      return particle;
+    });
 
     this.glow = new Graphics().circle(0, 0, GLOW_RADIUS).fill({ color: GLOW_COLOR, alpha: 1 });
     this.glow.position.set(x, y);
@@ -103,42 +127,39 @@ export class GroundFountain {
     const angle = -Math.PI / 2 + (Math.random() - 0.5) * 2 * CONE_HALF_ANGLE;
     const speed = 5 + Math.random() * 2;
 
-    const sprite = this.deadPool.pop() ?? this.createSprite();
-    sprite.tint = Math.random() < 0.5 ? 0xffcf6b : 0xffe9b3;
+    const particle = this.pool.pop();
+    particle.tint = Math.random() < 0.5 ? 0xffcf6b : 0xffe9b3;
     const size = 5 + Math.random() * 3;
-    sprite.width = size;
-    sprite.height = size;
-    sprite.alpha = 1;
-    sprite.position.set(this.baseX + (Math.random() - 0.5) * 4, this.baseY);
+    // PixiJS's lightweight Particle has no width/height — only scaleX/scaleY
+    // relative to its shared texture's own pixel size (same reasoning as
+    // Particle.ts's own setScale() helper).
+    particle.scaleX = size / this.texture.width;
+    particle.scaleY = size / this.texture.height;
+    particle.alpha = 1;
+    particle.x = this.baseX + (Math.random() - 0.5) * 4;
+    particle.y = this.baseY;
 
-    this.sparks.push({ sprite, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed });
-  }
-
-  /** Only ever called on a genuine pool miss (see `deadPool`'s own doc comment) — added to `container` exactly once, for its entire reused lifetime. */
-  private createSprite(): Sprite {
-    const sprite = new Sprite(this.texture);
-    sprite.anchor.set(0.5);
-    sprite.blendMode = 'add';
-    this.container.addChild(sprite);
-    return sprite;
+    this.sparks.push({ particle, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed });
   }
 
   /** Returns false once the spark should be removed (hit the height cap or fully faded). */
   private advanceSpark(spark: FountainSpark, delta: number): boolean {
-    spark.vx *= 0.985;
-    spark.vy *= 0.965; // strong drag: visibly decelerates rather than arcing like a real burst
-    spark.sprite.x += spark.vx * delta;
-    spark.sprite.y += spark.vy * delta;
+    spark.vx = applyDrag(spark.vx, SPARK_VX_DRAG);
+    spark.vy = applyDragAndGravity(spark.vy, SPARK_VY_DRAG, SPARK_GRAVITY, delta);
+    spark.particle.x = integratePosition(spark.particle.x, spark.vx, delta);
+    spark.particle.y = integratePosition(spark.particle.y, spark.vy, delta);
 
-    const rise = this.baseY - spark.sprite.y;
+    const rise = this.baseY - spark.particle.y;
     const riseRatio = Math.min(Math.max(rise / this.maxRise, 0), 1);
     const fadeStart = 0.7; // fades out over the final 30% of its climb
     const alpha = riseRatio < fadeStart ? 1 : 1 - (riseRatio - fadeStart) / (1 - fadeStart);
-    spark.sprite.alpha = Math.max(0, alpha);
+    spark.particle.alpha = Math.max(0, alpha);
 
     if (rise >= this.maxRise || alpha <= 0) {
-      spark.sprite.alpha = 0;
-      this.deadPool.push(spark.sprite);
+      spark.particle.alpha = 0;
+      spark.particle.scaleX = 0;
+      spark.particle.scaleY = 0;
+      this.pool.push(spark.particle);
       return false;
     }
     return true;
