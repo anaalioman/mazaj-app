@@ -1,5 +1,6 @@
 import { Particle as PixiParticle, ParticleContainer, Texture } from 'pixi.js';
 import { applyDrag, applyDragAndGravity, integratePosition } from './ParticlePhysics';
+import { fastSin } from './SineTable';
 
 // Thermal Color Decay: the trail cools from a brief white flash into its
 // assigned shell color almost immediately, then ages into dim ember ash near
@@ -221,7 +222,7 @@ export class Particle {
     const fade = 1 - lifeRatio;
     let alpha = fade * fade;
     if (this.twinkle) {
-      alpha *= 0.55 + 0.45 * Math.sin(this.age * 2.4 + this.x);
+      alpha *= 0.55 + 0.45 * fastSin(this.age * 2.4 + this.x);
     }
     if (this.strobe) {
       this.strobeTimer -= delta;
