@@ -96,6 +96,8 @@ export class FireworksSystem {
   // in the constructor body (not inline here) since its factory closes over
   // `trailsContainer`/`coresContainer`, which don't exist yet at this point.
   private readonly particlePool: ParticlePool<Particle>;
+  // See `particlePool`'s own doc comment — same pattern, applied to Rocket.
+  private readonly rocketPool: ParticlePool<Rocket>;
 
   private settings: BurstSettings = { ...DEFAULT_BURST_SETTINGS };
   private enabledTypes: BurstType[] = [...ALL_BURST_TYPES];
@@ -162,6 +164,15 @@ export class FireworksSystem {
     this.layer.addChild(this.coresContainer);
 
     this.particlePool = new ParticlePool<Particle>(() => new Particle(texture, this.trailsContainer, this.coresContainer));
+    // Same convention: a pool miss's fresh Rocket sprite is added to `layer`
+    // exactly once, here — every launch afterward reuses it via `init()`,
+    // and a spent shell returns via `kill()` (alpha = 0) instead of
+    // `removeChild()`+`destroy()` (see Rocket.ts's own doc comment).
+    this.rocketPool = new ParticlePool<Rocket>(() => {
+      const rocket = new Rocket(texture);
+      this.layer.addChild(rocket.sprite);
+      return rocket;
+    });
 
     // True bloom (bright-pass extract + blur + additive-style composite),
     // not a flat blur — only genuinely bright pixels (white-hot ignition,
@@ -217,7 +228,8 @@ export class FireworksSystem {
     const margin = Math.min(width * EDGE_MARGIN_RATIO, EDGE_MARGIN_MAX);
     const clampedX = Math.min(Math.max(x, margin), width - margin);
 
-    const rocket = new Rocket(getParticleTexture(this.app), {
+    const rocket = this.rocketPool.pop();
+    rocket.init({
       x: clampedX,
       startY: height + 10,
       targetY: Math.max(apex, 20),
@@ -225,7 +237,6 @@ export class FireworksSystem {
       forcedType,
       onComplete,
     });
-    this.layer.addChild(rocket.sprite);
     this.rockets.push(rocket);
     this.onLaunch?.(clampedX);
   }
@@ -243,8 +254,8 @@ export class FireworksSystem {
       const reachedApex = rocket.update(delta, (x, y) => this.spawnTrailSpark(x, y, rocket.color));
       if (reachedApex) {
         this.explode(rocket.x, rocket.y, rocket.forcedType, rocket.onComplete);
-        this.layer.removeChild(rocket.sprite);
-        rocket.destroy();
+        rocket.kill();
+        this.rocketPool.push(rocket);
         return false;
       }
       return true;
@@ -357,8 +368,8 @@ export class FireworksSystem {
    */
   clearActive(): void {
     for (const rocket of this.rockets) {
-      this.layer.removeChild(rocket.sprite);
-      rocket.destroy();
+      rocket.kill();
+      this.rocketPool.push(rocket);
     }
     this.rockets = [];
 

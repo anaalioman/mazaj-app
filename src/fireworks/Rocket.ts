@@ -29,37 +29,33 @@ export interface RocketOptions {
 /**
  * The ascending shell. Launches straight up, decelerating under gravity,
  * and reports back once it reaches its apex so the system can burst it.
+ *
+ * Object pool member, same convention as `Particle`/`GroundFountain`'s own
+ * sparks (see `ParticlePool.ts`): the constructor only ever runs once per
+ * pooled instance (builds the one `Sprite` and adds it to the layer once),
+ * and every actual launch — fresh or recycled — goes through `init()`.
+ * `kill()` hides the sprite (`alpha = 0`) instead of destroying it, so
+ * `FireworksSystem` can push a spent shell back to its `rocketPool` and the
+ * next launch reuses it with zero allocation and zero
+ * `addChild()`/`removeChild()` scenegraph churn.
  */
 export class Rocket {
   readonly sprite: Sprite;
-  readonly color: number;
-  readonly forcedType?: BurstType;
-  readonly onComplete?: () => void;
+  color = 0xffffff;
+  forcedType?: BurstType;
+  onComplete?: () => void;
 
-  private vy: number;
+  private vy = 0;
   private readonly gravity = 0.16;
-  private readonly targetY: number;
+  private targetY = 0;
   private trailAccumulator = 0;
 
-  constructor(texture: Texture, options: RocketOptions) {
-    const { x, startY, targetY, color, forcedType, onComplete } = options;
-    this.color = color;
-    this.forcedType = forcedType;
-    this.onComplete = onComplete;
-    this.targetY = targetY;
-
-    // Initial speed derived from distance so shells launched at very
-    // different heights still arc and slow down convincingly.
-    const distance = Math.max(startY - targetY, 40);
-    this.vy = -Math.sqrt(2 * this.gravity * distance) * 1.02;
-
+  constructor(texture: Texture) {
     this.sprite = new Sprite(texture);
     this.sprite.anchor.set(0.5);
     this.sprite.blendMode = 'add';
-    this.sprite.tint = lerpColor(0xffffff, color, FLARE_COLOR_MIX);
     this.sprite.width = 10;
     this.sprite.height = 10;
-    this.sprite.position.set(x, startY);
   }
 
   get x(): number {
@@ -68,6 +64,25 @@ export class Rocket {
 
   get y(): number {
     return this.sprite.y;
+  }
+
+  /** (Re)starts this shell — see the class's own pooling doc comment. Called both for a fresh instance and a recycled dead one. */
+  init(options: RocketOptions): void {
+    const { x, startY, targetY, color, forcedType, onComplete } = options;
+    this.color = color;
+    this.forcedType = forcedType;
+    this.onComplete = onComplete;
+    this.targetY = targetY;
+    this.trailAccumulator = 0;
+
+    // Initial speed derived from distance so shells launched at very
+    // different heights still arc and slow down convincingly.
+    const distance = Math.max(startY - targetY, 40);
+    this.vy = -Math.sqrt(2 * this.gravity * distance) * 1.02;
+
+    this.sprite.tint = lerpColor(0xffffff, color, FLARE_COLOR_MIX);
+    this.sprite.alpha = 1;
+    this.sprite.position.set(x, startY);
   }
 
   /** Returns true once the shell has reached its apex and should burst. */
@@ -84,7 +99,8 @@ export class Rocket {
     return this.vy >= -0.5 || this.sprite.y <= this.targetY;
   }
 
-  destroy(): void {
-    this.sprite.destroy();
+  /** Hides this shell without destroying its sprite — see the class's own pooling doc comment. Ready for `init()` to reuse immediately. */
+  kill(): void {
+    this.sprite.alpha = 0;
   }
 }
