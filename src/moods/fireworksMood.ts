@@ -27,18 +27,6 @@ export interface FireworksMoodHandle {
 // Royal black: a deep, rich near-black backdrop for the fireworks stage.
 export const ROYAL_BLACK = '#040406';
 
-/** Superset of app.init() options every mood needs — preserveDrawingBuffer/high-performance are here for the fireworks mood's video-recording pipeline specifically, but they're harmless for any other mood sharing this one Application. See main.ts, the only caller. */
-export const SHARED_APP_INIT_OPTIONS = {
-  resizeTo: window,
-  antialias: true,
-  resolution: Math.min(window.devicePixelRatio || 1, 2),
-  autoDensity: true,
-  powerPreference: 'high-performance' as const,
-  // Needed so canvas.captureStream() (video recording) sees fresh frames
-  // instead of an already-cleared WebGL buffer.
-  preserveDrawingBuffer: true,
-};
-
 /**
  * Boots the fireworks mood's whole scene as a child of `moodLayer` — a
  * Container main.ts already added to the single shared `app.stage`, toggled

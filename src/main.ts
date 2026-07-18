@@ -39,12 +39,23 @@ async function boot(): Promise<void> {
     antialias: true,
     resolution: Math.min(window.devicePixelRatio || 1, 2),
     autoDensity: true,
-    powerPreference: 'high-performance',
+    // 'low-power' (not 'high-performance'): this app never needs a discrete/
+    // max-power GPU to hit a smooth 60fps, and 'high-performance' explicitly
+    // tells the browser to favor peak clocks over thermals — a direct
+    // contributor to a phone heating up during normal play.
+    powerPreference: 'low-power',
     // Needed so canvas.captureStream() (the fireworks mood's video
     // recording) sees fresh frames instead of an already-cleared WebGL
     // buffer — harmless for every other screen sharing this Application.
     preserveDrawingBuffer: true,
   });
+
+  // Many phones run their display at 90Hz/120Hz; Pixi's ticker syncs to
+  // requestAnimationFrame by default, so an uncapped app would render
+  // 1.5x-2x as many frames per second as a 60fps show ever needs — pure
+  // extra GPU heat with no visible smoothness gain over 60fps for this
+  // content (particle bursts, glow, UI transitions).
+  app.ticker.maxFPS = 60;
 
   document.body.appendChild(app.canvas);
   styleFullscreenCanvas(app.canvas);
