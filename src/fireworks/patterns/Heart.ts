@@ -16,25 +16,75 @@ function heartCurvePoint(t: number): { x: number; y: number } {
   return { x, y };
 }
 
+// Equal-arc-length reparameterization: the curve's own speed (|dx/dt, dy/dt|)
+// is not constant, so sampling t at even steps bunches sparks up where the
+// curve moves slowly and thins them out where it moves fast — a real,
+// visible density variation around the heart's outline, not just at its
+// tips. Built once at module load (the curve shape itself never changes
+// burst to burst): sample the curve finely, accumulate real arc length,
+// then invert that into a lookup table so `arcLengthParam(fraction)` returns
+// the t value that lands exactly `fraction` of the way around the curve by
+// actual distance traveled, not by raw parameter value.
+const ARC_TABLE_SAMPLES = 2000;
+const arcLengthToT: Float64Array = (function buildArcLengthTable(): Float64Array {
+  const ts = new Float64Array(ARC_TABLE_SAMPLES + 1);
+  const cumulative = new Float64Array(ARC_TABLE_SAMPLES + 1);
+  let prev = heartCurvePoint(0);
+  ts[0] = 0;
+  cumulative[0] = 0;
+  for (let i = 1; i <= ARC_TABLE_SAMPLES; i++) {
+    const t = (i / ARC_TABLE_SAMPLES) * Math.PI * 2;
+    const point = heartCurvePoint(t);
+    cumulative[i] = cumulative[i - 1] + Math.hypot(point.x - prev.x, point.y - prev.y);
+    ts[i] = t;
+    prev = point;
+  }
+
+  const totalLength = cumulative[ARC_TABLE_SAMPLES];
+  const inverse = new Float64Array(ARC_TABLE_SAMPLES + 1);
+  let searchIndex = 0;
+  for (let i = 0; i <= ARC_TABLE_SAMPLES; i++) {
+    const targetLength = (i / ARC_TABLE_SAMPLES) * totalLength;
+    while (searchIndex < ARC_TABLE_SAMPLES && cumulative[searchIndex + 1] < targetLength) searchIndex++;
+    const segStart = cumulative[searchIndex];
+    const segEnd = cumulative[Math.min(searchIndex + 1, ARC_TABLE_SAMPLES)];
+    const segFrac = segEnd > segStart ? (targetLength - segStart) / (segEnd - segStart) : 0;
+    const tStart = ts[searchIndex];
+    const tEnd = ts[Math.min(searchIndex + 1, ARC_TABLE_SAMPLES)];
+    inverse[i] = tStart + (tEnd - tStart) * segFrac;
+  }
+  return inverse;
+})();
+
+/** Returns the curve parameter t such that walking the heart curve from t=0 to this t covers exactly `fraction` (0-1) of its total real arc length. */
+function arcLengthParam(fraction: number): number {
+  const scaled = fraction * ARC_TABLE_SAMPLES;
+  const index = Math.min(Math.floor(scaled), ARC_TABLE_SAMPLES - 1);
+  const frac = scaled - index;
+  return arcLengthToT[index] + (arcLengthToT[index + 1] - arcLengthToT[index]) * frac;
+}
+
 /**
  * Heart burst: every spark's initial velocity direction is the normalized
- * vector from the explosion center to `heartCurvePoint(t)` at its own
- * sampled `t`, evenly spaced across the full curve — the same "velocity
- * follows a parametric curve" technique `burstRose` already uses for its
- * k-petaled rose (see Rose.ts) and `burstMultiRing` uses for its ellipses,
- * just with the heart equation instead. The burst expands in straight
- * lines whose silhouette, a fraction of a second after ignition, traces a
- * heart shape — computed fresh every explosion in the ticker-driven spawn
- * loop below, not a static asset.
+ * vector from the explosion center to `heartCurvePoint(t)`, sampled at
+ * equal arc-length steps (see `arcLengthParam`) instead of equal parameter
+ * steps — the same "velocity follows a parametric curve" technique
+ * `burstRose` already uses for its k-petaled rose (see Rose.ts) and
+ * `burstMultiRing` uses for its ellipses, just with the heart equation and
+ * a proper arc-length reparameterization instead. The burst expands in
+ * straight lines whose silhouette, a fraction of a second after ignition,
+ * traces a heart shape with uniform density all the way around — computed
+ * fresh every explosion in the ticker-driven spawn loop below, not a
+ * static asset.
  *
  * Speed deliberately stays in a *narrow* band around `baseSpeed` (matching
- * Rose.ts's own `(0.9 + Math.random() * 0.2)`, not Peony/Kamuro/Strobe's
- * `ctx.fillSpeed()`), which samples the *full* 0..max range to fill a
- * sphere's interior with depth. That's correct for a circularly-symmetric
- * bloom, but wrong for a shape whose entire identity is its outline: filling
- * the heart's interior with particles at random, short radii just paints a
- * formless core blob that swamps the curve's silhouette. A thin shell keeps
- * every spark close to the actual curve, so the heart reads as a heart.
+ * Rose.ts's own convention), not Peony/Kamuro/Strobe's `ctx.fillSpeed()`,
+ * which samples the *full* 0..max range to fill a sphere's interior with
+ * depth. That's correct for a circularly-symmetric bloom, but wrong for a
+ * shape whose entire identity is its outline: filling the heart's interior
+ * with particles at random, short radii just paints a formless core blob
+ * that swamps the curve's silhouette. A thin shell keeps every spark close
+ * to the actual curve, so the heart reads as a heart.
  */
 export function burstHeart(x: number, y: number, ctx: BurstContext): void {
   const burstColors = ctx.activeColor !== null ? shadesOf(ctx.activeColor, 4) : pickBurstColors(3 + Math.floor(Math.random() * 2));
@@ -42,7 +92,7 @@ export function burstHeart(x: number, y: number, ctx: BurstContext): void {
   const baseSpeed = (2.9 + Math.random() * 1.0) * ctx.settings.explosionScale;
 
   for (let i = 0; i < count; i++) {
-    const t = (i / count) * Math.PI * 2;
+    const t = arcLengthParam(i / count);
     const point = heartCurvePoint(t);
     const magnitude = Math.hypot(point.x, point.y) || 1;
     const dirX = point.x / magnitude;
