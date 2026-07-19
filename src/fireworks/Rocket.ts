@@ -9,11 +9,12 @@ import { applyDragAndGravity, integratePosition } from './ParticlePhysics';
 // moving thing in `fireworks/` uses.
 const NO_DRAG = 1;
 
-// The ascending shell reads as a white-hot flare with just a hint of its
-// eventual burst color, matching a real rocket's burning propellant —
-// the full shell color shows up properly once it explodes (and in the
-// colored trail sparks left behind it, see spawnTrailSpark).
-const FLARE_COLOR_MIX = 0.3;
+// The ascending shell reads as a hot flare already carrying real color
+// (not just a near-white hint of it), consistent with the rest of the
+// game's own move toward more saturated, less-washed-out tones — the full
+// shell color shows up properly once it explodes (and in the colored
+// trail sparks left behind it, see spawnTrailSpark).
+const FLARE_COLOR_MIX = 0.5;
 
 export interface RocketOptions {
   x: number;
@@ -96,7 +97,15 @@ export class Rocket {
       onTrail(this.sprite.x, this.sprite.y);
     }
 
-    return this.vy >= -0.5 || this.sprite.y <= this.targetY;
+    const reachedApex = this.vy >= -0.5 || this.sprite.y <= this.targetY;
+    if (reachedApex && this.sprite.y < this.targetY) {
+      // A large delta step can overshoot past the intended apex height in
+      // the same frame that crosses it — clamp back to the exact targetY
+      // so the burst always originates from precisely the planned height,
+      // not a few pixels past it, regardless of frame timing.
+      this.sprite.y = this.targetY;
+    }
+    return reachedApex;
   }
 
   /** Hides this shell without destroying its sprite — see the class's own pooling doc comment. Ready for `init()` to reuse immediately. */
