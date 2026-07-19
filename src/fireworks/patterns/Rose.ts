@@ -21,8 +21,11 @@ export function burstRose(x: number, y: number, ctx: BurstContext): void {
 
   for (let i = 0; i < count; i++) {
     const theta = (i / count) * Math.PI * 2;
+    // Exact r * baseSpeed, no per-particle variance — every spark lands
+    // precisely on the mathematical rose curve instead of scattered ±10%
+    // around it.
     const r = Math.cos(k * theta);
-    const speed = r * baseSpeed * (0.9 + Math.random() * 0.2);
+    const speed = r * baseSpeed;
     const color = burstColors[Math.floor(Math.random() * burstColors.length)];
 
     ctx.spawn({
