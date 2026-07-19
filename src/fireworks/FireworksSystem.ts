@@ -148,7 +148,7 @@ export class FireworksSystem {
     this.onLaunch = options.onLaunch;
     this.onExplode = options.onExplode;
 
-    const texture = getParticleTexture(app);
+    const texture = getParticleTexture();
     // `vertex: true` covers both scale *and* anchor (PixiJS bakes both into
     // one "vertex" GPU attribute — see particleData.ts upstream) — required
     // since every spark's thickness/stretch/anchor changes every frame.

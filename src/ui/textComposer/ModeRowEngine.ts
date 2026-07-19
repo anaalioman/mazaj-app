@@ -151,7 +151,7 @@ export class ModeRowEngine {
     this.fuseEmber.visible = false;
     composerContainer.addChild(this.fuseEmber);
 
-    const sparkTexture = getParticleTexture(app);
+    const sparkTexture = getParticleTexture();
     this.sparkTrailsContainer = new ParticleContainer({
       texture: sparkTexture,
       blendMode: 'add',
@@ -456,7 +456,7 @@ export class ModeRowEngine {
 
   /** One dead-pooled Particle (or a fresh one on a genuine pool miss) — mirrors FireworksSystem.spawnParticle()'s own pop-or-construct pattern. */
   private getPooledSparkParticle(): Particle {
-    return this.sparkDeadPool.pop() ?? new Particle(getParticleTexture(this.app), this.sparkTrailsContainer, this.sparkCoresContainer);
+    return this.sparkDeadPool.pop() ?? new Particle(getParticleTexture(), this.sparkTrailsContainer, this.sparkCoresContainer);
   }
 
   /** Radial burst of 10-15 embers at a global (x, y). */

@@ -61,7 +61,7 @@ export class GroundFountain {
     this.baseX = x;
     this.baseY = y;
     this.maxRise = app.screen.height * HEIGHT_RATIO;
-    this.texture = getParticleTexture(app);
+    this.texture = getParticleTexture();
 
     this.container = new Container();
     parentLayer.addChild(this.container);

@@ -85,7 +85,7 @@ export class ColorPickerPanel extends SideDockPanel {
       wheel.blendMode = 'add';
       group.addChild(wheel);
     } else {
-      const halo = new Sprite(getParticleTexture(this.app));
+      const halo = new Sprite(getParticleTexture());
       halo.anchor.set(0.5);
       halo.tint = choice.hex;
       halo.blendMode = 'add';
