@@ -14,13 +14,32 @@ const TEXTURE_SIZE = 128;
 // of it — no external noise library, no image asset. Used purely to
 // roughen the particle texture's edge/interior into a grainy, gunpowder-
 // spark look instead of a perfectly smooth radial gradient.
+// Fixed seed (not Math.random()): the permutation table drives the exact
+// noise pattern baked into the shared particle texture, so every launch of
+// the app must shuffle it identically — otherwise the spark's grain/edge
+// would look subtly different session to session instead of being a fixed,
+// deliberately-tuned visual identity.
+const PERMUTATION_SEED = 0x5eed1234;
+
+/** Deterministic PRNG (mulberry32) — same output sequence for the same seed on every run, unlike Math.random(). */
+function mulberry32(seed: number): () => number {
+  let a = seed;
+  return function random(): number {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 const PERM_SIZE = 256;
 const perm = new Uint8Array(PERM_SIZE * 2);
 (function seedPermutation(): void {
+  const random = mulberry32(PERMUTATION_SEED);
   const p = new Uint8Array(PERM_SIZE);
   for (let i = 0; i < PERM_SIZE; i++) p[i] = i;
   for (let i = PERM_SIZE - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(random() * (i + 1));
     const tmp = p[i];
     p[i] = p[j];
     p[j] = tmp;
