@@ -3,7 +3,8 @@
  * built once at module load. `Particle.ts`'s per-frame, per-particle
  * twinkle flicker reads from this instead of calling `Math.sin()` directly.
  */
-const TABLE_SIZE = 720; // 0.5° resolution — fine enough that interpolation error is visually imperceptible
+const TABLE_SIZE = 1024; // power of 2 — enables `& (TABLE_SIZE - 1)` instead of `% TABLE_SIZE`
+const TABLE_MASK = TABLE_SIZE - 1;
 export const TWO_PI = Math.PI * 2;
 
 const table = new Float32Array(TABLE_SIZE);
@@ -21,9 +22,9 @@ for (let i = 0; i < TABLE_SIZE; i++) {
  */
 export function fastSin(wrappedRadians: number): number {
   const scaled = (wrappedRadians / TWO_PI) * TABLE_SIZE;
-  const index = Math.floor(scaled);
+  const index = scaled | 0; // truncation toward zero == Math.floor for scaled >= 0
   const frac = scaled - index;
-  const next = (index + 1) % TABLE_SIZE; // safe: integers bounded by TABLE_SIZE, not the caller's raw angle
+  const next = (index + 1) & TABLE_MASK; // valid since TABLE_SIZE is a power of 2 and index+1 >= 0
 
   return table[index] + (table[next] - table[index]) * frac;
 }
