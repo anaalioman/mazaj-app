@@ -17,7 +17,9 @@ import type { BurstContext } from './types';
 export function burstPeony(x: number, y: number, ctx: BurstContext): void {
   const outerPalette = randomPalette();
   const primaryColor = ctx.activeColor ?? randomColor(outerPalette);
-  const pistilColor = ctx.activeColor !== null ? lerpColor(ctx.activeColor, 0xffffff, 0.5) : randomColor(contrastingPalette(outerPalette));
+  // 0.25 (not 0.5): a lighter, hotter-reading tint of the dyed color without
+  // washing it out toward white — keeps the pistil visibly saturated.
+  const pistilColor = ctx.activeColor !== null ? lerpColor(ctx.activeColor, 0xffffff, 0.25) : randomColor(contrastingPalette(outerPalette));
 
   // Base counts tuned so a default-density burst lands around 250-400
   // total sparks between the outer sphere and pistil core combined.
@@ -25,7 +27,8 @@ export function burstPeony(x: number, y: number, ctx: BurstContext): void {
   const outerSpeed = (2.6 + Math.random() * 2.0) * ctx.settings.explosionScale;
 
   for (let i = 0; i < outerCount; i++) {
-    const angle = (Math.PI * 2 * i) / outerCount + Math.random() * 0.25;
+    // Exact even spacing, no per-particle jitter — a clean geometric circle.
+    const angle = (Math.PI * 2 * i) / outerCount;
     const speed = ctx.fillSpeed(outerSpeed);
 
     ctx.spawn({
@@ -46,7 +49,7 @@ export function burstPeony(x: number, y: number, ctx: BurstContext): void {
   const pistilSpeed = outerSpeed * 0.42;
 
   for (let i = 0; i < pistilCount; i++) {
-    const angle = (Math.PI * 2 * i) / pistilCount + Math.random() * 0.4;
+    const angle = (Math.PI * 2 * i) / pistilCount;
     const speed = ctx.fillSpeed(pistilSpeed);
 
     ctx.spawn({
