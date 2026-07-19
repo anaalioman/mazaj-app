@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Particle as PixiParticle, ParticleContainer, Texture } from 'pixi.js';
+import { Application, Container, Particle as PixiParticle, ParticleContainer, Sprite, Texture } from 'pixi.js';
 import { getParticleTexture } from './textures';
 import { applyDrag, applyDragAndGravity, integratePosition } from './ParticlePhysics';
 import { ParticlePool } from './ParticlePool';
@@ -14,9 +14,12 @@ const CONE_HALF_ANGLE = ((12 * Math.PI) / 180) / 2;
 const EMIT_RATE_PER_SEC = 90;
 const GLOW_COLOR = 0xffb347;
 const GLOW_RADIUS = 46;
-// No gravity on fountain sparks — pure drag decay is what makes them arc
-// over and hang rather than accelerate back down like a falling ember.
-const SPARK_GRAVITY = 0;
+// A gentle real gravity — enough that sparks visibly arc over and rain
+// back down like a real gerb/fountain, not just decelerate and hang from
+// drag alone. Deliberately much smaller than a burst spark's own
+// gravity (0.06-0.12) since this effect is meant to read as a soft,
+// floaty spray, not a falling ember.
+const SPARK_GRAVITY = 0.03;
 const SPARK_VX_DRAG = 0.985;
 const SPARK_VY_DRAG = 0.965; // strong drag: visibly decelerates rather than arcing like a real burst
 
@@ -48,7 +51,7 @@ export class GroundFountain {
   private readonly baseY: number;
   private readonly maxRise: number;
   private readonly texture: Texture;
-  private readonly glow: Graphics;
+  private readonly glow: Sprite;
   private readonly pool: ParticlePool<PixiParticle>;
 
   private sparks: FountainSpark[] = [];
@@ -82,7 +85,14 @@ export class GroundFountain {
       return particle;
     });
 
-    this.glow = new Graphics().circle(0, 0, GLOW_RADIUS).fill({ color: GLOW_COLOR, alpha: 1 });
+    // The shared, already-VRAM-resident particle texture reused as a soft
+    // glow — a plain tinted/scaled Sprite instead of a dedicated Graphics
+    // shape, so this effect needs zero geometry of its own.
+    this.glow = new Sprite(this.texture);
+    this.glow.anchor.set(0.5);
+    this.glow.tint = GLOW_COLOR;
+    this.glow.width = GLOW_RADIUS * 2;
+    this.glow.height = GLOW_RADIUS * 2;
     this.glow.position.set(x, y);
     this.glow.blendMode = 'add';
     this.glow.alpha = 0;
