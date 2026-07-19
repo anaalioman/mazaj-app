@@ -89,7 +89,7 @@ export class GroundFountain {
     // spark texture) — a plain tinted/scaled Sprite instead of a Graphics
     // shape, so this effect needs zero geometry of its own, while still
     // reading as a soft ambient bloom with no hard/grainy edges.
-    this.glow = new Sprite(getGlowTexture());
+    this.glow = new Sprite(getGlowTexture(this.app));
     this.glow.anchor.set(0.5);
     this.glow.tint = GLOW_COLOR;
     this.glow.width = GLOW_RADIUS * 2;

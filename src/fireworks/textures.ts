@@ -1,4 +1,4 @@
-import { Texture } from 'pixi.js';
+import { Application, FillGradient, Graphics, Texture } from 'pixi.js';
 import { createOffscreenCanvas } from '../dom/shadowServices';
 
 let cached: Texture | null = null;
@@ -151,28 +151,32 @@ export function getParticleTexture(): Texture {
 const GLOW_TEXTURE_SIZE = 256;
 
 // A dedicated, perfectly smooth radial-gradient blob — deliberately NOT the
-// grainy Perlin-noise spark texture above. That texture's fine grain is
-// tuned to read as gunpowder roughness on a small ~5-20px spark; stretched
-// out to a large ambient glow it enlarges every grain patch into a visible,
-// hard-edged blotch instead of a soft light bloom. A native canvas radial
-// gradient has no such per-pixel noise, so it stays smooth and edge-free at
-// any size it's scaled to.
-export function getGlowTexture(): Texture {
+// grainy Perlin-noise spark texture above. Built via PixiJS's own
+// FillGradient + Graphics + renderer.generateTexture() pipeline rather than
+// a raw canvas bake, per explicit instruction. Baked once (memoized in
+// `cachedGlow`) the first time GroundFountain needs it.
+export function getGlowTexture(app: Application): Texture {
   if (cachedGlow) return cachedGlow;
 
-  const size = GLOW_TEXTURE_SIZE;
-  const center = size / 2;
-  const canvas = createOffscreenCanvas(size, size);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('2D canvas context unavailable — cannot bake glow texture');
+  const radius = GLOW_TEXTURE_SIZE / 2;
 
-  const gradient = ctx.createRadialGradient(center, center, 0, center, center, center);
-  gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
-  gradient.addColorStop(0.35, 'rgba(255, 255, 255, 0.55)');
-  gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, size, size);
+  const gradient = new FillGradient({
+    type: 'radial',
+    center: { x: 0.5, y: 0.5 },
+    innerRadius: 0,
+    outerCenter: { x: 0.5, y: 0.5 },
+    outerRadius: 0.5,
+    colorStops: [
+      { offset: 0, color: 'rgba(255, 255, 255, 1)' },
+      { offset: 0.35, color: 'rgba(255, 255, 255, 0.55)' },
+      { offset: 1, color: 'rgba(255, 255, 255, 0)' },
+    ],
+  });
 
-  cachedGlow = Texture.from(canvas);
+  const graphics = new Graphics().circle(radius, radius, radius).fill(gradient);
+
+  cachedGlow = app.renderer.generateTexture({ target: graphics, resolution: 1 });
+  graphics.destroy();
+
   return cachedGlow;
 }
