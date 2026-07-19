@@ -2,6 +2,7 @@ import { Texture } from 'pixi.js';
 import { createOffscreenCanvas } from '../dom/shadowServices';
 
 let cached: Texture | null = null;
+let cachedGlow: Texture | null = null;
 
 // Same overall texture size as the previous radial-gradient version
 // (radius 32 * diameter 2 * resolution 2 = 128px) — no VRAM increase, just
@@ -145,4 +146,33 @@ export function getParticleTexture(): Texture {
   ctx.putImageData(imageData, 0, 0);
   cached = Texture.from(canvas);
   return cached;
+}
+
+const GLOW_TEXTURE_SIZE = 256;
+
+// A dedicated, perfectly smooth radial-gradient blob — deliberately NOT the
+// grainy Perlin-noise spark texture above. That texture's fine grain is
+// tuned to read as gunpowder roughness on a small ~5-20px spark; stretched
+// out to a large ambient glow it enlarges every grain patch into a visible,
+// hard-edged blotch instead of a soft light bloom. A native canvas radial
+// gradient has no such per-pixel noise, so it stays smooth and edge-free at
+// any size it's scaled to.
+export function getGlowTexture(): Texture {
+  if (cachedGlow) return cachedGlow;
+
+  const size = GLOW_TEXTURE_SIZE;
+  const center = size / 2;
+  const canvas = createOffscreenCanvas(size, size);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('2D canvas context unavailable — cannot bake glow texture');
+
+  const gradient = ctx.createRadialGradient(center, center, 0, center, center, center);
+  gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+  gradient.addColorStop(0.35, 'rgba(255, 255, 255, 0.55)');
+  gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+
+  cachedGlow = Texture.from(canvas);
+  return cachedGlow;
 }

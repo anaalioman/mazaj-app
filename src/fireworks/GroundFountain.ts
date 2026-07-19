@@ -1,5 +1,5 @@
 import { Application, Container, Particle as PixiParticle, ParticleContainer, Sprite, Texture } from 'pixi.js';
-import { getParticleTexture } from './textures';
+import { getParticleTexture, getGlowTexture } from './textures';
 import { applyDrag, applyDragAndGravity, integratePosition } from './ParticlePhysics';
 import { ParticlePool } from './ParticlePool';
 
@@ -85,10 +85,11 @@ export class GroundFountain {
       return particle;
     });
 
-    // The shared, already-VRAM-resident particle texture reused as a soft
-    // glow — a plain tinted/scaled Sprite instead of a dedicated Graphics
-    // shape, so this effect needs zero geometry of its own.
-    this.glow = new Sprite(this.texture);
+    // A dedicated, perfectly smooth radial-gradient texture (not the grainy
+    // spark texture) — a plain tinted/scaled Sprite instead of a Graphics
+    // shape, so this effect needs zero geometry of its own, while still
+    // reading as a soft ambient bloom with no hard/grainy edges.
+    this.glow = new Sprite(getGlowTexture());
     this.glow.anchor.set(0.5);
     this.glow.tint = GLOW_COLOR;
     this.glow.width = GLOW_RADIUS * 2;
