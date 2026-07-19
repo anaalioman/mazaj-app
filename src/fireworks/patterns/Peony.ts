@@ -1,5 +1,6 @@
 import { lerpColor } from '../Particle';
 import { contrastingPalette, randomColor, randomPalette } from '../colors';
+import { fastCos, fastSin } from '../SineTable';
 import type { BurstContext } from './types';
 
 /**
@@ -9,10 +10,11 @@ import type { BurstContext } from './types';
  *
  * Real polar-coordinate distribution: every spark's direction is
  * `angle = i/count * 2π` (a point on the unit circle), converted to a
- * Cartesian velocity via `(cos(angle), sin(angle)) * speed` — genuine
- * `Math.cos`/`Math.sin` polar-to-Cartesian conversion, not a fixed image or
- * CSS shape. `fillSpeed()` samples speed uniformly across the full radius
- * range (not just the rim) so the sphere fills with real depth.
+ * Cartesian velocity via `(cos(angle), sin(angle)) * speed` — via
+ * `fastCos`/`fastSin` (the shared precomputed `SineTable` lookup), since
+ * `angle` here is already in `[0, TWO_PI)` and needs no extra wrapping.
+ * `fillSpeed()` samples speed uniformly across the full radius range (not
+ * just the rim) so the sphere fills with real depth.
  */
 export function burstPeony(x: number, y: number, ctx: BurstContext): void {
   const outerPalette = randomPalette();
@@ -34,8 +36,8 @@ export function burstPeony(x: number, y: number, ctx: BurstContext): void {
     ctx.spawn({
       x,
       y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
+      vx: fastCos(angle) * speed,
+      vy: fastSin(angle) * speed,
       color: primaryColor,
       size: (7 + Math.random() * 4) * ctx.glowSizeBoost,
       life: (55 + Math.random() * 40) * ctx.settings.lifespanScale,
@@ -55,8 +57,8 @@ export function burstPeony(x: number, y: number, ctx: BurstContext): void {
     ctx.spawn({
       x,
       y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
+      vx: fastCos(angle) * speed,
+      vy: fastSin(angle) * speed,
       color: pistilColor,
       size: (5 + Math.random() * 3) * ctx.glowSizeBoost,
       life: (38 + Math.random() * 22) * ctx.settings.lifespanScale,

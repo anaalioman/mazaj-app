@@ -27,3 +27,10 @@ export function fastSin(wrappedRadians: number): number {
 
   return table[index] + (table[next] - table[index]) * frac;
 }
+
+/** cos(x) = sin(x + π/2) — same table, same input contract (caller pre-wraps to [0, TWO_PI)). */
+export function fastCos(wrappedRadians: number): number {
+  let shifted = wrappedRadians + Math.PI / 2;
+  if (shifted >= TWO_PI) shifted -= TWO_PI;
+  return fastSin(shifted);
+}
