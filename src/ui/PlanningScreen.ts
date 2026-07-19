@@ -68,7 +68,7 @@ const SLIDERS = {
   gravity: { label: 'شدة الجاذبية', min: 0, max: 2, step: 0.05, value: 0.6 },
   lifespan: { label: 'عمر الجسيمات', min: 0.4, max: 2.5, step: 0.05, value: 1.7 },
   scale: { label: 'اتساع الانفجار', min: 0.5, max: 2, step: 0.05, value: 1 },
-  glow: { label: 'توهج الألعاب النارية', min: 0, max: 10, step: 0.5, value: 4 },
+  glow: { label: 'توهج الألعاب النارية', min: 0, max: 10, step: 0.5, value: 0 },
   dimmer: { label: 'إضاءة الخلفية', min: 0, max: 1, step: 0.01, value: 1 },
 } satisfies Record<string, SliderSpec>;
 

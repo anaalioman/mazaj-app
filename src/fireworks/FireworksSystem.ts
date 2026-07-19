@@ -1,5 +1,4 @@
 import { Application, ColorMatrixFilter, Container, ParticleContainer, Rectangle } from 'pixi.js';
-import { AdvancedBloomFilter } from 'pixi-filters';
 import { Particle, type ParticleOptions } from './Particle';
 import { ParticlePool } from './ParticlePool';
 import { Rocket } from './Rocket';
@@ -78,8 +77,7 @@ export class FireworksSystem {
   private readonly trailsContainer: ParticleContainer;
   /** The white-hot leading-tip particles — see `trailsContainer` above. */
   private readonly coresContainer: ParticleContainer;
-  private readonly glowFilter: AdvancedBloomFilter;
-  /** Counteracts bloom's own tendency to bleed very bright, saturated bursts toward white in their hottest core — a native `pixi.js` filter (not `pixi-filters`), always active regardless of the glow slider. */
+  /** A flat saturation boost so bursts read as vivid — no screen-wide bloom/blur pass behind it, just this one lightweight per-pixel color matrix, always active. */
   private readonly colorFilter: ColorMatrixFilter;
   private readonly onLaunch?: (x: number) => void;
   private readonly onExplode?: (x: number, y: number, intensity: number) => void;
@@ -137,7 +135,7 @@ export class FireworksSystem {
     // `layer`'s own top-level children (just the two ParticleContainers +
     // occasional Rocket sprites) are stable frame-to-frame. That reasoning
     // didn't account for combining a render group with a container-level
-    // filter (`glowFilter` below) on top of content whose *visual* bounds
+    // filter (`colorFilter` below) on top of content whose *visual* bounds
     // grow explosively every frame during a burst — a real gap given this
     // codebase currently has no way to verify render-group/filter
     // compositing on real Android GPU drivers from this environment.
@@ -181,27 +179,25 @@ export class FireworksSystem {
       return rocket;
     });
 
-    // True bloom (bright-pass extract + blur + additive-style composite),
-    // not a flat blur — only genuinely bright pixels (white-hot ignition,
-    // hot embers) bleed light into the dark around them. `quality: 2`
-    // (dropped from 4, KawaseBlur's own default) trades a slightly less
-    // silky falloff for measurably fewer blur passes per frame — this filter
-    // runs on every frame the layer is visible, not just during a burst.
-    this.glowFilter = new AdvancedBloomFilter({ threshold: 0.4, blur: 6, quality: 2, bloomScale: 1.2, brightness: 1 });
+    // Every spark's own glow comes from `blendMode: 'add'` on the particle
+    // containers/sprites above — overlapping additive particles brighten
+    // each other with zero extra render passes. Deliberately no screen-wide
+    // bloom/blur filter on top of that: a full-screen multi-pass blur ran
+    // every single frame the layer was visible (not just during a burst),
+    // regardless of how little was on screen, which is real, avoidable GPU
+    // cost this effect doesn't need.
     this.colorFilter = new ColorMatrixFilter();
     this.colorFilter.saturate(0.35, false);
-    this.applyGlow();
+    this.layer.filters = [this.colorFilter];
 
     // Pixi's own docs are explicit about why this matters: without a fixed
     // `filterArea`, a filtered container's processing region is *recomputed
     // from its own display-object bounds every single frame* — and `layer`'s
     // bounds are exactly as volatile as the particles inside it, growing and
     // shrinking continuously through every burst. A fixed rect matching the
-    // screen (their own documented example) makes the bloom filter's
-    // intermediate render target a stable size/position every frame instead
-    // — a real device screenshot showed a rectangular tonal artifact
-    // tracking the live particle bounds, consistent with exactly this
-    // per-frame-bounds-recompute behavior.
+    // screen (their own documented example) keeps that region a stable
+    // size/position every frame instead of being recomputed from volatile
+    // particle bounds.
     this.layer.filterArea = new Rectangle(0, 0, app.screen.width, app.screen.height);
     app.renderer.on('resize', () => {
       this.layer.filterArea = new Rectangle(0, 0, app.screen.width, app.screen.height);
@@ -362,7 +358,6 @@ export class FireworksSystem {
   /** Live-tunable physics/visuals; every subsequent burst reads the merged values. */
   updateSettings(partial: Partial<BurstSettings>): void {
     Object.assign(this.settings, partial);
-    this.applyGlow();
   }
 
   /**
@@ -391,19 +386,6 @@ export class FireworksSystem {
 
     for (const fountain of this.fountains) fountain.destroy();
     this.fountains = [];
-  }
-
-  private applyGlow(): void {
-    const strength = Math.max(this.settings.glow, 0); // slider range 0-10
-    const normalized = Math.min(strength / 10, 1);
-    // Tuned so the default slider position (2/10) already reads as a clear
-    // bloom, not a barely-there one — matches roughly bloomScale 1.2/blur 8
-    // at the default, scaling up to a stronger halo at the slider's max.
-    this.glowFilter.bloomScale = 0.9 + normalized * 1.3;
-    this.glowFilter.blur = 4 + normalized * 8;
-    // colorFilter stays applied regardless of the glow slider — it's a
-    // baseline saturation boost, not part of the glow effect itself.
-    this.layer.filters = strength > 0.05 ? [this.glowFilter, this.colorFilter] : [this.colorFilter];
   }
 
   /** Every burst pattern constructs particles through here — reuses a dead pooled instance when one's available (see `particlePool`'s own doc comment), only ever allocating a fresh `Particle` on a genuine pool miss. Takes no `texture` argument: a pool miss's `new Particle(...)` always uses the one shared texture the pool's factory closed over in the constructor (see `particlePool`'s own initialization). */

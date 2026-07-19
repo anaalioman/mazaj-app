@@ -19,15 +19,15 @@ export interface BurstSettings {
   lifespanScale: number;
   /** Multiplier on initial burst velocity / spread radius. */
   explosionScale: number;
-  /** 0-10: trail thickness + a screen-space glow (blur) on the particle layer. */
+  /** 0-10: particle-size boost only (`glowSizeBoost()`) — no screen-wide blur/bloom filter. */
   glow: number;
 }
 
-// Richer out-of-the-box feel: denser bursts, a slower "royal" gravitational
-// fall, and a longer-lingering glow, without changing any slider's own
-// range — see the matching SLIDERS defaults in PlanningScreen.ts, which
-// must stay in sync with these (the sliders' initial handle position has to
-// reflect the engine's actual starting state, not a stale one).
+// Richer out-of-the-box feel: denser bursts and a slower "royal"
+// gravitational fall, without changing any slider's own range — see the
+// matching SLIDERS defaults in PlanningScreen.ts, which must stay in sync
+// with these (the sliders' initial handle position has to reflect the
+// engine's actual starting state, not a stale one).
 //
 // particleDensity raised again (240->320) after Particle.ts/FireworksSystem.ts
 // switched to a real object pool (see FireworksSystem's `deadPool` doc
@@ -39,5 +39,5 @@ export const DEFAULT_BURST_SETTINGS: BurstSettings = {
   gravityScale: 0.6,
   lifespanScale: 1.7,
   explosionScale: 1,
-  glow: 4,
+  glow: 0,
 };
