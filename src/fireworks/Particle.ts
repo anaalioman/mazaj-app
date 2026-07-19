@@ -7,6 +7,11 @@ import { fastSin, TWO_PI } from './SineTable';
 // `twinkleTimer`'s own doc comment).
 const TWINKLE_SPEED = 2.4;
 
+// Strobe's flicker frequency range (rad/frame) — the on/off cadence is now
+// a fixed-per-particle sine frequency, not a re-randomized interval timer.
+const STROBE_FREQ_MIN = 1.6;
+const STROBE_FREQ_MAX = 3.4;
+
 // Thermal Color Decay: the trail cools from a brief white flash into its
 // assigned shell color almost immediately, then ages into dim ember ash near
 // the end of its life. Boundaries are fractions of the particle's own
@@ -139,8 +144,10 @@ export class Particle {
   private hasSplit = false;
 
   private strobe = false;
+  /** Fixed once per spawn (see init()) — how fast this particle's on/off blink cycles. Not re-rolled per frame. */
+  private strobeFrequency = 0;
+  /** Wrapped in [0, TWO_PI) via a plain if each frame (see update()) — same convention as `twinkleTimer`, zero Math.random()/%/Math.floor in the per-frame path. */
   private strobeTimer = 0;
-  private strobeOn = true;
 
   private approachStrength = 0;
   private approachPeakRatio = 0;
@@ -195,8 +202,9 @@ export class Particle {
     this.onSplit = onSplit;
     this.hasSplit = false;
     this.strobe = strobe;
-    this.strobeTimer = 3 + Math.random() * 10;
-    this.strobeOn = true;
+    // One-time random pick at spawn (see strobeFrequency's own doc comment) — not the ticker.
+    this.strobeFrequency = strobe ? STROBE_FREQ_MIN + Math.random() * (STROBE_FREQ_MAX - STROBE_FREQ_MIN) : 0;
+    this.strobeTimer = 0;
     this.coreTint = lerpColor(IGNITION_COLOR, color, CORE_COLOR_MIX);
     this.approachStrength =
       Math.random() < APPROACH_CHANCE ? APPROACH_MIN_STRENGTH + Math.random() * (APPROACH_MAX_STRENGTH - APPROACH_MIN_STRENGTH) : 0;
@@ -245,13 +253,12 @@ export class Particle {
       alpha *= 0.55 + 0.45 * fastSin(this.twinkleTimer);
     }
     if (this.strobe) {
-      this.strobeTimer -= delta;
-      if (this.strobeTimer <= 0) {
-        this.strobeOn = !this.strobeOn;
-        // Re-randomized every flip so the blink speed itself varies, not just on/off.
-        this.strobeTimer = 3 + Math.random() * 10;
-      }
-      alpha *= this.strobeOn ? 1 : 0.04;
+      // Sine-driven flicker: a fixed per-particle frequency (set once at
+      // spawn), thresholded at zero for a sharp on/off blink instead of
+      // twinkle's smooth fade — no Math.random()/%/Math.floor in this path.
+      this.strobeTimer += delta * this.strobeFrequency;
+      if (this.strobeTimer >= TWO_PI) this.strobeTimer -= TWO_PI;
+      alpha *= fastSin(this.strobeTimer) > 0 ? 1 : 0.04;
     }
 
     // 3D Depth Illusion: 0 for most sparks (normal depth); for the chosen

@@ -14,6 +14,13 @@ export { ALL_BURST_TYPES, DEFAULT_BURST_SETTINGS, type BurstSettings, type Burst
 const MIN_LAUNCH_INTERVAL = 0.9;
 const MAX_LAUNCH_INTERVAL = 2.4;
 
+// Hard ceiling on simultaneously-live particles across every burst pattern
+// combined — bounds both containers' total ever-allocated particle count
+// (and therefore GPU vertex-buffer size) even under extreme stacked/spammed
+// bursts, instead of letting the pool grow to whatever peak concurrency a
+// user's tapping happens to produce.
+const MAX_LIVE_PARTICLES = 1500;
+
 // See launch()'s own doc comment: keeps a burst's ignition point far enough
 // from the screen edge that most of its own radius stays on-screen.
 const EDGE_MARGIN_RATIO = 0.2;
@@ -176,10 +183,11 @@ export class FireworksSystem {
 
     // True bloom (bright-pass extract + blur + additive-style composite),
     // not a flat blur — only genuinely bright pixels (white-hot ignition,
-    // hot embers) bleed light into the dark around them. `quality: 4` is a
-    // deliberate mid-range-Android compromise (KawaseBlur's default is 4);
-    // drop it further if a real device shows an FPS hit.
-    this.glowFilter = new AdvancedBloomFilter({ threshold: 0.4, blur: 6, quality: 4, bloomScale: 1.2, brightness: 1 });
+    // hot embers) bleed light into the dark around them. `quality: 2`
+    // (dropped from 4, KawaseBlur's own default) trades a slightly less
+    // silky falloff for measurably fewer blur passes per frame — this filter
+    // runs on every frame the layer is visible, not just during a burst.
+    this.glowFilter = new AdvancedBloomFilter({ threshold: 0.4, blur: 6, quality: 2, bloomScale: 1.2, brightness: 1 });
     this.colorFilter = new ColorMatrixFilter();
     this.colorFilter.saturate(0.35, false);
     this.applyGlow();
@@ -405,7 +413,18 @@ export class FireworksSystem {
     return particle;
   }
 
+  /** Single choke point every spawn call site (buildContext's spawn, spawnTrailSpark, spawnSettleSparkle) already goes through — enforces MAX_LIVE_PARTICLES here once instead of duplicating the check at each call site. */
   private addParticle(particle: Particle, batch?: BurstCompletion): void {
+    if (this.particles.length + this.pendingSpawns.length >= MAX_LIVE_PARTICLES) {
+      // At the ceiling: this instance was already popped from particlePool
+      // by spawnParticle() — return it immediately instead of letting it
+      // join the active list, so the pool (and each ParticleContainer's
+      // real GPU buffer) never grows past this bound no matter how many
+      // bursts get stacked/spammed at once.
+      particle.kill();
+      this.particlePool.push(particle);
+      return;
+    }
     this.pendingSpawns.push(particle);
     if (batch) {
       batch.remaining++;
