@@ -38,14 +38,15 @@ for (let i = 0; i < RANDOM_TABLE_SIZE; i++) randomTable[i] = Math.random();
  * nothing here and is gone.
  */
 export function burstPalmCrossette(x: number, y: number, ctx: BurstContext): void {
-  let rIdx = Math.floor(Math.random() * RANDOM_TABLE_SIZE);
+  let rIdx = ((x | 0) ^ (y | 0)) & RANDOM_MASK;
   const nextRandom = (): number => {
     rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
     return randomTable[rIdx];
   };
 
   const burstColors = ctx.activeColor !== null ? shadesOf(ctx.activeColor, 3) : pickBurstColors(3);
-  const armCount = 5 + Math.floor(nextRandom() * 3); // 5, 6, or 7
+  const colorLen = burstColors.length;
+  const armCount = 5 + ((nextRandom() * 3) | 0); // 5, 6, or 7
   const baseSpeed = (3.0 + nextRandom() * 1.4) * ctx.settings.explosionScale;
 
   // 4 fully independent draws per trail tick, one per field — position
@@ -56,16 +57,14 @@ export function burstPalmCrossette(x: number, y: number, ctx: BurstContext): voi
   // instead of coupling them to an unrelated field.
   const TRAIL_SIZE = 4;
   const TRAIL_LIFE = 21;
-  const spawnArmTrail = (sx: number, sy: number, color: number): void => {
+  const spawnArmTrail = (color: number, sx: number, sy: number): void => {
     const rx = nextRandom();
     const ry = nextRandom();
-    const rvx = nextRandom();
-    const rvy = nextRandom();
     ctx.spawn({
       x: sx + (rx - 0.5) * 3,
       y: sy + (ry - 0.5) * 3,
-      vx: (rvx - 0.5) * 0.3,
-      vy: 0.1 + rvy * 0.2,
+      vx: (nextRandom() - 0.5) * 0.3,
+      vy: 0.1 + nextRandom() * 0.2,
       color,
       size: TRAIL_SIZE,
       life: TRAIL_LIFE * ctx.settings.lifespanScale,
@@ -74,11 +73,11 @@ export function burstPalmCrossette(x: number, y: number, ctx: BurstContext): voi
     });
   };
 
-  const spawnSplit = (sx: number, sy: number, svx: number, svy: number, color: number): void => {
+  const spawnSplit = (color: number, sx: number, sy: number, svx: number, svy: number): void => {
     const magSq = svx * svx + svy * svy;
     const mag = Math.sqrt(magSq);
     const invMag = mag > 1e-6 ? 1 / mag : 0;
-    const speed = Math.max(mag * 0.7, 1.6);
+    const speed = mag * 0.7 > 1.6 ? mag * 0.7 : 1.6;
 
     // Two sparks perpendicular to the arm's own direction — 180° apart from
     // each other. Rotating (svx, svy) by +90°/-90° is exactly
@@ -90,14 +89,17 @@ export function burstPalmCrossette(x: number, y: number, ctx: BurstContext): voi
     const perp2x = svy * invMag;
     const perp2y = -svx * invMag;
 
+    const splitSize = 7 * ctx.glowSizeBoost;
+    const splitLifeBase = (26 + nextRandom() * 16) * ctx.settings.lifespanScale;
+
     ctx.spawn({
       x: sx,
       y: sy,
       vx: perp1x * speed,
       vy: perp1y * speed,
       color,
-      size: (6 + nextRandom() * 3) * ctx.glowSizeBoost,
-      life: (26 + nextRandom() * 16) * ctx.settings.lifespanScale,
+      size: splitSize,
+      life: splitLifeBase,
       gravity: 0.12 * ctx.settings.gravityScale,
       drag: 0.98,
       twinkle: true,
@@ -108,20 +110,33 @@ export function burstPalmCrossette(x: number, y: number, ctx: BurstContext): voi
       vx: perp2x * speed,
       vy: perp2y * speed,
       color,
-      size: (6 + nextRandom() * 3) * ctx.glowSizeBoost,
-      life: (26 + nextRandom() * 16) * ctx.settings.lifespanScale,
+      size: splitSize,
+      life: splitLifeBase,
       gravity: 0.12 * ctx.settings.gravityScale,
       drag: 0.98,
       twinkle: true,
     });
   };
 
+  // Function.prototype.bind partial-application, per arm — spawnArmTrail/
+  // spawnSplit take `color` as their first parameter specifically so it can
+  // be bound here. Still allocates one bound-function object per arm (bind
+  // isn't free — same order of cost as the arrow-function closures it
+  // replaces), just via a different mechanism.
+  const trailCallbacks: ((sx: number, sy: number) => void)[] = new Array(armCount);
+  const splitCallbacks: ((sx: number, sy: number, svx: number, svy: number) => void)[] = new Array(armCount);
+
+  for (let i = 0; i < armCount; i++) {
+    const color = burstColors[i % colorLen];
+    trailCallbacks[i] = spawnArmTrail.bind(null, color);
+    splitCallbacks[i] = spawnSplit.bind(null, color);
+  }
+
   for (let i = 0; i < armCount; i++) {
     const baseIndex = Math.round((i / armCount) * TABLE_SIZE);
     const jitterIndex = Math.round((nextRandom() - 0.5) * 2 * ARM_JITTER_HALF_RANGE);
     const thetaIndex = (baseIndex + jitterIndex) & TABLE_MASK;
     const speed = baseSpeed * (0.85 + nextRandom() * 0.3);
-    const color = burstColors[Math.floor(nextRandom() * burstColors.length)];
     const life = (55 + nextRandom() * 20) * ctx.settings.lifespanScale;
 
     ctx.spawn({
@@ -129,15 +144,15 @@ export function burstPalmCrossette(x: number, y: number, ctx: BurstContext): voi
       y,
       vx: fastCosByIndex(thetaIndex) * speed,
       vy: fastSinByIndex(thetaIndex) * speed,
-      color,
-      size: (15 + nextRandom() * 6) * ctx.glowSizeBoost, // thick frond
+      color: burstColors[i % colorLen],
+      size: 16 * ctx.glowSizeBoost, // fixed thick-frond size
       life,
       gravity: 0.09 * ctx.settings.gravityScale,
       drag: 0.99,
       sparkleInterval: 2 + nextRandom() * 2,
-      onSparkle: (sx, sy) => spawnArmTrail(sx, sy, color),
+      onSparkle: trailCallbacks[i],
       splitAt: life * 0.94, // right at the tip of the arm's life
-      onSplit: (sx, sy, svx, svy) => spawnSplit(sx, sy, svx, svy, color),
+      onSplit: splitCallbacks[i],
     });
   }
 }
