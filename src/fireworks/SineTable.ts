@@ -3,7 +3,7 @@
  * built once at module load. `Particle.ts`'s per-frame, per-particle
  * twinkle flicker reads from this instead of calling `Math.sin()` directly.
  */
-const TABLE_SIZE = 1024; // power of 2 — enables `& (TABLE_SIZE - 1)` instead of `% TABLE_SIZE`
+export const TABLE_SIZE = 1024; // power of 2 — enables `& (TABLE_SIZE - 1)` instead of `% TABLE_SIZE`
 const TABLE_MASK = TABLE_SIZE - 1;
 export const TWO_PI = Math.PI * 2;
 
@@ -34,4 +34,21 @@ export function fastCos(wrappedRadians: number): number {
   let shifted = wrappedRadians + Math.PI / 2;
   if (shifted >= TWO_PI) shifted -= TWO_PI;
   return fastSin(shifted);
+}
+
+/**
+ * Direct table lookup by INTEGER index (0..TABLE_SIZE-1), not radians — for
+ * callers that already work in table-index space (e.g. Rose.ts's polar
+ * angle steps) and want to wrap via `& (TABLE_SIZE - 1)` instead of
+ * converting back to radians and re-scaling through `fastSin`. No
+ * interpolation (plain lookup), so this trades a little precision for one
+ * array read + one mask, no division/branch.
+ */
+export function sinByIndex(index: number): number {
+  return table[index & TABLE_MASK];
+}
+
+/** `cosByIndex` — see `sinByIndex`; cos is sin shifted a quarter-table (TABLE_SIZE/4 == 90°). */
+export function cosByIndex(index: number): number {
+  return table[(index + TABLE_SIZE / 4) & TABLE_MASK];
 }
