@@ -44,11 +44,11 @@ export function fastCos(wrappedRadians: number): number {
  * interpolation (plain lookup), so this trades a little precision for one
  * array read + one mask, no division/branch.
  */
-export function sinByIndex(index: number): number {
+export function fastSinByIndex(index: number): number {
   return table[index & TABLE_MASK];
 }
 
-/** `cosByIndex` — see `sinByIndex`; cos is sin shifted a quarter-table (TABLE_SIZE/4 == 90°). */
-export function cosByIndex(index: number): number {
+/** `fastCosByIndex` — see `fastSinByIndex`; cos is sin shifted a quarter-table (TABLE_SIZE/4 == 90°). */
+export function fastCosByIndex(index: number): number {
   return table[(index + TABLE_SIZE / 4) & TABLE_MASK];
 }
