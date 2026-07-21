@@ -1,5 +1,5 @@
 import { Application, ColorMatrixFilter, Container, ParticleContainer, Rectangle } from 'pixi.js';
-import { Particle, type ParticleOptions } from './Particle';
+import { Particle, type ParticleBatch, type ParticleOptions } from './Particle';
 import { ParticlePool } from './ParticlePool';
 import { Rocket } from './Rocket';
 import { GroundFountain } from './GroundFountain';
@@ -30,23 +30,22 @@ const EDGE_MARGIN_MAX = 90;
 // thin ones (a handful of crossette arms) don't shake at all.
 const BURST_INTENSITY_REFERENCE_COUNT = 150;
 
+// Static noise pool for every system-level random pick (launch apex/timing,
+// auto-launch x, hybrid-burst perturbation, settle-sparkle/trail-spark
+// spawns, burst-type selection) — baked once at module load, walked via a
+// persistent per-instance cursor (see `randCursor`/`nextRand()`) instead of
+// live Math.random() calls scattered across every method.
+const RANDOM_TABLE_SIZE = 1024;
+const RANDOM_MASK = RANDOM_TABLE_SIZE - 1;
+const RANDOM_STRIDE = 7;
+const randomTable = new Float32Array(RANDOM_TABLE_SIZE);
+for (let i = 0; i < RANDOM_TABLE_SIZE; i++) randomTable[i] = Math.random();
+
 export interface FireworksSystemOptions {
   autoLaunch?: boolean;
   onLaunch?: (x: number) => void;
   /** `intensity` is roughly 0-1.5, scaled by how many particles the burst spawned. */
   onExplode?: (x: number, y: number, intensity: number) => void;
-}
-
-/**
- * Tracks one explosion's real, full visual lifetime — including every
- * deferred child a burst spawns after the initial spread (Kamuro's falling
- * glitter, Crossette's arm-tip splits) — so `onComplete` fires exactly once
- * every last descendant particle has actually faded out, not on a fixed
- * timer. See `launch()`'s `onComplete` param and `addParticle()`.
- */
-interface BurstCompletion {
-  remaining: number;
-  onComplete: () => void;
 }
 
 /**
@@ -89,8 +88,6 @@ export class FireworksSystem {
   // mutating `particles` while `Array.prototype.filter` is iterating it
   // would silently drop anything pushed past the loop's captured length.
   private pendingSpawns: Particle[] = [];
-  // Which particles belong to which tracked burst — see BurstCompletion.
-  private readonly particleWatchers = new Map<Particle, BurstCompletion>();
   // Object pool (see ParticlePool.ts's own doc comment): dead particles land
   // here via `kill()` instead of being discarded, and `spawnParticle()`
   // reuses one via `init()` before ever allocating a new instance. A show's
@@ -105,6 +102,10 @@ export class FireworksSystem {
   private readonly rocketPool: ParticlePool<Rocket>;
 
   private settings: BurstSettings = { ...DEFAULT_BURST_SETTINGS };
+  // Persistent save/restore buffer for burstRandomHybrid()'s temporary
+  // perturbation — reused every hybrid burst instead of `{ ...this.settings }`
+  // allocating a fresh snapshot object each time.
+  private readonly settingsScratch: BurstSettings = { ...DEFAULT_BURST_SETTINGS };
   private enabledTypes: BurstType[] = [...ALL_BURST_TYPES];
   private randomModeEnabled = false;
   // The player's "dye this shell" color-picker choice (see PlanningScreen's
@@ -119,6 +120,12 @@ export class FireworksSystem {
 
   private autoLaunchEnabled: boolean;
   private timeToNextAutoLaunch: number;
+
+  // Persistent walking cursor into the static `randomTable` — seeded once
+  // from the engine's own clock (see constructor), advanced by RANDOM_STRIDE
+  // on every `nextRand()` call, same technique as Strobe.ts/Particle.ts's
+  // own randomTable walks, just at the system level instead of per-particle.
+  private randCursor: number;
 
   /**
    * Wall-clock time (`performance.now()` delta, milliseconds) the most
@@ -203,8 +210,18 @@ export class FireworksSystem {
       this.layer.filterArea = new Rectangle(0, 0, app.screen.width, app.screen.height);
     });
 
+    // Seeded from the engine's own clock instead of Math.random() — see
+    // `randCursor`'s own doc comment.
+    this.randCursor = (app.ticker.lastTime | 0) & RANDOM_MASK;
+
     this.autoLaunchEnabled = options.autoLaunch ?? true;
     this.timeToNextAutoLaunch = this.randomLaunchDelay();
+  }
+
+  /** Walks `randomTable` one step — see `randCursor`'s own doc comment. */
+  private nextRand(): number {
+    this.randCursor = (this.randCursor + RANDOM_STRIDE) & RANDOM_MASK;
+    return randomTable[this.randCursor];
   }
 
   /**
@@ -217,7 +234,7 @@ export class FireworksSystem {
    */
   launch(x: number, targetY?: number, forcedType?: BurstType, onComplete?: () => void): void {
     const { width, height } = this.app.screen;
-    const apex = targetY ?? height * (0.15 + Math.random() * 0.45);
+    const apex = targetY ?? height * (0.15 + this.nextRand() * 0.45);
     const color = this.activeColor ?? randomColor(randomPalette());
     // Reads live app.screen.width every call (not a cached value), so this
     // stays correct across resize/rotation on its own. The margin itself is
@@ -249,31 +266,55 @@ export class FireworksSystem {
     if (this.autoLaunchEnabled) {
       this.timeToNextAutoLaunch -= delta / 60;
       if (this.timeToNextAutoLaunch <= 0) {
-        this.launch(Math.random() * this.app.screen.width);
+        this.launch(this.nextRand() * this.app.screen.width);
         this.timeToNextAutoLaunch = this.randomLaunchDelay();
       }
     }
 
-    this.rockets = this.rockets.filter((rocket) => {
+    // Swap-with-last removal instead of `.filter()`: no new array per
+    // frame — same technique already established in GroundFountain.ts.
+    let rIdx = 0;
+    while (rIdx < this.rockets.length) {
+      const rocket = this.rockets[rIdx];
       const reachedApex = rocket.update(delta, (x, y) => this.spawnTrailSpark(x, y, rocket.color));
       if (reachedApex) {
         this.explode(rocket.x, rocket.y, rocket.forcedType, rocket.onComplete);
         rocket.kill();
         this.rocketPool.push(rocket);
-        return false;
+        const last = this.rockets.pop();
+        if (rIdx < this.rockets.length && last) {
+          this.rockets[rIdx] = last;
+        }
+      } else {
+        rIdx++;
       }
-      return true;
-    });
+    }
 
-    this.particles = this.particles.filter((particle) => {
+    // Swap-with-last removal instead of `.filter()`: no new array per
+    // frame — same technique already established in GroundFountain.ts.
+    let pIdx = 0;
+    while (pIdx < this.particles.length) {
+      const particle = this.particles[pIdx];
       const alive = particle.update(delta);
       if (!alive) {
         particle.kill();
         this.particlePool.push(particle);
-        this.resolveWatcher(particle);
+        // O(1) direct property read/clear instead of a Map lookup+delete —
+        // see `Particle.batch`'s own doc comment.
+        const batch = particle.batch;
+        if (batch) {
+          particle.batch = undefined;
+          batch.remaining--;
+          if (batch.remaining <= 0) batch.onComplete();
+        }
+        const last = this.particles.pop();
+        if (pIdx < this.particles.length && last) {
+          this.particles[pIdx] = last;
+        }
+      } else {
+        pIdx++;
       }
-      return alive;
-    });
+    }
 
     if (this.pendingSpawns.length > 0) {
       this.particles.push(...this.pendingSpawns);
@@ -344,16 +385,16 @@ export class FireworksSystem {
     const burstColor = color ?? this.activeColor ?? randomColor(randomPalette());
     const count = 16;
     for (let i = 0; i < count; i++) {
-      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
-      const speed = (1.4 + Math.random() * 1.2) * this.settings.explosionScale;
+      const angle = (Math.PI * 2 * i) / count + this.nextRand() * 0.3;
+      const speed = (1.4 + this.nextRand() * 1.2) * this.settings.explosionScale;
       const particle = this.spawnParticle({
         x,
         y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
         color: burstColor,
-        size: (5 + Math.random() * 3) * this.glowSizeBoost(),
-        life: (40 + Math.random() * 20) * this.settings.lifespanScale,
+        size: (5 + this.nextRand() * 3) * this.glowSizeBoost(),
+        life: (40 + this.nextRand() * 20) * this.settings.lifespanScale,
         gravity: 0.08 * this.settings.gravityScale,
         drag: 0.985,
       });
@@ -385,7 +426,12 @@ export class FireworksSystem {
     for (const particle of [...this.particles, ...this.pendingSpawns]) {
       particle.kill();
       this.particlePool.push(particle);
-      this.resolveWatcher(particle);
+      const batch = particle.batch;
+      if (batch) {
+        particle.batch = undefined;
+        batch.remaining--;
+        if (batch.remaining <= 0) batch.onComplete();
+      }
     }
     this.particles = [];
     this.pendingSpawns = [];
@@ -402,7 +448,7 @@ export class FireworksSystem {
   }
 
   /** Single choke point every spawn call site (buildContext's spawn, spawnTrailSpark, spawnSettleSparkle) already goes through — enforces MAX_LIVE_PARTICLES here once instead of duplicating the check at each call site. */
-  private addParticle(particle: Particle, batch?: BurstCompletion): void {
+  private addParticle(particle: Particle, batch?: ParticleBatch): void {
     if (this.particles.length + this.pendingSpawns.length >= MAX_LIVE_PARTICLES) {
       // At the ceiling: this instance was already popped from particlePool
       // by spawnParticle() — return it immediately instead of letting it
@@ -416,20 +462,12 @@ export class FireworksSystem {
     this.pendingSpawns.push(particle);
     if (batch) {
       batch.remaining++;
-      this.particleWatchers.set(particle, batch);
+      particle.batch = batch;
     }
   }
 
-  private resolveWatcher(particle: Particle): void {
-    const watcher = this.particleWatchers.get(particle);
-    if (!watcher) return;
-    this.particleWatchers.delete(particle);
-    watcher.remaining--;
-    if (watcher.remaining <= 0) watcher.onComplete();
-  }
-
   /** Builds the `BurstContext` a pattern function (Peony.ts, Heart.ts, ...) runs against — see patterns/types.ts. */
-  private buildContext(batch?: BurstCompletion): BurstContext {
+  private buildContext(batch?: ParticleBatch): BurstContext {
     return {
       spawn: (options) => {
         const particle = this.spawnParticle(options);
@@ -449,7 +487,7 @@ export class FireworksSystem {
     // Tracks this explosion's full lineage — including deferred children a
     // burst spawns later (Kamuro glitter, Crossette splits) — so onComplete
     // fires only once every last one of them has actually faded away.
-    const batch: BurstCompletion | undefined = onComplete ? { remaining: 0, onComplete } : undefined;
+    const batch: ParticleBatch | undefined = onComplete ? { remaining: 0, onComplete } : undefined;
 
     // Isolated, real wall-clock cost of the burst pattern's own synchronous
     // spawn loop — see `lastBurstSpawnMs`'s own doc comment.
@@ -460,7 +498,7 @@ export class FireworksSystem {
     } else if (this.randomModeEnabled) {
       this.burstRandomHybrid(x, y);
     } else {
-      const type = this.enabledTypes[(Math.random() * this.enabledTypes.length) | 0];
+      const type = this.enabledTypes[(this.nextRand() * this.enabledTypes.length) | 0];
       BURST_PATTERNS[type](x, y, this.buildContext(batch));
     }
 
@@ -481,21 +519,32 @@ export class FireworksSystem {
    * restored immediately after.
    */
   private burstRandomHybrid(x: number, y: number): void {
-    const layerCount = Math.random() < 0.55 ? 1 : 2;
+    const layerCount = this.nextRand() < 0.55 ? 1 : 2;
     const chosenIndices = new Set<number>();
     while (chosenIndices.size < layerCount) {
-      chosenIndices.add((Math.random() * ALL_BURST_TYPES.length) | 0);
+      chosenIndices.add((this.nextRand() * ALL_BURST_TYPES.length) | 0);
     }
 
-    const savedSettings = { ...this.settings };
-    this.settings.particleDensity *= 0.65 + Math.random() * 0.9;
-    this.settings.lifespanScale *= 0.7 + Math.random() * 0.9;
-    this.settings.explosionScale *= 0.8 + Math.random() * 0.6;
+    // Field-by-field save into the persistent `settingsScratch` buffer
+    // instead of `{ ...this.settings }` — zero allocation per hybrid burst.
+    this.settingsScratch.particleDensity = this.settings.particleDensity;
+    this.settingsScratch.gravityScale = this.settings.gravityScale;
+    this.settingsScratch.lifespanScale = this.settings.lifespanScale;
+    this.settingsScratch.explosionScale = this.settings.explosionScale;
+    this.settingsScratch.glow = this.settings.glow;
+
+    this.settings.particleDensity *= 0.65 + this.nextRand() * 0.9;
+    this.settings.lifespanScale *= 0.7 + this.nextRand() * 0.9;
+    this.settings.explosionScale *= 0.8 + this.nextRand() * 0.6;
 
     const ctx = this.buildContext();
     for (const index of chosenIndices) BURST_PATTERNS[ALL_BURST_TYPES[index]](x, y, ctx);
 
-    this.settings = savedSettings;
+    this.settings.particleDensity = this.settingsScratch.particleDensity;
+    this.settings.gravityScale = this.settingsScratch.gravityScale;
+    this.settings.lifespanScale = this.settingsScratch.lifespanScale;
+    this.settings.explosionScale = this.settingsScratch.explosionScale;
+    this.settings.glow = this.settingsScratch.glow;
   }
 
   private densityRatio(): number {
@@ -517,7 +566,7 @@ export class FireworksSystem {
    * where a real shell's brightest, hottest core sits.
    */
   private fillSpeed(maxSpeed: number, minRatio = 0.1): number {
-    return maxSpeed * (minRatio + Math.random() * (1 - minRatio));
+    return maxSpeed * (minRatio + this.nextRand() * (1 - minRatio));
   }
 
   private spawnTrailSpark(x: number, y: number, color: number): void {
@@ -525,11 +574,11 @@ export class FireworksSystem {
       this.spawnParticle({
         x,
         y,
-        vx: (Math.random() - 0.5) * 0.4,
-        vy: 0.3 + Math.random() * 0.3,
+        vx: (this.nextRand() - 0.5) * 0.4,
+        vy: 0.3 + this.nextRand() * 0.3,
         color,
-        size: 4 + Math.random() * 3,
-        life: 18 + Math.random() * 10,
+        size: 4 + this.nextRand() * 3,
+        life: 18 + this.nextRand() * 10,
         gravity: 0.02,
         drag: 0.97,
       }),
@@ -537,6 +586,6 @@ export class FireworksSystem {
   }
 
   private randomLaunchDelay(): number {
-    return MIN_LAUNCH_INTERVAL + Math.random() * (MAX_LAUNCH_INTERVAL - MIN_LAUNCH_INTERVAL);
+    return MIN_LAUNCH_INTERVAL + this.nextRand() * (MAX_LAUNCH_INTERVAL - MIN_LAUNCH_INTERVAL);
   }
 }
