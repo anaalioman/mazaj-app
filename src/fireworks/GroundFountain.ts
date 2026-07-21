@@ -1,48 +1,17 @@
 import { Application, Container, Particle as PixiParticle, ParticleContainer, Sprite, Texture } from 'pixi.js';
 import { getParticleTexture, getGlowTexture } from './textures';
-import { applyDrag, applyDragAndGravity, integratePosition } from './ParticlePhysics';
 import { ParticlePool } from './ParticlePool';
 
 const DURATION_SECONDS = 5;
-// Sparks never climb higher than this fraction of the screen height above
-// their spawn point, keeping the effect compact and the frame's middle/top
-// clear for the background photo/video underneath.
 const HEIGHT_RATIO = 0.25;
-// Total cone spread of 12° (within the requested 10-15° range), narrow and
-// tall rather than a wide aerial-burst spray.
 const CONE_HALF_ANGLE = ((12 * Math.PI) / 180) / 2;
 const EMIT_RATE_PER_SEC = 90;
-const GLOW_COLOR = 0xffb347;
 const GLOW_RADIUS = 46;
-// A gentle real gravity — enough that sparks visibly arc over and rain
-// back down like a real gerb/fountain, not just decelerate and hang from
-// drag alone. Deliberately much smaller than a burst spark's own
-// gravity (0.06-0.12) since this effect is meant to read as a soft,
-// floaty spray, not a falling ember.
 const SPARK_GRAVITY = 0.03;
 const SPARK_VX_DRAG = 0.985;
-const SPARK_VY_DRAG = 0.965; // strong drag: visibly decelerates rather than arcing like a real burst
+const SPARK_VY_DRAG = 0.965;
+const MAX_SPARKS = Math.ceil(EMIT_RATE_PER_SEC * DURATION_SECONDS);
 
-interface FountainSpark {
-  particle: PixiParticle;
-  vx: number;
-  vy: number;
-}
-
-/**
- * Ground Fountain: a continuous, narrow-cone stream of sparks shooting up
- * from a fixed point for 5 seconds, capped at a strict height limit — unlike
- * every other burst here, this isn't a one-shot rocket explosion. Its
- * fade/kill rule is driven by height climbed, not elapsed life, which is why
- * it's its own small class rather than reusing the age-based `Particle`
- * class — but every other piece of infrastructure is shared, not
- * reinvented: sparks render through a real `ParticleContainer` (same
- * technique as `FireworksSystem`'s `trailsContainer`/`coresContainer`), are
- * recycled through the same generic `ParticlePool`, and move via the same
- * `ParticlePhysics` equations every other moving thing in `fireworks/` uses.
- * Contains zero logic about any of the seven burst patterns (Peony, Rose,
- * ...) — this file is the ground fountain and nothing else.
- */
 export class GroundFountain {
   private readonly app: Application;
   private readonly container: Container;
@@ -54,10 +23,18 @@ export class GroundFountain {
   private readonly glow: Sprite;
   private readonly pool: ParticlePool<PixiParticle>;
 
-  private sparks: FountainSpark[] = [];
+  private readonly sparkParticles: (PixiParticle | null)[] = new Array(MAX_SPARKS);
+  private readonly sparkX = new Float32Array(MAX_SPARKS);
+  private readonly sparkY = new Float32Array(MAX_SPARKS);
+  private readonly sparkVx = new Float32Array(MAX_SPARKS);
+  private readonly sparkVy = new Float32Array(MAX_SPARKS);
+  private liveSparkCount = 0;
   private age = 0;
   private emitAccumulator = 0;
   private emitting = true;
+
+  private readonly invTextureWidth: number;
+  private readonly invTextureHeight: number;
 
   constructor(app: Application, x: number, y: number, parentLayer: Container) {
     this.app = app;
@@ -66,16 +43,16 @@ export class GroundFountain {
     this.maxRise = app.screen.height * HEIGHT_RATIO;
     this.texture = getParticleTexture();
 
+    this.invTextureWidth = 1 / this.texture.width;
+    this.invTextureHeight = 1 / this.texture.height;
+
     this.container = new Container();
     parentLayer.addChild(this.container);
 
-    // Same batched-rendering technique as FireworksSystem's own particle
-    // containers: every spark is a flat, same-texture PixiJS `Particle`
-    // (not a Sprite/Container), so ~90 concurrent sparks cost one draw call.
     this.sparksContainer = new ParticleContainer({
       texture: this.texture,
       blendMode: 'add',
-      dynamicProperties: { position: true, rotation: false, vertex: true, uvs: false, color: true },
+      dynamicProperties: { position: true, rotation: false, vertex: true, uvs: false, color: false },
     });
     this.container.addChild(this.sparksContainer);
 
@@ -85,13 +62,8 @@ export class GroundFountain {
       return particle;
     });
 
-    // A dedicated, perfectly smooth radial-gradient texture (not the grainy
-    // spark texture) — a plain tinted/scaled Sprite instead of a Graphics
-    // shape, so this effect needs zero geometry of its own, while still
-    // reading as a soft ambient bloom with no hard/grainy edges.
-    this.glow = new Sprite(getGlowTexture(this.app));
+    this.glow = new Sprite(getGlowTexture());
     this.glow.anchor.set(0.5);
-    this.glow.tint = GLOW_COLOR;
     this.glow.width = GLOW_RADIUS * 2;
     this.glow.height = GLOW_RADIUS * 2;
     this.glow.position.set(x, y);
@@ -100,20 +72,25 @@ export class GroundFountain {
     this.container.addChild(this.glow);
   }
 
-  /** True once the emitter has stopped and every spark it made has died out. */
   get finished(): boolean {
-    return !this.emitting && this.sparks.length === 0;
+    return !this.emitting && this.liveSparkCount === 0;
   }
 
   update(deltaFrames: number): void {
     const deltaSeconds = this.app.ticker.deltaMS / 1000;
     this.age += deltaSeconds;
 
-    // Ambient warm glow at the base: fades in over 0.3s, holds, fades out
-    // over the final 0.6s — present for the whole 5s duration either way.
-    const fadeIn = Math.min(this.age / 0.3, 1);
-    const fadeOut = Math.min(Math.max((DURATION_SECONDS - this.age) / 0.6, 0), 1);
-    this.glow.alpha = Math.min(fadeIn, fadeOut) * 0.35;
+    if (this.emitting) {
+      if (this.age <= 0.3) {
+        this.glow.alpha = (this.age / 0.3) * 0.35;
+      } else {
+        this.glow.alpha = 0.35;
+      }
+    } else {
+      const densityRatio = this.liveSparkCount / EMIT_RATE_PER_SEC;
+      const targetAlpha = densityRatio * 0.35;
+      this.glow.alpha = targetAlpha < 0 ? 0 : targetAlpha > 0.35 ? 0.35 : targetAlpha;
+    }
 
     if (this.emitting) {
       if (this.age >= DURATION_SECONDS) {
@@ -127,7 +104,51 @@ export class GroundFountain {
       }
     }
 
-    this.sparks = this.sparks.filter((spark) => this.advanceSpark(spark, deltaFrames));
+    let i = 0;
+    const baseY = this.baseY;
+    const maxRise = this.maxRise;
+
+    while (i < this.liveSparkCount) {
+      const particle = this.sparkParticles[i] as PixiParticle;
+
+      const vx = this.sparkVx[i] * SPARK_VX_DRAG;
+      const vy = this.sparkVy[i] * SPARK_VY_DRAG + SPARK_GRAVITY * deltaFrames;
+      this.sparkVx[i] = vx;
+      this.sparkVy[i] = vy;
+
+      const nextX = this.sparkX[i] + vx * deltaFrames;
+      const nextY = this.sparkY[i] + vy * deltaFrames;
+      this.sparkX[i] = nextX;
+      this.sparkY[i] = nextY;
+
+      particle.x = (nextX + 0.5) | 0;
+      particle.y = (nextY + 0.5) | 0;
+
+      const rise = baseY - nextY;
+      const riseRatio = rise < 0 ? 0 : rise > maxRise ? 1 : rise / maxRise;
+      let alpha = 1;
+      if (riseRatio >= 0.7) alpha = 1 - (riseRatio - 0.7) / 0.3;
+      particle.alpha = alpha < 0 ? 0 : alpha;
+
+      if (rise >= maxRise || alpha <= 0 || rise <= 0) {
+        particle.alpha = 0;
+        particle.scaleX = 0;
+        particle.scaleY = 0;
+        this.pool.push(particle);
+
+        const last = --this.liveSparkCount;
+        if (i !== last) {
+          this.sparkParticles[i] = this.sparkParticles[last];
+          this.sparkX[i] = this.sparkX[last];
+          this.sparkY[i] = this.sparkY[last];
+          this.sparkVx[i] = this.sparkVx[last];
+          this.sparkVy[i] = this.sparkVy[last];
+        }
+        this.sparkParticles[last] = null;
+      } else {
+        i++;
+      }
+    }
   }
 
   destroy(): void {
@@ -135,44 +156,39 @@ export class GroundFountain {
   }
 
   private spawnSpark(): void {
-    const angle = -Math.PI / 2 + (Math.random() - 0.5) * 2 * CONE_HALF_ANGLE;
-    const speed = 5 + Math.random() * 2;
+    if (this.liveSparkCount >= MAX_SPARKS) return;
+
+    const rawRand = Math.random();
+
+    const randAngle = (rawRand * 100) % 1;
+    const randSpeed = (rawRand * 10000) % 1;
+    const randColor = (rawRand * 1000000) % 1;
+    const randSize = (rawRand * 100000000) % 1;
+    const randX = (rawRand * 10) % 1;
+
+    const angle = -Math.PI / 2 + (randAngle - 0.5) * 2 * CONE_HALF_ANGLE;
+    const speed = 5 + randSpeed * 2;
 
     const particle = this.pool.pop();
-    particle.tint = Math.random() < 0.5 ? 0xffcf6b : 0xffe9b3;
-    const size = 5 + Math.random() * 3;
-    // PixiJS's lightweight Particle has no width/height — only scaleX/scaleY
-    // relative to its shared texture's own pixel size (same reasoning as
-    // Particle.ts's own setScale() helper).
-    particle.scaleX = size / this.texture.width;
-    particle.scaleY = size / this.texture.height;
+    particle.tint = randColor < 0.5 ? 0xffcf6b : 0xffe9b3;
+
+    const size = (5 + randSize * 3) | 0;
+    particle.scaleX = size * this.invTextureWidth;
+    particle.scaleY = size * this.invTextureHeight;
     particle.alpha = 1;
-    particle.x = this.baseX + (Math.random() - 0.5) * 4;
-    particle.y = this.baseY;
 
-    this.sparks.push({ particle, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed });
-  }
+    const spawnX = this.baseX + (randX - 0.5) * 4;
+    const spawnY = this.baseY;
 
-  /** Returns false once the spark should be removed (hit the height cap or fully faded). */
-  private advanceSpark(spark: FountainSpark, delta: number): boolean {
-    spark.vx = applyDrag(spark.vx, SPARK_VX_DRAG);
-    spark.vy = applyDragAndGravity(spark.vy, SPARK_VY_DRAG, SPARK_GRAVITY, delta);
-    spark.particle.x = integratePosition(spark.particle.x, spark.vx, delta);
-    spark.particle.y = integratePosition(spark.particle.y, spark.vy, delta);
+    const idx = this.liveSparkCount++;
+    this.sparkParticles[idx] = particle;
+    this.sparkX[idx] = spawnX;
+    this.sparkY[idx] = spawnY;
 
-    const rise = this.baseY - spark.particle.y;
-    const riseRatio = Math.min(Math.max(rise / this.maxRise, 0), 1);
-    const fadeStart = 0.7; // fades out over the final 30% of its climb
-    const alpha = riseRatio < fadeStart ? 1 : 1 - (riseRatio - fadeStart) / (1 - fadeStart);
-    spark.particle.alpha = Math.max(0, alpha);
+    particle.x = (spawnX + 0.5) | 0;
+    particle.y = spawnY | 0;
 
-    if (rise >= this.maxRise || alpha <= 0) {
-      spark.particle.alpha = 0;
-      spark.particle.scaleX = 0;
-      spark.particle.scaleY = 0;
-      this.pool.push(spark.particle);
-      return false;
-    }
-    return true;
+    this.sparkVx[idx] = Math.cos(angle) * speed;
+    this.sparkVy[idx] = Math.sin(angle) * speed;
   }
 }

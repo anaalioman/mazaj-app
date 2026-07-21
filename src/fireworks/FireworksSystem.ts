@@ -236,7 +236,7 @@ export class FireworksSystem {
     rocket.init({
       x: clampedX,
       startY: height + 10,
-      targetY: Math.max(apex, 20),
+      targetY: (apex > 20 ? apex : 20) | 0,
       color,
       forcedType,
       onComplete,
@@ -280,15 +280,21 @@ export class FireworksSystem {
       this.pendingSpawns = [];
     }
 
-    if (this.fountains.length > 0) {
-      this.fountains = this.fountains.filter((fountain) => {
-        fountain.update(delta);
-        if (fountain.finished) {
-          fountain.destroy();
-          return false;
+    // Swap-with-last removal instead of `.filter()`: no new array per
+    // frame — same technique already established in GroundFountain.ts.
+    let fIdx = 0;
+    while (fIdx < this.fountains.length) {
+      const fountain = this.fountains[fIdx];
+      fountain.update(delta);
+      if (fountain.finished) {
+        fountain.destroy();
+        const lastF = this.fountains.pop();
+        if (fIdx < this.fountains.length && lastF) {
+          this.fountains[fIdx] = lastF;
         }
-        return true;
-      });
+      } else {
+        fIdx++;
+      }
     }
   }
 
@@ -454,7 +460,7 @@ export class FireworksSystem {
     } else if (this.randomModeEnabled) {
       this.burstRandomHybrid(x, y);
     } else {
-      const type = this.enabledTypes[Math.floor(Math.random() * this.enabledTypes.length)];
+      const type = this.enabledTypes[(Math.random() * this.enabledTypes.length) | 0];
       BURST_PATTERNS[type](x, y, this.buildContext(batch));
     }
 
@@ -478,7 +484,7 @@ export class FireworksSystem {
     const layerCount = Math.random() < 0.55 ? 1 : 2;
     const chosenIndices = new Set<number>();
     while (chosenIndices.size < layerCount) {
-      chosenIndices.add(Math.floor(Math.random() * ALL_BURST_TYPES.length));
+      chosenIndices.add((Math.random() * ALL_BURST_TYPES.length) | 0);
     }
 
     const savedSettings = { ...this.settings };

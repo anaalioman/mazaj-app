@@ -1,4 +1,4 @@
-import { Application, FillGradient, Graphics, Texture } from 'pixi.js';
+import { Texture } from 'pixi.js';
 import { createOffscreenCanvas } from '../dom/shadowServices';
 
 let cached: Texture | null = null;
@@ -40,7 +40,7 @@ const perm = new Uint8Array(PERM_SIZE * 2);
   const p = new Uint8Array(PERM_SIZE);
   for (let i = 0; i < PERM_SIZE; i++) p[i] = i;
   for (let i = PERM_SIZE - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1));
+    const j = (random() * (i + 1)) | 0;
     const tmp = p[i];
     p[i] = p[j];
     p[j] = tmp;
@@ -65,10 +65,12 @@ function grad(hash: number, x: number, y: number): number {
 
 /** Single-octave 2D Perlin noise, range roughly [-1, 1]. */
 function perlin2(x: number, y: number): number {
-  const xi = Math.floor(x) & (PERM_SIZE - 1);
-  const yi = Math.floor(y) & (PERM_SIZE - 1);
-  const xf = x - Math.floor(x);
-  const yf = y - Math.floor(y);
+  const xFloor = (x > 0 ? x : x - 1) | 0;
+  const yFloor = (y > 0 ? y : y - 1) | 0;
+  const xi = xFloor & (PERM_SIZE - 1);
+  const yi = yFloor & (PERM_SIZE - 1);
+  const xf = x - xFloor;
+  const yf = y - yFloor;
   const u = fade(xf);
   const v = fade(yf);
 
@@ -139,7 +141,7 @@ export function getParticleTexture(): Texture {
       data[idx] = 255;
       data[idx + 1] = 255;
       data[idx + 2] = 255;
-      data[idx + 3] = Math.round(alpha * 255);
+      data[idx + 3] = (alpha * 255 + 0.5) | 0;
     }
   }
 
@@ -150,33 +152,48 @@ export function getParticleTexture(): Texture {
 
 const GLOW_TEXTURE_SIZE = 256;
 
-// A dedicated, perfectly smooth radial-gradient blob — deliberately NOT the
-// grainy Perlin-noise spark texture above. Built via PixiJS's own
-// FillGradient + Graphics + renderer.generateTexture() pipeline rather than
-// a raw canvas bake, per explicit instruction. Baked once (memoized in
-// `cachedGlow`) the first time GroundFountain needs it.
-export function getGlowTexture(app: Application): Texture {
+// A dedicated, perfectly smooth radial (Gaussian) blob — deliberately NOT
+// the grainy Perlin-noise spark texture above. Baked via the same
+// offscreen-canvas pixel-write technique as getParticleTexture() (Gaussian
+// falloff exp(-dist^2 * 4.5) instead of Perlin noise), so this needs no
+// PixiJS Application/renderer at all — no `generateTexture()`, no Graphics,
+// no app-context coupling. Baked once (memoized in `cachedGlow`).
+//
+// The warm orange (0xffb347) is baked directly into the RGB channels here
+// instead of left white-and-tinted by the consumer (GroundFountain.ts) —
+// GroundFountain must NOT also set a `tint` on this texture, since a tint
+// multiplies these already-colored channels a second time (255*255/255,
+// 179*179/255, 71*71/255 ≈ 255,126,20 — a dull brown, not this orange).
+export function getGlowTexture(): Texture {
   if (cachedGlow) return cachedGlow;
 
-  const radius = GLOW_TEXTURE_SIZE / 2;
+  const size = GLOW_TEXTURE_SIZE;
+  const center = size / 2;
+  const canvas = createOffscreenCanvas(size, size);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('2D canvas context unavailable — cannot bake glow texture');
 
-  const gradient = new FillGradient({
-    type: 'radial',
-    center: { x: 0.5, y: 0.5 },
-    innerRadius: 0,
-    outerCenter: { x: 0.5, y: 0.5 },
-    outerRadius: 0.5,
-    colorStops: [
-      { offset: 0, color: 'rgba(255, 255, 255, 1)' },
-      { offset: 0.35, color: 'rgba(255, 255, 255, 0.55)' },
-      { offset: 1, color: 'rgba(255, 255, 255, 0)' },
-    ],
-  });
+  const imageData = ctx.createImageData(size, size);
+  const data = imageData.data;
 
-  const graphics = new Graphics().circle(radius, radius, radius).fill(gradient);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x - center;
+      const dy = y - center;
+      const dist = Math.sqrt(dx * dx + dy * dy) / center;
 
-  cachedGlow = app.renderer.generateTexture({ target: graphics, resolution: 1 });
-  graphics.destroy();
+      const smoothFalloff = Math.exp(-dist * dist * 4.5);
+      const alpha = smoothFalloff < 0.005 ? 0 : Math.min(1, smoothFalloff);
 
+      const idx = (y * size + x) * 4;
+      data[idx] = 255;
+      data[idx + 1] = 179;
+      data[idx + 2] = 71;
+      data[idx + 3] = (alpha * 255 + 0.5) | 0;
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+  cachedGlow = Texture.from(canvas);
   return cachedGlow;
 }
