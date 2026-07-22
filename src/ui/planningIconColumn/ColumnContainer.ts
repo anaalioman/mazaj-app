@@ -48,7 +48,15 @@ export class PlanningIconColumn {
 
     app.renderer.on('resize', () => this.layout());
     this.layout();
-    app.ticker.add((ticker) => syncRowGlow(this.rows, this.bounce, ticker));
+    // Skipped entirely while the column is hidden (composing mode, an active
+    // show) — `breathe` is driven by `ticker.lastTime` itself (not a local
+    // elapsed-time accumulator), so resuming later picks the wave up at the
+    // correct phase with no desync, and every row's GlowFilter is left
+    // untouched instead of being rewritten 60x/sec for nothing on screen.
+    app.ticker.add((ticker) => {
+      if (!this.container.visible) return;
+      syncRowGlow(this.rows, this.bounce, ticker);
+    });
   }
 
   /** Click sound + tactile flash + bounce/glow spike + the row's own action — the bookkeeping every row's `pointertap` triggers, centralized here since it's the one place that owns the shared bounce state across all rows. */

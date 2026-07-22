@@ -137,6 +137,12 @@ export class HeaderBar {
 
     this.container = new Container();
     deps.app.stage.addChild(this.container);
+    // Sits above every other header element by z-order; only matters if the
+    // container's own parent also has `sortableChildren` enabled (see this
+    // property's own reasoning — that parent lives in fireworksMood.ts,
+    // outside this file).
+    this.container.zIndex = 9999;
+    this.container.sortableChildren = true;
     // One shared backdrop blur for the whole bar instead of one per button —
     // see createCircleButton()/createPillButton()'s own doc comments for why
     // the per-button filters were removed. `filterArea`/`filterMask` are both
@@ -156,8 +162,11 @@ export class HeaderBar {
     this.wireTap(this.homeButton.root, () => this.deps.onBackToHome());
 
     this.startShowButton = this.createPillButton('play', 'ابدأ العرض');
+    this.startShowButton.root.zIndex = 1000;
     this.container.addChild(this.startShowButton.root);
-    this.wireTap(this.startShowButton.root, () => this.handleStartShow());
+    // 'pointerdown' instead of 'pointertap' — fires on touch, not on
+    // release, so starting the show doesn't wait for the finger to lift.
+    this.wireTap(this.startShowButton.root, () => this.handleStartShow(), 'pointerdown');
 
     this.muteButton = this.createCircleButton('volume2', 'كتم الصوت');
     this.container.addChild(this.muteButton.root);
@@ -339,29 +348,37 @@ export class HeaderBar {
 
   /**
    * `pointertap` (a full press-release-in-place gesture, same as
-   * ShapesPanel's own rows use) drives the actual action — a button is a
-   * discrete action, not a drag. But stopping propagation only there is not
-   * enough: `app.stage`'s own tap-to-fire listener in fireworksMood.ts is
-   * wired to the raw `pointerdown`, which fires (and bubbles all the way up
-   * to stage) well before `pointertap` is even recognized on release — by
-   * then a rocket has already launched underneath the button. Confirmed
-   * this by testing: 5 taps on the mute button (which fires nothing) left
-   * visible rocket trails on screen, compared to a clean zero-interaction
-   * baseline. So `pointerdown` itself also needs its own
-   * `stopPropagation()`, independent of the tap handler below. Tactile
-   * feedback (cyan flash + click sound) replaces the old DOM-delegated
-   * `attachTactileFeedback()` for this component specifically, since that
-   * helper is CSS-class-based and this bar no longer has any DOM to attach
-   * classes to.
+   * ShapesPanel's own rows use) drives the actual action by default — a
+   * button is a discrete action, not a drag. Passing `trigger: 'pointerdown'`
+   * (used for the start-show button) fires the action on touch instead,
+   * skipping the release step, for the one button where that immediacy
+   * matters most. Either way, stopping propagation only on the trigger
+   * event is not enough: `app.stage`'s own tap-to-fire listener in
+   * fireworksMood.ts is wired to the raw `pointerdown`, which fires (and
+   * bubbles all the way up to stage) well before `pointertap` is even
+   * recognized on release — by then a rocket has already launched
+   * underneath the button. Confirmed this by testing: 5 taps on the mute
+   * button (which fires nothing) left visible rocket trails on screen,
+   * compared to a clean zero-interaction baseline. So `pointerdown` itself
+   * always gets its own `stopPropagation()`, independent of whether it's
+   * also the trigger. Tactile feedback (cyan flash + click sound) replaces
+   * the old DOM-delegated `attachTactileFeedback()` for this component
+   * specifically, since that helper is CSS-class-based and this bar no
+   * longer has any DOM to attach classes to.
    */
-  private wireTap(target: Container, handler: () => void): void {
-    target.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
-    target.on('pointertap', (event: FederatedPointerEvent) => {
+  private wireTap(target: Container, handler: () => void, trigger: 'pointertap' | 'pointerdown' = 'pointertap'): void {
+    const fire = (event: FederatedPointerEvent) => {
       event.stopPropagation();
       this.deps.audio.playUiClick();
       this.flash(target);
       handler();
-    });
+    };
+    if (trigger === 'pointerdown') {
+      target.on('pointerdown', fire);
+    } else {
+      target.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
+      target.on('pointertap', fire);
+    }
   }
 
   private flash(target: Container): void {

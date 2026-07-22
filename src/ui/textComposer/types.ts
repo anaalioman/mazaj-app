@@ -34,6 +34,8 @@ export interface ComposeModeFrameObj {
   glyph: Sprite;
   glow: GlowFilter;
   label: Text;
+  /** The active state last drawn onto `border`/`label` — `null` before the first draw. syncComposeModeFrames() only rebuilds the gradient/redraws the border/swaps the label style when this differs from the frame's current active state, instead of every tick. */
+  drawnActive: boolean | null;
 }
 
 /**

@@ -80,6 +80,13 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
   // something inside uiContainer itself actually changes.
   const uiContainer = new Container({ isRenderGroup: true });
   moodLayer.addChild(uiContainer);
+  // Lets HeaderBar's own `container.zIndex = 9999` actually take effect —
+  // PixiJS only sorts a container's children by zIndex when the *parent*
+  // has `sortableChildren` enabled. Without this, PlanningScreen's later-
+  // added panels (SideDockPanel's ShapesPanel/ColorPickerPanel, which can
+  // land at y=8 on a short screen) paint over the header's own button row
+  // by plain insertion order, since header.container is added here first.
+  uiContainer.sortableChildren = true;
 
   // --- A worldContainer-only pixel source for video recording ---
   //

@@ -275,6 +275,9 @@ export class ModeRowEngine {
       const isBouncing = frame === this.modeBounceFrame;
       frame.glow.outerStrength = (active ? MODE_GLOW_ACTIVE : MODE_GLOW_BASE) + (isBouncing ? spike : 0);
 
+      if (frame.drawnActive === active) continue;
+      frame.drawnActive = active;
+
       const fill = new FillGradient({
         type: 'linear',
         start: { x: 0, y: 0 },
@@ -344,7 +347,7 @@ export class ModeRowEngine {
     label.position.set(0, PREVIEW_H / 2 + LABEL_GAP);
     root.addChild(label);
 
-    return { mode, stackable, root, border, glyph, glow, label };
+    return { mode, stackable, root, border, glyph, glow, label, drawnActive: null };
   }
 
   /**
