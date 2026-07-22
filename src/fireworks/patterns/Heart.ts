@@ -47,14 +47,11 @@ const TABLE_MASK = TABLE_SIZE - 1;
  *    and vScale (range ~0.4-1.3) need nowhere near double precision for a
  *    value that only ever feeds a pixel-space velocity.
  * 3. `vScale`: the curve's own radius at that point relative to the curve's
- *    mean radius (radius ranges ~5-17 across the curve — a measured 3.4x
- *    spread, 27% coefficient of variation) — multiplied into each spark's
- *    speed in burstHeart() below so sparks sent toward the tip travel
- *    farther than sparks sent toward the top cleft, reconstructing the
- *    heart's actual proportions. Without this, every spark traveled
- *    roughly the same distance regardless of direction (speed only varied
- *    ±8%), so the burst's silhouette came out as a lumpy ring/circle
- *    instead of a heart — confirmed with a live screenshot before this fix.
+ *    mean radius (radius ranges ~5-17 across the curve — a 3.4x spread, 27%
+ *    coefficient of variation) — multiplied into each spark's speed in
+ *    burstHeart() below so sparks sent toward the tip travel farther than
+ *    sparks sent toward the top cleft, reproducing the heart's actual
+ *    proportions instead of a uniform-radius ring.
  *
  * `heartDirection()` (a separate per-particle function returning a fresh
  * `{x,y}` object) has been removed entirely — burstHeart() below reads
@@ -71,12 +68,9 @@ const directionTable: HeartDirectionTable = (function buildDirectionTable(): Hea
   // Raw curve samples + cumulative arc length around the FULL closed loop —
   // TABLE_SIZE+1 entries so index TABLE_SIZE is the closing point (== index
   // 0), needed to measure the final wrap-around segment's length. Exact
-  // Math.hypot here, not an approximation: this table is baked once, ever,
-  // and every value in it (direction, vScale) permanently inherits whatever
-  // error this step makes — a fast approximation was tried here and measured
-  // at ~3.96% permanent distortion for a ~4ms one-time saving at module
-  // load, a bad trade with no real benefit, so it was reverted back to
-  // exact Math.hypot.
+  // Math.hypot here: this table is baked once, ever, at module load, and
+  // every value in it (direction, vScale) permanently inherits whatever
+  // error this step makes.
   const cumulative = new Float32Array(TABLE_SIZE + 1);
   const rawX = new Float32Array(TABLE_SIZE + 1);
   const rawY = new Float32Array(TABLE_SIZE + 1);
@@ -129,15 +123,12 @@ const directionTable: HeartDirectionTable = (function buildDirectionTable(): Hea
   return { dirX, dirY, vScale };
 })();
 
-// Static noise pool (baked once at module load — the only place
-// Math.random() runs) instead of a live-updated LCG recurrence: matches
-// Strobe.ts/Particle.ts/FireworksSystem.ts's own randomTable convention
-// exactly — a plain array read + index bump, no arithmetic generator state.
-// Sized 2048 with a larger coprime stride (131, prime): the densest burst
-// (~266 particles x 5 draws = ~1330 draws) now stays within a single
-// 2048-long walk instead of wrapping past a 1024-long one partway through
-// (previously ~1332 draws vs. a 1024 table meant the back half of the
-// densest bursts silently repeated the front half's exact value sequence).
+// Static noise pool baked once at module load (the only place Math.random()
+// runs), walked via an advancing index — matches Strobe.ts/Particle.ts/
+// FireworksSystem.ts's own randomTable convention. Sized 2048 with a
+// coprime stride (131, prime) so the densest burst (~266 particles x 5
+// draws/particle, ~1330 draws) completes within a single non-repeating
+// walk of the table.
 const RANDOM_TABLE_SIZE = 2048;
 const RANDOM_MASK = RANDOM_TABLE_SIZE - 1;
 const RANDOM_STRIDE = 131;
@@ -145,21 +136,13 @@ const randomTable = new Float32Array(RANDOM_TABLE_SIZE);
 for (let i = 0; i < RANDOM_TABLE_SIZE; i++) randomTable[i] = Math.random();
 
 // Fixed-size hardware pool, power-of-two so cycling through it is a bitmask
-// instead of `% HEART_POOL_SIZE` (division is one of the more expensive
-// plain arithmetic ops; `&` is one cycle). `ctx.spawn()` -> `Particle.init()`
-// reads every field of its `options` argument synchronously (copied into
-// the Particle instance's own primitive fields) before returning, so the
-// same plain object can be mutated and re-passed every loop iteration
-// instead of a fresh object literal per spark — zero object-literal
-// allocation in the burst loop, and no data race is possible reusing a slot
-// mid-burst: JS is single-threaded and `ctx.spawn(slot)` fully consumes the
-// slot's fields synchronously before the loop's next iteration ever touches
-// it again, regardless of pool size (verified by re-reading Particle.ts's
-// `init()`, which destructures every field immediately, and
-// FireworksSystem's `spawnParticle()`, which calls `init()` synchronously
-// with no async gap). Sized 1024 anyway, purely for headroom — comfortably
-// above this shell's max realistic particle count (~266 at the density
-// slider's own ceiling).
+// (`& HEART_POOL_MASK`) instead of `% HEART_POOL_SIZE`. `ctx.spawn()` ->
+// `Particle.init()` reads every field of its `options` argument
+// synchronously into the Particle instance's own primitive fields before
+// returning, so the same plain object can be mutated and re-passed every
+// loop iteration instead of a fresh object literal per spark. Sized 1024 —
+// comfortably above this shell's max realistic particle count (~266 at the
+// density slider's own ceiling).
 const HEART_POOL_SIZE = 1024;
 const HEART_POOL_MASK = HEART_POOL_SIZE - 1;
 interface HeartParticleSlot {
