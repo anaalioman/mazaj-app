@@ -1,6 +1,7 @@
 import { Container, Graphics, Rectangle, Sprite, Text, TextStyle, type Application, type FederatedPointerEvent } from 'pixi.js';
 import { GlowFilter } from 'pixi-filters';
 import { atlasTexture } from '../svgIconTexture';
+import { fastSin, TWO_PI } from '../../fireworks/SineTable';
 import {
   GLOW_BREATHE_MIN,
   HIT_MIN_SIZE,
@@ -128,9 +129,15 @@ export function buildRow(
     recordGlow.visible = false;
     recordGlow.position.set(0, -(ROW_HEIGHT - ICON_SIZE) / 2 - ICON_SIZE / 2 + 2);
     root.addChild(recordGlow);
-    app.ticker.add(() => {
+    // Radians in [0, TWO_PI) — incrementally advanced/wrapped each frame
+    // (same convention as background.ts's per-star wavePos) instead of a
+    // live Math.sin() re-derived from an ever-growing performance.now().
+    let pulsePhase = 0;
+    app.ticker.add((ticker) => {
       if (!recordGlow || !recordGlow.visible) return;
-      const phase = (Math.sin((performance.now() / RECORD_PULSE_MS) * Math.PI * 2) + 1) / 2;
+      pulsePhase += (ticker.deltaMS / RECORD_PULSE_MS) * TWO_PI;
+      if (pulsePhase >= TWO_PI) pulsePhase -= TWO_PI;
+      const phase = (fastSin(pulsePhase) + 1) / 2;
       recordGlow.alpha = 0.5 + phase * 0.5;
     });
   }

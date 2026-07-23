@@ -1,6 +1,7 @@
 import { Sprite, type Container, type Ticker } from 'pixi.js';
 import { atlasTexture } from '../svgIconTexture';
 import { tickerSetTimeout } from '../../utils/tickerTimers';
+import { fastSin, TWO_PI } from '../../fireworks/SineTable';
 import {
   BOUNCE_DURATION_MS,
   BOUNCE_MIN_SCALE,
@@ -24,10 +25,18 @@ import {
 export interface BounceState {
   start: number;
   row: Row | null;
+  /**
+   * Radians in `[0, TWO_PI)` for the shared breathing-glow wave —
+   * incrementally advanced and wrapped once per frame in `syncRowGlow()`
+   * (same convention as `background.ts`'s own per-star `wavePos`), never
+   * re-derived from `ticker.lastTime` (which only ever grows) via a live
+   * `Math.sin()`.
+   */
+  breathePhase: number;
 }
 
 export function createBounceState(): BounceState {
-  return { start: -1, row: null };
+  return { start: -1, row: null, breathePhase: 0 };
 }
 
 /** Standard "ease out bounce" (easings.net) — a ball dropped and settling, three diminishing bounces, never overshooting past 1. `t` and the return value are both 0..1. Mirrors TextComposer.ts's own copy (kept file-local rather than shared, same reasoning as this file's other small pure-math helpers). */
@@ -71,7 +80,9 @@ export function syncRowGlow(rows: Map<string, Row>, state: BounceState, ticker: 
     }
   }
 
-  const breathe = GLOW_BREATHE_MIN + ((Math.sin(ticker.lastTime * GLOW_BREATHE_SPEED) + 1) / 2) * (GLOW_BREATHE_MAX - GLOW_BREATHE_MIN);
+  state.breathePhase += ticker.deltaMS * GLOW_BREATHE_SPEED;
+  if (state.breathePhase >= TWO_PI) state.breathePhase -= TWO_PI;
+  const breathe = GLOW_BREATHE_MIN + ((fastSin(state.breathePhase) + 1) / 2) * (GLOW_BREATHE_MAX - GLOW_BREATHE_MIN);
   for (const row of rows.values()) {
     const isBouncing = row === state.row;
     row.glow.outerStrength = breathe + (row.active ? GLOW_ACTIVE_BOOST : 0) + (isBouncing ? spike : 0);
