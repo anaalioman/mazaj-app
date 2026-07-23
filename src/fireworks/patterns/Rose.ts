@@ -1,22 +1,34 @@
 import { pickBurstColors, shadesOf } from '../colors';
 import { fastCosByIndex, fastSinByIndex, TABLE_SIZE } from '../SineTable';
+import type { ParticleOptions } from '../Particle';
 import type { BurstContext } from './types';
 
 const TABLE_MASK = TABLE_SIZE - 1;
 
-// Static pre-computed randomness pool, built once at module load. Walked
-// with a fixed stride (not +1) that's coprime with the table size, so the
-// index sequence visits all RANDOM_TABLE_SIZE slots before repeating any —
-// verified numerically: zero repeats within 900 draws, comfortably above
-// the ~876-draw ceiling a single max-density Rose burst can reach (up to
-// ~219 particles * 4 draws each). Starting offset is randomized per burst
-// (one live Math.random() call) so consecutive bursts don't replay the
-// same slice of the pool in the same order.
-const RANDOM_TABLE_SIZE = 1024;
+// Static pre-computed randomness pool, built once at module load — same
+// convention as Heart.ts/MultiRing.ts/Peony.ts. Sized 2048: countRaw's own
+// ceiling (140 * densityRatio) reaches ~339 at densityRatio's true worst
+// case — not just the density slider's own max (500/320 = 1.5625), but
+// FireworksSystem's burstRandomHybrid() compounding that with up to a
+// further ~1.55x, to ~2.42 — so a max-density burst draws up to
+// 3 + 339*4 = 1359 times, comfortably under 2048. Stride 131 (prime,
+// coprime with any power-of-two table size) matches every sibling pattern
+// file's own stride, so the walk still visits every slot once per burst
+// before repeating.
+const RANDOM_TABLE_SIZE = 2048;
 const RANDOM_MASK = RANDOM_TABLE_SIZE - 1;
-const RANDOM_STRIDE = 7; // coprime with 1024 (power of 2) — full-period walk
+const RANDOM_STRIDE = 131;
 const randomTable = new Float32Array(RANDOM_TABLE_SIZE);
 for (let i = 0; i < RANDOM_TABLE_SIZE; i++) randomTable[i] = Math.random();
+
+// countRaw's raw ceiling (see the table's own doc comment above) reaches
+// ~339 at densityRatio's true worst case. ROSE_CAP sits safely above that
+// so no real burst is ever silently truncated.
+const ROSE_CAP = 400;
+const HARDWARE_POOL: ParticleOptions[] = new Array(ROSE_CAP);
+for (let i = 0; i < ROSE_CAP; i++) {
+  HARDWARE_POOL[i] = { x: 0, y: 0, vx: 0, vy: 0, color: 0, size: 0, life: 0, gravity: 0, drag: 0, twinkle: false };
+}
 
 /**
  * Polar rose burst: initial velocity follows `r = cos(k*theta)`, so as
@@ -27,23 +39,35 @@ for (let i = 0; i < RANDOM_TABLE_SIZE; i++) randomTable[i] = Math.random();
  * `SineTable`'s integer index space (`fastSinByIndex`/`fastCosByIndex`):
  * theta and k*theta are wrapped via `& TABLE_MASK` instead of a radian-based
  * subtraction loop, so there's no branch and no live `Math.cos`/`sin`.
+ *
+ * Every random draw (color-count variance, petal count `k`, base speed
+ * jitter, and per-particle color/size/life/twinkle) walks `randomTable` via
+ * a single advancing cursor (`rIdx`) seeded from the explosion center,
+ * zero live Math.random() calls. Every spark spawns through a mutated
+ * `HARDWARE_POOL` slot instead of a fresh object literal per particle.
  */
 export function burstRose(x: number, y: number, ctx: BurstContext): void {
-  const burstColors = ctx.activeColor !== null ? shadesOf(ctx.activeColor, 4) : pickBurstColors(3 + Math.floor(Math.random() * 3));
-  const k = 2 + Math.floor(Math.random() * 5);
+  let rIdx = ((x | 0) ^ (y | 0)) & RANDOM_MASK;
+
+  rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
+  const burstColors = ctx.activeColor !== null ? shadesOf(ctx.activeColor, 4) : pickBurstColors(3 + ((randomTable[rIdx] * 3) | 0));
+  rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
+  const k = 2 + ((randomTable[rIdx] * 5) | 0);
   // Back to the same base count every other pattern uses proportionally
   // (was temporarily cut to 100 to manage spawn-loop CPU cost before
   // FireworksSystem.ts had a real object pool — see its `deadPool` doc
   // comment — which removed that pressure; no reason for Rose to be the
   // one thin-looking pattern now that the actual cost problem is fixed).
-  const count = Math.max(20, Math.round(140 * ctx.densityRatio));
-  const baseSpeed = (3.4 + Math.random() * 1.6) * ctx.settings.explosionScale;
+  const countRaw = Math.max(20, (140 * ctx.densityRatio + 0.5) | 0);
+  const count = Math.min(ROSE_CAP, countRaw);
+  rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
+  const baseSpeed = (3.4 + randomTable[rIdx] * 1.6) * ctx.settings.explosionScale;
   const colorsLength = burstColors.length;
-
-  let rIdx = Math.floor(Math.random() * RANDOM_TABLE_SIZE);
+  const gravityVal = 0.08 * ctx.settings.gravityScale;
+  const lifespanScaleVal = ctx.settings.lifespanScale;
 
   for (let i = 0; i < count; i++) {
-    const thetaIndex = Math.floor((i / count) * TABLE_SIZE) & TABLE_MASK;
+    const thetaIndex = ((i / count) * TABLE_SIZE) & TABLE_MASK;
     const petalIndex = (k * thetaIndex) & TABLE_MASK;
     // Exact r * baseSpeed, no per-particle variance — every spark lands
     // precisely on the mathematical rose curve instead of scattered ±10%
@@ -54,27 +78,24 @@ export function burstRose(x: number, y: number, ctx: BurstContext): void {
     const sinT = fastSinByIndex(thetaIndex);
 
     rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
-    const randColor = randomTable[rIdx];
-    rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
-    const randSize = randomTable[rIdx];
-    rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
-    const randLife = randomTable[rIdx];
-    rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
-    const randTwin = randomTable[rIdx];
+    const color = burstColors[(randomTable[rIdx] * colorsLength) | 0];
 
-    const color = burstColors[Math.floor(randColor * colorsLength)];
+    const pObj = HARDWARE_POOL[i];
+    pObj.x = x;
+    pObj.y = y;
+    pObj.vx = cosT * speed;
+    pObj.vy = sinT * speed;
+    pObj.color = color;
 
-    ctx.spawn({
-      x,
-      y,
-      vx: cosT * speed,
-      vy: sinT * speed,
-      color,
-      size: (7 + randSize * 5) * ctx.glowSizeBoost,
-      life: (60 + randLife * 40) * ctx.settings.lifespanScale,
-      gravity: 0.08 * ctx.settings.gravityScale,
-      drag: 0.978,
-      twinkle: randTwin < 0.25,
-    });
+    rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
+    pObj.size = (7 + randomTable[rIdx] * 5) * ctx.glowSizeBoost;
+    rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
+    pObj.life = (60 + randomTable[rIdx] * 40) * lifespanScaleVal;
+    pObj.gravity = gravityVal;
+    pObj.drag = 0.978;
+    rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
+    pObj.twinkle = randomTable[rIdx] < 0.25;
+
+    ctx.spawn(pObj);
   }
 }

@@ -7,6 +7,24 @@ import { getParticleTexture } from './textures';
 import { randomColor, randomPalette } from './colors';
 import { ALL_BURST_TYPES, DEFAULT_BURST_SETTINGS, type BurstSettings, type BurstType } from './burstTypes';
 import { BURST_PATTERNS, type BurstContext } from './patterns';
+import { fastCosByIndex, fastSinByIndex, TABLE_SIZE, TWO_PI } from './SineTable';
+
+const TABLE_MASK = TABLE_SIZE - 1;
+// spawnSettleSparkle()'s own jitter used to be `+ nextRand() * 0.3` radians
+// added directly to a live `Math.cos`/`Math.sin` call — converted here to
+// the equivalent index-space offset (0.3 / TWO_PI * TABLE_SIZE), computed
+// once at module load, so the per-particle loop stays entirely in
+// SineTable's integer index space like every burst pattern file already
+// does, with zero live trig calls.
+const SETTLE_JITTER_RANGE = Math.round((0.3 / TWO_PI) * TABLE_SIZE);
+
+// Shared, reused slots for the two non-pattern spawn paths below
+// (spawnSettleSparkle/spawnTrailSpark) — same reasoning as Crossette.ts's
+// own TRAIL_SLOT: `Particle.init()` copies every field synchronously the
+// instant `ctx.spawn()`/`spawnParticle()` is called, so a single mutated
+// object is safe instead of a fresh object literal per particle/tick.
+const SETTLE_SLOT: ParticleOptions = { x: 0, y: 0, vx: 0, vy: 0, color: 0, size: 0, life: 0, gravity: 0, drag: 0 };
+const TRAIL_SPARK_SLOT: ParticleOptions = { x: 0, y: 0, vx: 0, vy: 0, color: 0, size: 0, life: 0, gravity: 0, drag: 0 };
 
 export { ALL_BURST_TYPES, DEFAULT_BURST_SETTINGS, type BurstSettings, type BurstType } from './burstTypes';
 
@@ -78,6 +96,8 @@ export class FireworksSystem {
   private readonly coresContainer: ParticleContainer;
   /** A flat saturation boost so bursts read as vivid — no screen-wide bloom/blur pass behind it, just this one lightweight per-pixel color matrix, always active. */
   private readonly colorFilter: ColorMatrixFilter;
+  /** `layer.filterArea`'s own backing Rectangle — mutated in place on resize (see constructor), never reallocated. */
+  private readonly filterAreaRect: Rectangle;
   private readonly onLaunch?: (x: number) => void;
   private readonly onExplode?: (x: number, y: number, intensity: number) => void;
 
@@ -106,6 +126,10 @@ export class FireworksSystem {
   // perturbation — reused every hybrid burst instead of `{ ...this.settings }`
   // allocating a fresh snapshot object each time.
   private readonly settingsScratch: BurstSettings = { ...DEFAULT_BURST_SETTINGS };
+  // Persistent 2-slot scratch for burstRandomHybrid()'s chosen pattern
+  // indices — reused every hybrid burst instead of a fresh `new Set<number>()`.
+  // Only `hybridIndices[0..layerCount)` is ever read on a given call.
+  private readonly hybridIndices: number[] = [0, 0];
   private enabledTypes: BurstType[] = [...ALL_BURST_TYPES];
   private randomModeEnabled = false;
   // The player's "dye this shell" color-picker choice (see PlanningScreen's
@@ -205,9 +229,14 @@ export class FireworksSystem {
     // screen (their own documented example) keeps that region a stable
     // size/position every frame instead of being recomputed from volatile
     // particle bounds.
-    this.layer.filterArea = new Rectangle(0, 0, app.screen.width, app.screen.height);
+    this.filterAreaRect = new Rectangle(0, 0, app.screen.width, app.screen.height);
+    this.layer.filterArea = this.filterAreaRect;
     app.renderer.on('resize', () => {
-      this.layer.filterArea = new Rectangle(0, 0, app.screen.width, app.screen.height);
+      // Mutated in place instead of a fresh `new Rectangle(...)` per resize —
+      // `filterArea` only needs its own width/height kept current, not a new
+      // identity.
+      this.filterAreaRect.width = app.screen.width;
+      this.filterAreaRect.height = app.screen.height;
     });
 
     // Seeded from the engine's own clock instead of Math.random() — see
@@ -384,20 +413,28 @@ export class FireworksSystem {
   spawnSettleSparkle(x: number, y: number, color?: number): void {
     const burstColor = color ?? this.activeColor ?? randomColor(randomPalette());
     const count = 16;
+    const gravityVal = 0.08 * this.settings.gravityScale;
+    const lifespanScaleVal = this.settings.lifespanScale;
+    const glowSizeBoostVal = this.glowSizeBoost();
+    const explosionScaleVal = this.settings.explosionScale;
+
     for (let i = 0; i < count; i++) {
-      const angle = (Math.PI * 2 * i) / count + this.nextRand() * 0.3;
-      const speed = (1.4 + this.nextRand() * 1.2) * this.settings.explosionScale;
-      const particle = this.spawnParticle({
-        x,
-        y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        color: burstColor,
-        size: (5 + this.nextRand() * 3) * this.glowSizeBoost(),
-        life: (40 + this.nextRand() * 20) * this.settings.lifespanScale,
-        gravity: 0.08 * this.settings.gravityScale,
-        drag: 0.985,
-      });
+      const baseIndex = ((i / count) * TABLE_SIZE) | 0;
+      const jitterIndex = (this.nextRand() * SETTLE_JITTER_RANGE) | 0;
+      const angleIndex = (baseIndex + jitterIndex) & TABLE_MASK;
+      const speed = (1.4 + this.nextRand() * 1.2) * explosionScaleVal;
+
+      SETTLE_SLOT.x = x;
+      SETTLE_SLOT.y = y;
+      SETTLE_SLOT.vx = fastCosByIndex(angleIndex) * speed;
+      SETTLE_SLOT.vy = fastSinByIndex(angleIndex) * speed;
+      SETTLE_SLOT.color = burstColor;
+      SETTLE_SLOT.size = (5 + this.nextRand() * 3) * glowSizeBoostVal;
+      SETTLE_SLOT.life = (40 + this.nextRand() * 20) * lifespanScaleVal;
+      SETTLE_SLOT.gravity = gravityVal;
+      SETTLE_SLOT.drag = 0.985;
+
+      const particle = this.spawnParticle(SETTLE_SLOT);
       this.addParticle(particle);
     }
   }
@@ -520,9 +557,16 @@ export class FireworksSystem {
    */
   private burstRandomHybrid(x: number, y: number): void {
     const layerCount = this.nextRand() < 0.55 ? 1 : 2;
-    const chosenIndices = new Set<number>();
-    while (chosenIndices.size < layerCount) {
-      chosenIndices.add((this.nextRand() * ALL_BURST_TYPES.length) | 0);
+    this.hybridIndices[0] = (this.nextRand() * ALL_BURST_TYPES.length) | 0;
+    if (layerCount === 2) {
+      // Rejection sampling for a distinct second index — same guarantee the
+      // old `Set<number>` gave (never the same pattern picked twice), no
+      // Set allocation.
+      let second = (this.nextRand() * ALL_BURST_TYPES.length) | 0;
+      while (second === this.hybridIndices[0]) {
+        second = (this.nextRand() * ALL_BURST_TYPES.length) | 0;
+      }
+      this.hybridIndices[1] = second;
     }
 
     // Field-by-field save into the persistent `settingsScratch` buffer
@@ -538,7 +582,9 @@ export class FireworksSystem {
     this.settings.explosionScale *= 0.8 + this.nextRand() * 0.6;
 
     const ctx = this.buildContext();
-    for (const index of chosenIndices) BURST_PATTERNS[ALL_BURST_TYPES[index]](x, y, ctx);
+    for (let i = 0; i < layerCount; i++) {
+      BURST_PATTERNS[ALL_BURST_TYPES[this.hybridIndices[i]]](x, y, ctx);
+    }
 
     this.settings.particleDensity = this.settingsScratch.particleDensity;
     this.settings.gravityScale = this.settingsScratch.gravityScale;
@@ -570,19 +616,17 @@ export class FireworksSystem {
   }
 
   private spawnTrailSpark(x: number, y: number, color: number): void {
-    this.addParticle(
-      this.spawnParticle({
-        x,
-        y,
-        vx: (this.nextRand() - 0.5) * 0.4,
-        vy: 0.3 + this.nextRand() * 0.3,
-        color,
-        size: 4 + this.nextRand() * 3,
-        life: 18 + this.nextRand() * 10,
-        gravity: 0.02,
-        drag: 0.97,
-      }),
-    );
+    TRAIL_SPARK_SLOT.x = x;
+    TRAIL_SPARK_SLOT.y = y;
+    TRAIL_SPARK_SLOT.vx = (this.nextRand() - 0.5) * 0.4;
+    TRAIL_SPARK_SLOT.vy = 0.3 + this.nextRand() * 0.3;
+    TRAIL_SPARK_SLOT.color = color;
+    TRAIL_SPARK_SLOT.size = 4 + this.nextRand() * 3;
+    TRAIL_SPARK_SLOT.life = 18 + this.nextRand() * 10;
+    TRAIL_SPARK_SLOT.gravity = 0.02;
+    TRAIL_SPARK_SLOT.drag = 0.97;
+
+    this.addParticle(this.spawnParticle(TRAIL_SPARK_SLOT));
   }
 
   private randomLaunchDelay(): number {

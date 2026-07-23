@@ -3,24 +3,30 @@ import { shadesOf, pickBurstColors } from '../colors';
 import type { ParticleOptions } from '../Particle';
 import type { BurstContext } from './types';
 
-const RANDOM_TABLE_SIZE = 1024;
+// countRaw's raw ceiling (80 * densityRatio) isn't bounded by just the
+// density slider's own max (500/320 = 1.5625) — FireworksSystem's
+// burstRandomHybrid() can also multiply particleDensity by up to a further
+// ~1.55x for a one-off hybrid burst before calling this same function,
+// compounding to a true ceiling of ~2.42, i.e. countRaw up to ~194. The
+// previous MAX_PER_RING=150 (sized only against the slider-only ceiling of
+// 125) silently truncated ~23% of particles at that real worst case —
+// the exact class of bug this file's own history already fixed once for
+// the density slider alone, missed for the hybrid-randomizer multiplier.
+// MAX_PER_RING=220 sits safely above the corrected ~194 ceiling.
+const MAX_RING_PARTICLES = 440;
+const MAX_PER_RING = MAX_RING_PARTICLES / 2;
+
+// This burst's max total draws (baseSpeed + 3 per particle x 2 rings x
+// MAX_PER_RING = 1 + 3*2*220 = 1321) needs a table sized above that — 1024
+// (sufficient for the old, undercounted ceiling) would wrap and repeat
+// slots mid-burst at the real worst case, so this is now 2048. Stride
+// stays prime (131, coprime with any power-of-two table size), so the walk
+// still visits every slot once before repeating.
+const RANDOM_TABLE_SIZE = 2048;
 const RANDOM_MASK = RANDOM_TABLE_SIZE - 1;
-// Prime, so coprime with the power-of-2 table size — an advancing cursor
-// stepping by this stride visits RANDOM_TABLE_SIZE distinct slots before
-// repeating any. This burst's max total draws (baseSpeed + 3 per particle x
-// 2 rings x MAX_PER_RING = 901) stays under that, so no two draws in the
-// same burst ever read the same slot.
 const RANDOM_STRIDE = 131;
 const randomTable = new Float32Array(RANDOM_TABLE_SIZE);
 for (let i = 0; i < RANDOM_TABLE_SIZE; i++) randomTable[i] = Math.random();
-
-// Static pre-allocated object pool (safe but not solving a real race — see
-// module doc comment below), capped at 300 total (150 per ring) — enough
-// headroom for the real max of 125/ring at the highest density-slider
-// setting (80 * (500/320) = 125), unlike the previous 100/ring cap which
-// silently truncated ~20% of particles at max density.
-const MAX_RING_PARTICLES = 300;
-const MAX_PER_RING = MAX_RING_PARTICLES / 2;
 const HARDWARE_POOL: ParticleOptions[] = new Array(MAX_RING_PARTICLES);
 for (let i = 0; i < MAX_RING_PARTICLES; i++) {
   HARDWARE_POOL[i] = {
@@ -38,7 +44,7 @@ for (let i = 0; i < MAX_RING_PARTICLES; i++) {
  * advancing cursor (`rIdx`), never live `Math.random()`.
  *
  * Each spawn call reads from `HARDWARE_POOL`, a fixed set of `ParticleOptions`
- * objects allocated once at module load (300 total: 150 per ring) instead
+ * objects allocated once at module load (440 total: 220 per ring) instead
  * of a single reused object or per-particle literals. `Particle.init()`
  * (see its own doc comment) copies every field synchronously the instant
  * `ctx.spawn()` is called and never retains a reference to the options
