@@ -101,15 +101,16 @@ export const LABEL_ACTIVE_COLOR = 0xffffff;
 
 /**
  * The committed text's "breathing" glow: outerStrength oscillates between
- * these two bounds via a plain sine wave driven by `ticker.lastTime`
- * (radians/ms — one full breath roughly every 2.6s) rather than any
- * timer — see PreviewControlBox's syncPreviewGlow(). `GlowFilter`, not
- * `BlurFilter`: a blur would soften the glyphs themselves, while GlowFilter
- * (knockout: false) always draws the original source untouched and only
- * adds a halo outward from its edges — that's what keeps the letters
- * reading crisp underneath the glow, not any MSDF/distance-field font
- * technique (this app has never used one; every `Text` here is Pixi's
- * ordinary Canvas-rasterized text).
+ * these two bounds, driven by `glowPhase` — incrementally advanced by
+ * `ticker.deltaMS` and wrapped every frame, read through `fastSin()` (one
+ * full breath roughly every 2.6s) — never a live `Math.sin()` re-derived
+ * from the ever-growing `ticker.lastTime` — see PreviewControlBox's
+ * syncPreviewGlow(). `GlowFilter`, not `BlurFilter`: a blur would soften the
+ * glyphs themselves, while GlowFilter (knockout: false) always draws the
+ * original source untouched and only adds a halo outward from its edges —
+ * that's what keeps the letters reading crisp underneath the glow, not any
+ * MSDF/distance-field font technique (this app has never used one; every
+ * `Text` here is Pixi's ordinary Canvas-rasterized text).
  */
 export const GLOW_PULSE_MIN = 1.4;
 export const GLOW_PULSE_MAX = 3.4;
@@ -255,12 +256,13 @@ export const MODE_ROW_MARGIN_TOP = 14;
  * "الفتيل المشتعل تحت النص" — a glowing rope (real `Graphics`, redrawn
  * every frame it's visible so it always matches the input text's own
  * current width exactly, never a stale cached shape) spanning the input
- * text, with a bright ember sliding back and forth along it
- * (Math.sin-driven off `ticker.lastTime`, the same pulse technique
- * syncPreviewGlow() already uses) and — every FUSE_EMBER_SPAWN_INTERVAL_MS
- * or so — a single small spark peeling off the ember, reusing this class's
- * *own* delete-spark Particle pool rather than a third parallel particle
- * system.
+ * text, with a bright ember sliding back and forth along it (driven by
+ * `emberPhase`, incrementally advanced/wrapped every frame and read through
+ * `fastSin()` — see ModeRowEngine's syncFuseEffect() — never a live
+ * `Math.sin()` re-derived from the ever-growing `ticker.lastTime`) and —
+ * every FUSE_EMBER_SPAWN_INTERVAL_MS or so — a single small spark peeling
+ * off the ember, reusing this class's *own* delete-spark Particle pool
+ * rather than a third parallel particle system.
  */
 /** Bright enough to read against the composer's own near-black background — a literal rope-brown was tried first and live-tested nearly invisible there. */
 export const FUSE_ROPE_COLOR = 0xb08040;

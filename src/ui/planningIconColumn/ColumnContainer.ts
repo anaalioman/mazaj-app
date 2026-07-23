@@ -49,10 +49,11 @@ export class PlanningIconColumn {
     app.renderer.on('resize', () => this.layout());
     this.layout();
     // Skipped entirely while the column is hidden (composing mode, an active
-    // show) — `breathe` is driven by `ticker.lastTime` itself (not a local
-    // elapsed-time accumulator), so resuming later picks the wave up at the
-    // correct phase with no desync, and every row's GlowFilter is left
-    // untouched instead of being rewritten 60x/sec for nothing on screen.
+    // show) — `bounce.breathePhase` (see AnimationEngine.ts) only advances
+    // inside this very callback, so it simply stops accumulating while
+    // hidden and resumes exactly where it left off once visible again, no
+    // desync — and every row's GlowFilter is left untouched instead of
+    // being rewritten 60x/sec for nothing on screen.
     app.ticker.add((ticker) => {
       if (!this.container.visible) return;
       syncRowGlow(this.rows, this.bounce, ticker);

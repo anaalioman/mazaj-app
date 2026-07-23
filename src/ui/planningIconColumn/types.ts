@@ -60,10 +60,13 @@ export const RECORD_PULSE_MS = 1000;
  */
 /**
  * "تتنفس بنعومة" — a slow, continuous idle glow every row always carries
- * (never fully off), oscillating between these two bounds via a plain sine
- * wave driven by `ticker.lastTime` — the same technique syncPreviewGlow()
- * (TextComposer.ts) already uses for the committed text's own breathing
- * halo. `GLOW_ACTIVE_BOOST` is the sustained brighter floor for whichever
+ * (never fully off), oscillating between these two bounds, driven by
+ * `breathePhase` — incrementally advanced by `ticker.deltaMS` and wrapped
+ * every frame, read through `fastSin()` — never a live `Math.sin()`
+ * re-derived from the ever-growing `ticker.lastTime` — the same technique
+ * syncPreviewGlow() (TextComposer.ts) already uses for the committed text's
+ * own breathing halo; see AnimationEngine.ts's own syncRowGlow().
+ * `GLOW_ACTIVE_BOOST` is the sustained brighter floor for whichever
  * row is currently "active" (see ColumnContainer's setActive());
  * `GLOW_TAP_BOOST` is a further transient spike on top of that, decaying
  * back down over BOUNCE_DURATION_MS via the same eased-decay technique
