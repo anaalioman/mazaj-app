@@ -3,8 +3,9 @@ import { GlowFilter } from 'pixi-filters';
 import { atlasTexture, iconTexture } from '../svgIconTexture';
 import type { IconName } from '../icons';
 import type { AudioManager } from '../../audio/AudioManager';
-import { Particle } from '../../fireworks/Particle';
+import { Particle, type ParticleOptions } from '../../fireworks/Particle';
 import { getParticleTexture } from '../../fireworks/textures';
+import { fastCosByIndex, fastSin, fastSinByIndex, TABLE_SIZE, TWO_PI } from '../../fireworks/SineTable';
 import { InputFieldView, locateCaretPosition } from './InputFieldView';
 import {
   COMPOSE_MODE_ENTRIES,
@@ -70,6 +71,26 @@ import {
   type RowMode,
 } from './types';
 
+// Static noise table, built once at module load — same convention as every
+// fireworks pattern file (see fireworks/patterns/*.ts). Sized 512: a single
+// triggerDeleteSpark() call's worst case (1 count draw + DELETE_SPARK_COUNT_MAX
+// particles x 5 draws each = 1 + 15*5 = 76) stays comfortably under that, so
+// no two draws within the same spark burst ever read the same slot. Walked
+// via each ModeRowEngine instance's own advancing cursor (see nextRand()),
+// not a shared module-level one — same per-instance convention as
+// FireworksSystem's own randCursor.
+const RANDOM_TABLE_SIZE = 512;
+const RANDOM_MASK = RANDOM_TABLE_SIZE - 1;
+const RANDOM_STRIDE = 131;
+const randomTable = new Float32Array(RANDOM_TABLE_SIZE);
+for (let i = 0; i < RANDOM_TABLE_SIZE; i++) randomTable[i] = Math.random();
+
+// Shared, reused slot for every fuse-ember/delete-spark spawn — Particle.init()
+// (see its own doc comment) copies every field synchronously the instant
+// it's called, so the same mutated object is safe to reuse across both spawn
+// paths and every loop iteration instead of a fresh literal per spark.
+const SPARK_SLOT: ParticleOptions = { x: 0, y: 0, vx: 0, vy: 0, color: 0, size: 0, life: 0, gravity: 0, drag: 0, twinkle: true };
+
 /** Standard "ease out bounce" curve, mirrored via types.ts's own easeOutBounce — used identically here for both the mode row's tap spike and the input field's insert-pop. */
 
 /**
@@ -110,6 +131,10 @@ export class ModeRowEngine {
   private readonly fuseEmber: Graphics;
   private readonly fuseEmberGlow: GlowFilter;
   private fuseEmberSpawnAccumulator = 0;
+  /** Radians in `[0, TWO_PI)` for the ember's slide between the rope's two ends — incrementally advanced/wrapped once per frame in `syncFuseEffect()`, never re-derived from `ticker.lastTime` (which only ever grows) via a live `Math.sin()`. */
+  private emberPhase = 0;
+  /** Persistent walking cursor into the static `randomTable` — see `nextRand()`. */
+  private rIdx: number;
 
   private readonly sparkTrailsContainer: ParticleContainer;
   private readonly sparkCoresContainer: ParticleContainer;
@@ -134,6 +159,9 @@ export class ModeRowEngine {
     this.inputGlow = inputGlow;
     this.getText = getText;
     this.composerContainer = composerContainer;
+    // Seeded from the engine's own clock instead of Math.random() — see
+    // `randCursor`'s own doc comment on FireworksSystem, the same convention.
+    this.rIdx = (app.ticker.lastTime | 0) & RANDOM_MASK;
 
     this.frames = COMPOSE_MODE_ENTRIES.map((entry) => this.buildComposeModeFrame(entry.mode, entry.icon, entry.label, entry.stackable));
     for (const frame of this.frames) composerContainer.addChild(frame.root);
@@ -176,6 +204,12 @@ export class ModeRowEngine {
     app.ticker.add((ticker) => this.syncFuseEffect(ticker));
     app.ticker.add((ticker) => this.syncDeleteSparks(ticker));
     app.ticker.add((ticker) => this.syncInputBounce(ticker));
+  }
+
+  /** Walks `randomTable` one step — see `rIdx`'s own doc comment. */
+  private nextRand(): number {
+    this.rIdx = (this.rIdx + RANDOM_STRIDE) & RANDOM_MASK;
+    return randomTable[this.rIdx];
   }
 
   isSpringActive(): boolean {
@@ -387,10 +421,11 @@ export class ModeRowEngine {
    * refresh() already sizes the scroll window, so the rope never runs wider
    * than what the player can actually see (multi-line text keeps it pinned
    * under just the *last* line, which is always the one at the fixed bottom
-   * anchor). The ember rides a Math.sin oscillation between the rope's own
-   * two ends (ticker.lastTime-driven, unaccumulated) and periodically peels
-   * off a single real ember via this class's own delete-spark particle
-   * pool.
+   * anchor). The ember rides a `fastSin` oscillation between the rope's own
+   * two ends, driven by `emberPhase` (incrementally advanced/wrapped every
+   * frame, never a live `Math.sin()` re-derived from `ticker.lastTime`) and
+   * periodically peels off a single real ember via this class's own
+   * delete-spark particle pool.
    */
   private syncFuseEffect(ticker: Ticker): void {
     const text = this.getText();
@@ -426,7 +461,9 @@ export class ModeRowEngine {
     this.fuseRope.position.set(ropeCenterX, ropeY);
     this.fuseRope.width = Math.max(1, ropeWidth);
 
-    const emberT = 0.5 + 0.5 * Math.sin(ticker.lastTime * FUSE_EMBER_SPEED);
+    this.emberPhase += ticker.deltaMS * FUSE_EMBER_SPEED;
+    if (this.emberPhase >= TWO_PI) this.emberPhase -= TWO_PI;
+    const emberT = 0.5 + 0.5 * fastSin(this.emberPhase);
     const emberX = ropeCenterX - ropeHalfWidth + emberT * (ropeHalfWidth * 2);
     this.fuseEmber.position.set(emberX, ropeY);
 
@@ -442,18 +479,17 @@ export class ModeRowEngine {
   /** A single, gentle ember (not a burst — see spawnDeleteSparks() for that) peeling off the traveling fuse point. Same pool as the delete-spark system. */
   private spawnFuseEmber(x: number, y: number): void {
     const particle = this.getPooledSparkParticle();
-    particle.init({
-      x,
-      y,
-      vx: (Math.random() - 0.5) * 0.4,
-      vy: -0.6 - Math.random() * 0.4,
-      color: FUSE_EMBER_COLOR,
-      size: 2 + Math.random(),
-      life: 20 + Math.random() * 14,
-      gravity: 0.06,
-      drag: 0.97,
-      twinkle: true,
-    });
+    SPARK_SLOT.x = x;
+    SPARK_SLOT.y = y;
+    SPARK_SLOT.vx = (this.nextRand() - 0.5) * 0.4;
+    SPARK_SLOT.vy = -0.6 - this.nextRand() * 0.4;
+    SPARK_SLOT.color = FUSE_EMBER_COLOR;
+    SPARK_SLOT.size = 2 + this.nextRand();
+    SPARK_SLOT.life = 20 + this.nextRand() * 14;
+    SPARK_SLOT.gravity = 0.06;
+    SPARK_SLOT.drag = 0.97;
+    SPARK_SLOT.twinkle = true;
+    particle.init(SPARK_SLOT);
     this.sparkParticles.push(particle);
   }
 
@@ -464,23 +500,23 @@ export class ModeRowEngine {
 
   /** Radial burst of 10-15 embers at a global (x, y). */
   private spawnDeleteSparks(x: number, y: number): void {
-    const count = DELETE_SPARK_COUNT_MIN + Math.floor(Math.random() * (DELETE_SPARK_COUNT_MAX - DELETE_SPARK_COUNT_MIN + 1));
+    const count = DELETE_SPARK_COUNT_MIN + ((this.nextRand() * (DELETE_SPARK_COUNT_MAX - DELETE_SPARK_COUNT_MIN + 1)) | 0);
     for (let i = 0; i < count; i++) {
       const particle = this.getPooledSparkParticle();
-      const angle = Math.random() * Math.PI * 2;
-      const speed = 1.2 + Math.random() * 2.4;
-      particle.init({
-        x,
-        y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed - 1, // slight upward kick so gravity's own pull down reads clearly
-        color: DELETE_SPARK_COLORS[Math.floor(Math.random() * DELETE_SPARK_COLORS.length)],
-        size: DELETE_SPARK_SIZE_MIN + Math.random() * (DELETE_SPARK_SIZE_MAX - DELETE_SPARK_SIZE_MIN),
-        life: DELETE_SPARK_LIFE_MIN + Math.random() * (DELETE_SPARK_LIFE_MAX - DELETE_SPARK_LIFE_MIN),
-        gravity: 0.12, // matches this codebase's own established burst-particle gravity range (see fireworks/patterns/*.ts)
-        drag: 0.97,
-        twinkle: true,
-      });
+      const angleIndex = (this.nextRand() * TABLE_SIZE) | 0;
+      const speed = 1.2 + this.nextRand() * 2.4;
+
+      SPARK_SLOT.x = x;
+      SPARK_SLOT.y = y;
+      SPARK_SLOT.vx = fastCosByIndex(angleIndex) * speed;
+      SPARK_SLOT.vy = fastSinByIndex(angleIndex) * speed - 1; // slight upward kick so gravity's own pull down reads clearly
+      SPARK_SLOT.color = DELETE_SPARK_COLORS[(this.nextRand() * DELETE_SPARK_COLORS.length) | 0];
+      SPARK_SLOT.size = DELETE_SPARK_SIZE_MIN + this.nextRand() * (DELETE_SPARK_SIZE_MAX - DELETE_SPARK_SIZE_MIN);
+      SPARK_SLOT.life = DELETE_SPARK_LIFE_MIN + this.nextRand() * (DELETE_SPARK_LIFE_MAX - DELETE_SPARK_LIFE_MIN);
+      SPARK_SLOT.gravity = 0.12; // matches this codebase's own established burst-particle gravity range (see fireworks/patterns/*.ts)
+      SPARK_SLOT.drag = 0.97;
+      SPARK_SLOT.twinkle = true;
+      particle.init(SPARK_SLOT);
       this.sparkParticles.push(particle);
     }
   }

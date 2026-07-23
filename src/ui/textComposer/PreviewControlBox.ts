@@ -1,6 +1,7 @@
 import { Container, Graphics, Text, TextStyle, type Application, type FederatedPointerEvent, type Ticker } from 'pixi.js';
 import { GlowFilter } from 'pixi-filters';
 import { Transformer, type TransformerTarget } from '../Transformer';
+import { fastSin, TWO_PI } from '../../fireworks/SineTable';
 import { EFFECT_GOLD, GLOW_DISTANCE, GLOW_PULSE_MAX, GLOW_PULSE_MIN, GLOW_PULSE_SPEED, GLOW_QUALITY } from './types';
 
 export interface PreviewControlBoxCallbacks {
@@ -33,6 +34,8 @@ export class PreviewControlBox {
 
   readonly previewText: Text;
   private readonly previewGlow: GlowFilter;
+  /** Radians in `[0, TWO_PI)` for the breathing glow — incrementally advanced and wrapped once per frame in `syncPreviewGlow()`, never re-derived from `ticker.lastTime` (which only ever grows) via a live `Math.sin()`. */
+  private glowPhase = 0;
   private transformer: Transformer | null = null;
   /** Full-screen, invisible-but-hit-testable — catches "tap outside the box" to commit. Sits directly under the Transformer's own box/handles on `uiContainer` so they always win the hit test over it. Visibility is tied 1:1 to whether a control box is actually open (see openControlBox()/closeControlBox()) — owned here rather than by TextComposer specifically so that invariant can never drift out of sync the way splitting it apart once did. */
   private readonly backdrop: Graphics;
@@ -129,15 +132,18 @@ export class PreviewControlBox {
    * `app.ticker` in the constructor, gated on `previewText.visible` (the
    * ticker itself is shared and always running, so anything per-mode has to
    * stand down explicitly rather than relying on the ticker being paused).
-   * `ticker.lastTime` is a plain millisecond clock the shared ticker already
-   * advances every frame — feeding it straight into `Math.sin` needs no
-   * timer, no accumulator field, no per-frame allocation: only a single
-   * `outerStrength` uniform write on the one `GlowFilter` instance built in
-   * the constructor.
+   * `glowPhase` is incrementally advanced by `ticker.deltaMS` and wrapped
+   * once per frame, then read through `SineTable`'s precomputed table
+   * instead of a live `Math.sin()` re-derived from an ever-growing
+   * `ticker.lastTime` — only a single `outerStrength` uniform write on the
+   * one `GlowFilter` instance built in the constructor, no per-frame
+   * allocation.
    */
   private syncPreviewGlow(ticker: Ticker): void {
     if (!this.previewText.visible) return;
-    const pulse = 0.5 + 0.5 * Math.sin(ticker.lastTime * GLOW_PULSE_SPEED);
+    this.glowPhase += ticker.deltaMS * GLOW_PULSE_SPEED;
+    if (this.glowPhase >= TWO_PI) this.glowPhase -= TWO_PI;
+    const pulse = 0.5 + 0.5 * fastSin(this.glowPhase);
     this.previewGlow.outerStrength = GLOW_PULSE_MIN + pulse * (GLOW_PULSE_MAX - GLOW_PULSE_MIN);
   }
 

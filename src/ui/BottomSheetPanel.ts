@@ -1,4 +1,5 @@
 import { Application, Container, Graphics, Rectangle } from 'pixi.js';
+import { fastSin } from '../fireworks/SineTable';
 
 const SLIDE_MS = 220;
 const PANEL_PADDING_X = 16;
@@ -86,7 +87,9 @@ export abstract class BottomSheetPanel {
       return;
     }
     const cycleT = (elapsed % PULSE_CYCLE_MS) / PULSE_CYCLE_MS;
-    const intensity = Math.sin(cycleT * Math.PI);
+    // cycleT * Math.PI is always in [0, PI) ⊂ [0, TWO_PI) — already within
+    // fastSin()'s input contract, no wrapping needed.
+    const intensity = fastSin(cycleT * Math.PI);
     this.pulseRing.visible = intensity > 0.01;
     if (this.pulseRing.visible) {
       this.pulseRing
