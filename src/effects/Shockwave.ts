@@ -52,17 +52,31 @@ export class ShockwaveManager {
   update(deltaSeconds: number): void {
     if (this.active.length === 0) return;
 
-    const beforeCount = this.active.length;
-    this.active = this.active.filter((wave) => {
+    // Swap-with-last removal instead of `.filter()`: no new array per
+    // frame — same technique already established in FireworksSystem.ts/
+    // GroundFountain.ts.
+    let changed = false;
+    let i = 0;
+    while (i < this.active.length) {
+      const wave = this.active[i];
       wave.age += deltaSeconds;
       wave.filter.time = wave.age;
       // Fades as it expands, rather than staying at full strength until it
       // simply stops existing.
       wave.filter.amplitude = INITIAL_AMPLITUDE * Math.max(0, 1 - wave.age / DURATION_SECONDS);
-      return wave.age < DURATION_SECONDS;
-    });
 
-    if (this.active.length !== beforeCount) this.syncFilters();
+      if (wave.age >= DURATION_SECONDS) {
+        changed = true;
+        const last = this.active.pop();
+        if (i < this.active.length && last) {
+          this.active[i] = last;
+        }
+      } else {
+        i++;
+      }
+    }
+
+    if (changed) this.syncFilters();
   }
 
   private syncFilters(): void {
