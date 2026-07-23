@@ -1,5 +1,6 @@
 import { Application, BlurFilter, Container, FillGradient, Graphics, Sprite, Texture } from 'pixi.js';
-import { createLiveStreamVideoElement, createLoopingVideoElement } from './dom/shadowServices';
+import { fastSin, TWO_PI } from './fireworks/SineTable';
+import { createDecodedImageElement, createLiveStreamVideoElement, createLoopingVideoElement } from './dom/shadowServices';
 
 // Deep Sky Canvas palette.
 const SKY_TOP = 0x050508; // Royal Black
@@ -8,12 +9,18 @@ const HORIZON_GLOW_COLOR = '91, 74, 181'; // indigo/violet, as an rgb() triplet 
 const STAR_MIN_COUNT = 50;
 const STAR_MAX_COUNT = 80;
 const STAR_UPPER_BAND = 0.8; // stars only scattered across the upper 80% of the screen
+const TWINKLE_SPEED = 0.02;
 
 interface TwinkleStar {
   display: Graphics;
+  /** Position as a fraction of screen width/height (0..1) — redrawn against the *current* screen size on resize instead of destroying/rebuilding the star from scratch. */
+  fracX: number;
+  fracY: number;
+  radius: number;
   baseAlpha: number;
   speed: number;
-  phase: number;
+  /** Radians in `[0, TWO_PI)` — incrementally advanced and wrapped once per frame in `updateTwinkle()` (same convention as `Particle.ts`'s own `twinkleTimer`), never re-derived via a live `Math.sin()`/modulo of an unboundedly-growing clock. */
+  wavePos: number;
 }
 
 function coverFit(sprite: Sprite, width: number, height: number): void {
@@ -40,7 +47,8 @@ function grayscaleTint(brightness: number): number {
  * Swapping the backdrop or dimming it never touches per-pixel CPU work:
  * cover-fit is a transform and dimming is a GPU tint multiply, so neither
  * costs frames. The only per-frame cost is the twinkle animation, which is
- * just a handful of `alpha` writes driven by `Math.sin()`.
+ * just a handful of `alpha` writes driven by `SineTable`'s precomputed
+ * table (see `updateTwinkle()`) — zero live `Math.sin()` calls.
  */
 export class BackgroundLayer {
   private readonly app: Application;
@@ -53,9 +61,18 @@ export class BackgroundLayer {
   private dimmer = 1;
 
   private stars: TwinkleStar[] = [];
-  private twinkleClock = 0;
+
+  // The Deep Sky Canvas's own persistent Graphics/gradients/filter — redrawn
+  // in place at the new size on resize (see handleResize()) instead of being
+  // destroyed and rebuilt from scratch every time, matching the same
+  // zero-allocation-in-resize-path discipline already applied elsewhere in
+  // this codebase (HeaderBar.ts's filterMask, FireworksSystem.ts's
+  // filterArea). Only actually populated while the Deep Sky Canvas — not a
+  // photo/video — is the current backdrop; see clearDeepSkyRefs().
+  private skyGraphics: Graphics | null = null;
   private skyGradient: FillGradient | null = null;
-  private glowGradient: FillGradient | null = null;
+  private horizonGraphics: Graphics | null = null;
+  private horizonGradient: FillGradient | null = null;
 
   constructor(app: Application, parent: Container) {
     this.app = app;
@@ -70,19 +87,16 @@ export class BackgroundLayer {
   async setImage(file: File): Promise<void> {
     const objectUrl = URL.createObjectURL(file);
     try {
-      const image = new Image();
-      image.src = objectUrl;
-      await image.decode();
+      const image = await createDecodedImageElement(objectUrl);
 
       this.stopVideo();
-      this.stars = []; // the old preset's stars are about to be destroyed by replace()
-      const oldGradients = this.takeTrackedGradients();
+      this.clearDeepSkyRefs();
       const sprite = new Sprite(Texture.from(image));
       sprite.anchor.set(0.5);
       coverFit(sprite, this.app.screen.width, this.app.screen.height);
       sprite.tint = grayscaleTint(this.dimmer);
 
-      this.replace(sprite, oldGradients);
+      this.replace(sprite);
       this.currentSprite = sprite;
     } finally {
       URL.revokeObjectURL(objectUrl);
@@ -96,8 +110,7 @@ export class BackgroundLayer {
     await video.play().catch(() => undefined);
 
     this.stopVideo();
-    this.stars = []; // the old preset's stars are about to be destroyed by replace()
-    const oldGradients = this.takeTrackedGradients();
+    this.clearDeepSkyRefs();
     this.videoEl = video;
 
     const sprite = new Sprite(Texture.from(video));
@@ -105,7 +118,7 @@ export class BackgroundLayer {
     coverFit(sprite, this.app.screen.width, this.app.screen.height);
     sprite.tint = grayscaleTint(this.dimmer);
 
-    this.replace(sprite, oldGradients);
+    this.replace(sprite);
     this.currentSprite = sprite;
     // objectUrl is intentionally not revoked here — the <video> element keeps
     // streaming from it for as long as this backdrop is active.
@@ -122,8 +135,7 @@ export class BackgroundLayer {
     await video.play().catch(() => undefined);
 
     this.stopVideo();
-    this.stars = []; // the old preset's stars are about to be destroyed by replace()
-    const oldGradients = this.takeTrackedGradients();
+    this.clearDeepSkyRefs();
     this.videoEl = video;
     this.videoStream = stream;
 
@@ -132,7 +144,7 @@ export class BackgroundLayer {
     coverFit(sprite, this.app.screen.width, this.app.screen.height);
     sprite.tint = grayscaleTint(this.dimmer);
 
-    this.replace(sprite, oldGradients);
+    this.replace(sprite);
     this.currentSprite = sprite;
   }
 
@@ -147,8 +159,12 @@ export class BackgroundLayer {
     const group = new Container();
     const { width, height } = this.app.screen;
 
-    group.addChild(this.buildSkyGradient(width, height));
-    group.addChild(this.buildHorizonGlow(width, height));
+    this.skyGraphics = this.buildSkyGradient(width, height);
+    group.addChild(this.skyGraphics);
+
+    this.horizonGraphics = this.buildHorizonGlow(width, height);
+    group.addChild(this.horizonGraphics);
+
     group.addChild(this.buildStars(width, height));
 
     return group;
@@ -183,7 +199,7 @@ export class BackgroundLayer {
         { offset: 1, color: `rgba(${HORIZON_GLOW_COLOR}, 0.55)` },
       ],
     });
-    this.glowGradient = gradient;
+    this.horizonGradient = gradient;
 
     const glow = new Graphics().rect(0, height - glowHeight, width, glowHeight).fill(gradient);
     glow.filters = [new BlurFilter({ strength: 20 })];
@@ -196,21 +212,24 @@ export class BackgroundLayer {
     const stars: TwinkleStar[] = [];
 
     for (let i = 0; i < count; i++) {
-      const x = Math.random() * width;
-      const y = Math.random() * height * STAR_UPPER_BAND;
+      const fracX = Math.random();
+      const fracY = Math.random() * STAR_UPPER_BAND;
       const radius = 0.4 + Math.random() * 1.3;
       const baseAlpha = 0.35 + Math.random() * 0.5;
 
-      const display = new Graphics().circle(x, y, radius).fill({ color: 0xffffff });
+      const display = new Graphics().circle(fracX * width, fracY * height, radius).fill({ color: 0xffffff });
       display.alpha = baseAlpha;
       container.addChild(display);
 
       stars.push({
         display,
+        fracX,
+        fracY,
+        radius,
         baseAlpha,
-        // Staggered speed + phase so stars never blink in unison.
+        // Staggered speed + starting wave position so stars never blink in unison.
         speed: 0.6 + Math.random() * 1.4,
-        phase: Math.random() * Math.PI * 2,
+        wavePos: Math.random() * TWO_PI,
       });
     }
 
@@ -221,9 +240,10 @@ export class BackgroundLayer {
   private updateTwinkle(delta: number): void {
     if (this.stars.length === 0) return;
 
-    this.twinkleClock += delta * 0.02;
     for (const star of this.stars) {
-      const wave = Math.sin(this.twinkleClock * star.speed + star.phase);
+      star.wavePos += delta * TWINKLE_SPEED * star.speed;
+      if (star.wavePos >= TWO_PI) star.wavePos -= TWO_PI;
+      const wave = fastSin(star.wavePos);
       star.display.alpha = star.baseAlpha * (0.55 + 0.45 * wave);
     }
   }
@@ -234,28 +254,56 @@ export class BackgroundLayer {
       return;
     }
 
-    // Currently showing the procedural Deep Sky Canvas — regenerate it at the
-    // new size so the gradient bounds and star field stay correct.
-    const oldGradients = this.takeTrackedGradients();
-    this.replace(this.buildDeepSky(), oldGradients);
+    // Currently showing the procedural Deep Sky Canvas — redraw every piece
+    // in place at the new size instead of destroying and rebuilding the
+    // whole thing. Both gradients auto-refit to their shape's new bounds
+    // (`textureSpace: 'local'` maps their color stops across whatever rect
+    // they're filled into), and every star keeps its own already-rolled
+    // look (radius/alpha/speed/wave phase) via its stored fractional
+    // position, just redrawn at the new absolute coordinates.
+    const { width, height } = this.app.screen;
+
+    if (this.skyGraphics && this.skyGradient) {
+      this.skyGraphics.clear().rect(0, 0, width, height).fill(this.skyGradient);
+    }
+
+    if (this.horizonGraphics && this.horizonGradient) {
+      const glowHeight = Math.max(height * 0.16, 100);
+      this.horizonGraphics.clear().rect(0, height - glowHeight, width, glowHeight).fill(this.horizonGradient);
+    }
+
+    for (const star of this.stars) {
+      star.display.clear().circle(star.fracX * width, star.fracY * height, star.radius).fill({ color: 0xffffff });
+    }
   }
 
-  private replace(next: Container, oldGradients: FillGradient[] = []): void {
+  private replace(next: Container): void {
     this.parent.addChildAt(next, 0);
     const old = this.current;
     this.parent.removeChild(old);
     old.destroy({ children: true, texture: true, textureSource: true });
-    for (const gradient of oldGradients) gradient.destroy();
     this.current = next;
   }
 
-  /** Captures whichever gradients the *current* (about-to-be-replaced) container owns, so
-   * they can be destroyed after the swap — without touching the fresh ones a rebuild just made. */
-  private takeTrackedGradients(): FillGradient[] {
-    const gradients = [this.skyGradient, this.glowGradient].filter((g): g is FillGradient => g !== null);
+  /**
+   * Drops this instance's own references to the Deep Sky Canvas's
+   * persistent Graphics/gradients/stars and destroys the gradients
+   * explicitly (a `Graphics.destroy()` from `replace()` doesn't reach a
+   * `FillGradient` it was filled with — same reasoning the original
+   * `takeTrackedGradients()` step relied on) — called right before
+   * replacing the Deep Sky Canvas with a photo/video, so `handleResize()`/
+   * `updateTwinkle()` never touch objects that are about to be destroyed.
+   * Safe to call when the current backdrop is already a photo/video (every
+   * field is already null; destroying a null reference is a no-op).
+   */
+  private clearDeepSkyRefs(): void {
+    this.skyGradient?.destroy();
+    this.horizonGradient?.destroy();
+    this.stars = [];
+    this.skyGraphics = null;
     this.skyGradient = null;
-    this.glowGradient = null;
-    return gradients;
+    this.horizonGraphics = null;
+    this.horizonGradient = null;
   }
 
   private stopVideo(): void {

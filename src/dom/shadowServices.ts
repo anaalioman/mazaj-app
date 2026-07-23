@@ -79,6 +79,33 @@ export function createHiddenTextArea(): HTMLTextAreaElement {
   return textarea;
 }
 
+/**
+ * Fires `onSelectionChange` whenever `textarea`'s own selection moves
+ * without its text changing (arrow keys, a native long-press-drag) while
+ * it's the currently focused element — `selectionchange` is a
+ * document-level event with no target filter of its own, so the
+ * active-element check happens here, the one place this app touches
+ * `document` for it (GhostInputBridge.ts's caller never does).
+ */
+export function watchTextAreaSelectionChange(textarea: HTMLTextAreaElement, onSelectionChange: () => void): void {
+  document.addEventListener('selectionchange', () => {
+    if (document.activeElement === textarea) onSelectionChange();
+  });
+}
+
+/**
+ * Decodes a user-supplied image (already turned into an object URL by the
+ * caller) into a ready-to-use `<img>` element — the only way to get
+ * `Texture.from()` a real decoded bitmap out of an arbitrary uploaded image
+ * file; no Canvas-only equivalent exists for format-agnostic image decode.
+ * Never attached to the visible DOM.
+ */
+export function createDecodedImageElement(objectUrl: string): Promise<HTMLImageElement> {
+  const image = new Image();
+  image.src = objectUrl;
+  return image.decode().then(() => image);
+}
+
 /** Same as createLoopingVideoElement, sourced from a live MediaStream (the device camera) instead of a file. */
 export function createLiveStreamVideoElement(stream: MediaStream): HTMLVideoElement {
   const video = document.createElement('video');

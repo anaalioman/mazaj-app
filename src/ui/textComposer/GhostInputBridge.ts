@@ -1,4 +1,4 @@
-import { createHiddenTextArea } from '../../dom/shadowServices';
+import { createHiddenTextArea, watchTextAreaSelectionChange } from '../../dom/shadowServices';
 
 export interface GhostInputBridgeCallbacks {
   /**
@@ -51,10 +51,6 @@ export function createGhostInputBridge(callbacks: GhostInputBridgeCallbacks): HT
   });
   input.addEventListener('focus', () => callbacks.onFocus());
   input.addEventListener('blur', () => callbacks.onBlur());
-  // A document-level event with no target filter of its own, hence the
-  // activeElement check — see this function's own doc comment.
-  document.addEventListener('selectionchange', () => {
-    if (document.activeElement === input) callbacks.onSelectionChange();
-  });
+  watchTextAreaSelectionChange(input, callbacks.onSelectionChange);
   return input;
 }
