@@ -58,6 +58,8 @@ export class BackgroundLayer {
   private videoEl: HTMLVideoElement | null = null;
   /** Only set when the current video is a live getUserMedia feed (توثيق مباشر) — its tracks must be stopped explicitly to actually release the camera. */
   private videoStream: MediaStream | null = null;
+  /** The blob URL backing the current user-uploaded video (setVideo()) — null for a live-camera or no-video backdrop. Deliberately not revoked at creation (the <video> element streams from it while active); stopVideo() revokes whatever this holds so switching away from a video backdrop never leaks its blob. */
+  private videoObjectUrl: string | null = null;
   private dimmer = 1;
 
   private stars: TwinkleStar[] = [];
@@ -112,6 +114,11 @@ export class BackgroundLayer {
     this.stopVideo();
     this.clearDeepSkyRefs();
     this.videoEl = video;
+    // Tracked so the *next* stopVideo() call (a later setVideo()/setImage()/
+    // setLiveCamera(), or this whole layer never revisiting video again) can
+    // revoke it — not revoked here since the <video> element keeps streaming
+    // from it for as long as this backdrop is active.
+    this.videoObjectUrl = objectUrl;
 
     const sprite = new Sprite(Texture.from(video));
     sprite.anchor.set(0.5);
@@ -120,8 +127,6 @@ export class BackgroundLayer {
 
     this.replace(sprite);
     this.currentSprite = sprite;
-    // objectUrl is intentionally not revoked here — the <video> element keeps
-    // streaming from it for as long as this backdrop is active.
   }
 
   /** Turns on the device's rear camera as a live backdrop (توثيق مباشر) — fireworks render on top of it exactly like any other video background. */
@@ -316,6 +321,14 @@ export class BackgroundLayer {
       this.videoEl.removeAttribute('src');
       this.videoEl.load();
       this.videoEl = null;
+    }
+    // Revokes whatever blob URL the previous setVideo() call created (see
+    // videoObjectUrl's own doc comment) — the real fix: without this, every
+    // background-video switch orphaned its predecessor's blob URL for the
+    // rest of the app session, a genuine cumulative memory leak.
+    if (this.videoObjectUrl) {
+      URL.revokeObjectURL(this.videoObjectUrl);
+      this.videoObjectUrl = null;
     }
   }
 }
