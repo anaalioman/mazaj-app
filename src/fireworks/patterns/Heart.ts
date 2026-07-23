@@ -185,9 +185,13 @@ for (let i = 0; i < HEART_POOL_SIZE; i++) {
  */
 export function burstHeart(x: number, y: number, ctx: BurstContext): void {
   let rIdx = ((x | 0) ^ (y | 0)) & RANDOM_MASK;
+  const nextRandom = (): number => {
+    rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
+    return randomTable[rIdx];
+  };
 
   rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
-  const burstColors = ctx.activeColor !== null ? shadesOf(ctx.activeColor, 4) : pickBurstColors(3 + ((randomTable[rIdx] * 2) | 0));
+  const burstColors = ctx.activeColor !== null ? shadesOf(ctx.activeColor, 4) : pickBurstColors(3 + ((randomTable[rIdx] * 2) | 0), nextRandom);
   const colorLen = burstColors.length;
 
   // `(v + 0.5) | 0` instead of Math.round(v) — bit-identical for this

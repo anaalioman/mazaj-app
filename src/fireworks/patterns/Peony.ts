@@ -56,12 +56,16 @@ for (let i = 0; i < POOL_SIZE; i++) {
  */
 export function burstPeony(x: number, y: number, ctx: BurstContext): void {
   let rIdx = ((x | 0) ^ (y | 0)) & RANDOM_MASK;
+  const nextRandom = (): number => {
+    rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
+    return randomTable[rIdx];
+  };
 
-  const outerPalette = randomPalette();
-  const primaryColor = ctx.activeColor ?? randomColor(outerPalette);
+  const outerPalette = randomPalette(nextRandom);
+  const primaryColor = ctx.activeColor ?? randomColor(outerPalette, nextRandom);
   // 0.25 (not 0.5): a lighter, hotter-reading tint of the dyed color without
   // washing it out toward white — keeps the pistil visibly saturated.
-  const pistilColor = ctx.activeColor !== null ? lerpColor(ctx.activeColor, 0xffffff, 0.25) : randomColor(contrastingPalette(outerPalette));
+  const pistilColor = ctx.activeColor !== null ? lerpColor(ctx.activeColor, 0xffffff, 0.25) : randomColor(contrastingPalette(outerPalette, nextRandom), nextRandom);
 
   // Base counts tuned so a default-density burst lands around 250-400
   // total sparks between the outer sphere and pistil core combined.

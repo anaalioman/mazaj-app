@@ -1,6 +1,19 @@
 import { Application, Container, Particle as PixiParticle, ParticleContainer, Sprite, Texture } from 'pixi.js';
 import { getParticleTexture, getGlowTexture } from './textures';
 import { ParticlePool } from './ParticlePool';
+import { fastCos, fastSin, TWO_PI } from './SineTable';
+
+// Static noise table, built once at module load — same convention as every
+// burst pattern file. Walked via each instance's own advancing cursor (see
+// nextRand()); a continuous 5s stream draws well past this table's own size
+// (up to 450 sparks x 5 draws = 2250), but unlike a single simultaneous
+// burst, sparks emitted seconds apart don't need decorrelation from each
+// other, so wraparound reuse over that time is imperceptible.
+const RANDOM_TABLE_SIZE = 512;
+const RANDOM_MASK = RANDOM_TABLE_SIZE - 1;
+const RANDOM_STRIDE = 131;
+const randomTable = new Float32Array(RANDOM_TABLE_SIZE);
+for (let i = 0; i < RANDOM_TABLE_SIZE; i++) randomTable[i] = Math.random();
 
 const DURATION_SECONDS = 5;
 const HEIGHT_RATIO = 0.25;
@@ -32,6 +45,8 @@ export class GroundFountain {
   private age = 0;
   private emitAccumulator = 0;
   private emitting = true;
+  /** Persistent walking cursor into the static `randomTable` — see `nextRand()`. */
+  private rIdx: number;
 
   private readonly invTextureWidth: number;
   private readonly invTextureHeight: number;
@@ -42,6 +57,9 @@ export class GroundFountain {
     this.baseY = y;
     this.maxRise = app.screen.height * HEIGHT_RATIO;
     this.texture = getParticleTexture();
+    // Seeded from the ignition point instead of Math.random() — same
+    // convention as every burst pattern function's own rIdx seed.
+    this.rIdx = ((x | 0) ^ (y | 0)) & RANDOM_MASK;
 
     this.invTextureWidth = 1 / this.texture.width;
     this.invTextureHeight = 1 / this.texture.height;
@@ -155,18 +173,26 @@ export class GroundFountain {
     this.container.destroy({ children: true });
   }
 
+  /** Walks `randomTable` one step — zero live `Math.random()` calls. */
+  private nextRand(): number {
+    this.rIdx = (this.rIdx + RANDOM_STRIDE) & RANDOM_MASK;
+    return randomTable[this.rIdx];
+  }
+
   private spawnSpark(): void {
     if (this.liveSparkCount >= MAX_SPARKS) return;
 
-    const rawRand = Math.random();
+    const randAngle = this.nextRand();
+    const randSpeed = this.nextRand();
+    const randColor = this.nextRand();
+    const randSize = this.nextRand();
+    const randX = this.nextRand();
 
-    const randAngle = (rawRand * 100) % 1;
-    const randSpeed = (rawRand * 10000) % 1;
-    const randColor = (rawRand * 1000000) % 1;
-    const randSize = (rawRand * 100000000) % 1;
-    const randX = (rawRand * 10) % 1;
-
-    const angle = -Math.PI / 2 + (randAngle - 0.5) * 2 * CONE_HALF_ANGLE;
+    const rawAngle = -Math.PI / 2 + (randAngle - 0.5) * 2 * CONE_HALF_ANGLE;
+    // fastCos/fastSin require a pre-wrapped [0, TWO_PI) input; rawAngle is
+    // only ever slightly negative (CONE_HALF_ANGLE is a few degrees), so one
+    // conditional add is enough, no wrap loop needed.
+    const angle = rawAngle < 0 ? rawAngle + TWO_PI : rawAngle;
     const speed = 5 + randSpeed * 2;
 
     const particle = this.pool.pop();
@@ -188,7 +214,7 @@ export class GroundFountain {
     particle.x = (spawnX + 0.5) | 0;
     particle.y = spawnY | 0;
 
-    this.sparkVx[idx] = Math.cos(angle) * speed;
-    this.sparkVy[idx] = Math.sin(angle) * speed;
+    this.sparkVx[idx] = fastCos(angle) * speed;
+    this.sparkVy[idx] = fastSin(angle) * speed;
   }
 }

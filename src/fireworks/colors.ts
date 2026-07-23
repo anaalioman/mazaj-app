@@ -13,19 +13,26 @@ export const PALETTES: number[][] = [
   [0x1e6bff, 0x3a86ff, 0x0f3d91], // cobalt blue
 ];
 
-export function randomPalette(): number[] {
-  return PALETTES[Math.floor(Math.random() * PALETTES.length)];
+/**
+ * `rand` defaults to `Math.random` for any caller outside the fireworks
+ * pattern functions (none currently exist), but every pattern file
+ * (Peony.ts, Rose.ts, ...) passes its own table-backed `nextRandom` here
+ * instead — otherwise this one-draw-per-burst color pick would be the only
+ * live `Math.random()` call left in an otherwise fully table-driven burst.
+ */
+export function randomPalette(rand: () => number = Math.random): number[] {
+  return PALETTES[(rand() * PALETTES.length) | 0];
 }
 
-export function randomColor(palette: number[]): number {
-  return palette[Math.floor(Math.random() * palette.length)];
+export function randomColor(palette: number[], rand: () => number = Math.random): number {
+  return palette[(rand() * palette.length) | 0];
 }
 
 /** Picks a random palette guaranteed to differ from `exclude`, for real color contrast (e.g. Peony's outer sphere vs. its pistil core). */
-export function contrastingPalette(exclude: number[]): number[] {
-  let palette = randomPalette();
+export function contrastingPalette(exclude: number[], rand: () => number = Math.random): number[] {
+  let palette = randomPalette(rand);
   let guard = 0;
-  while (palette === exclude && guard++ < 5) palette = randomPalette();
+  while (palette === exclude && guard++ < 5) palette = randomPalette(rand);
   return palette;
 }
 
@@ -33,11 +40,11 @@ const ALL_COLORS = Array.from(new Set(PALETTES.flat()));
 
 /** Picks `count` distinct colors at random across every palette, so a single
  * burst is guaranteed to show several different hues instead of one tone. */
-export function pickBurstColors(count: number): number[] {
+export function pickBurstColors(count: number, rand: () => number = Math.random): number[] {
   const pool = [...ALL_COLORS];
   const picked: number[] = [];
   for (let i = 0; i < count && pool.length > 0; i++) {
-    const index = Math.floor(Math.random() * pool.length);
+    const index = (rand() * pool.length) | 0;
     picked.push(pool.splice(index, 1)[0]);
   }
   return picked;

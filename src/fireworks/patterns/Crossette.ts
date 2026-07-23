@@ -87,7 +87,7 @@ export function burstPalmCrossette(x: number, y: number, ctx: BurstContext): voi
     return randomTable[rIdx];
   };
 
-  const burstColors = ctx.activeColor !== null ? shadesOf(ctx.activeColor, 3) : pickBurstColors(3);
+  const burstColors = ctx.activeColor !== null ? shadesOf(ctx.activeColor, 3) : pickBurstColors(3, nextRandom);
   const colorLen = burstColors.length;
   const armCount = 5 + ((nextRandom() * 3) | 0); // 5, 6, or 7
   const baseSpeed = (3.0 + nextRandom() * 1.4) * ctx.settings.explosionScale;

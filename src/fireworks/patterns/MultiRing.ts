@@ -54,8 +54,12 @@ for (let i = 0; i < MAX_RING_PARTICLES; i++) {
  */
 export function burstMultiRing(x: number, y: number, ctx: BurstContext): void {
   let rIdx = ((x | 0) ^ (y | 0)) & RANDOM_MASK;
+  const nextRandom = (): number => {
+    rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
+    return randomTable[rIdx];
+  };
 
-  const hues = ctx.activeColor !== null ? shadesOf(ctx.activeColor, 4) : pickBurstColors(4);
+  const hues = ctx.activeColor !== null ? shadesOf(ctx.activeColor, 4) : pickBurstColors(4, nextRandom);
 
   const countRaw = Math.max(30, 80 * ctx.densityRatio);
   const countMax = (countRaw + 0.5) | 0;

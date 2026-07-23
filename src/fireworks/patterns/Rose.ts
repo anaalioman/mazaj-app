@@ -48,9 +48,13 @@ for (let i = 0; i < ROSE_CAP; i++) {
  */
 export function burstRose(x: number, y: number, ctx: BurstContext): void {
   let rIdx = ((x | 0) ^ (y | 0)) & RANDOM_MASK;
+  const nextRandom = (): number => {
+    rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
+    return randomTable[rIdx];
+  };
 
   rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
-  const burstColors = ctx.activeColor !== null ? shadesOf(ctx.activeColor, 4) : pickBurstColors(3 + ((randomTable[rIdx] * 3) | 0));
+  const burstColors = ctx.activeColor !== null ? shadesOf(ctx.activeColor, 4) : pickBurstColors(3 + ((randomTable[rIdx] * 3) | 0), nextRandom);
   rIdx = (rIdx + RANDOM_STRIDE) & RANDOM_MASK;
   const k = 2 + ((randomTable[rIdx] * 5) | 0);
   // Back to the same base count every other pattern uses proportionally

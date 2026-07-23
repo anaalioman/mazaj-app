@@ -1,6 +1,7 @@
 import { Application, BlurFilter, Container, TextStyle } from 'pixi.js';
 import type { FireworksSystem } from '../fireworks/FireworksSystem';
 import { CharacterReveal } from './CharacterReveal';
+import { fastSin, TWO_PI } from '../fireworks/SineTable';
 
 export interface RevealOptions {
   /** Stage-space (== screen CSS pixels in this app) position of the text's center. Defaults to top-center. */
@@ -48,6 +49,7 @@ export class TextReveal {
   private settled = false;
 
   private smokeCloudActive = false;
+  /** Radians in `[0, TWO_PI)` for the smoke blur's breathing pulse — incrementally advanced/wrapped each frame in syncSmokeCloud() (runs for the rest of the show once triggered, so this must wrap rather than grow unboundedly), read through `fastSin()` instead of a live `Math.sin()`. */
   private smokeElapsed = 0;
   private smokeDriftY = 0;
   /** The settled text block's own top edge (stage space), captured once from `container.getBounds()` right as it settles — the clamp boundary syncSmokeCloud() drifts toward. */
@@ -130,12 +132,13 @@ export class TextReveal {
    * since CharacterReveal settles N independent sprites, not one Text.
    */
   private syncSmokeCloud(delta: number): void {
-    this.smokeElapsed += delta;
+    this.smokeElapsed += delta * SMOKE_BLUR_PULSE_SPEED;
+    if (this.smokeElapsed >= TWO_PI) this.smokeElapsed -= TWO_PI;
     const minDriftY = this.smokeBaseTopY - SMOKE_TOP_MARGIN;
     this.smokeDriftY = Math.min(this.smokeDriftY + SMOKE_DRIFT_SPEED * delta, minDriftY);
     this.container.position.y = -this.smokeDriftY;
 
-    const pulse = (Math.sin(this.smokeElapsed * SMOKE_BLUR_PULSE_SPEED) + 1) / 2;
+    const pulse = (fastSin(this.smokeElapsed) + 1) / 2;
     this.smokeBlur.strength = SMOKE_BLUR_MIN + pulse * (SMOKE_BLUR_MAX - SMOKE_BLUR_MIN);
     this.container.filters = [this.smokeBlur];
   }
