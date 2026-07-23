@@ -345,9 +345,16 @@ export class FireworksSystem {
       }
     }
 
+    // Manual indexed merge instead of `.push(...this.pendingSpawns)`: spread
+    // into a per-frame call is exactly the pattern this codebase's own
+    // swap-with-last convention exists to avoid — see the three loops above.
+    // `.length = 0` truncates pendingSpawns in place instead of allocating a
+    // fresh empty array.
     if (this.pendingSpawns.length > 0) {
-      this.particles.push(...this.pendingSpawns);
-      this.pendingSpawns = [];
+      for (let i = 0; i < this.pendingSpawns.length; i++) {
+        this.particles.push(this.pendingSpawns[i]);
+      }
+      this.pendingSpawns.length = 0;
     }
 
     // Swap-with-last removal instead of `.filter()`: no new array per
