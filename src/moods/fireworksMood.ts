@@ -121,11 +121,15 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
   // worldContainer's current contents — particles/background constantly
   // move, so an auto-fit frame would resize/shift every single extracted
   // frame instead of producing a stable video.
-  let worldExtractFrame = new Rectangle(0, 0, app.screen.width, app.screen.height);
+  const worldExtractFrame = new Rectangle(0, 0, app.screen.width, app.screen.height);
   app.renderer.on('resize', () => {
     recordCanvas.width = app.screen.width * app.renderer.resolution;
     recordCanvas.height = app.screen.height * app.renderer.resolution;
-    worldExtractFrame = new Rectangle(0, 0, app.screen.width, app.screen.height);
+    // Mutated in place instead of a fresh `new Rectangle(...)` per resize —
+    // same zero-allocation-in-resize-path convention as FireworksSystem's
+    // own filterArea fix.
+    worldExtractFrame.width = app.screen.width;
+    worldExtractFrame.height = app.screen.height;
   });
 
   const background = new BackgroundLayer(app, worldContainer);

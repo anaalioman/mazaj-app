@@ -1,4 +1,5 @@
 import type { Container } from 'pixi.js';
+import { fastCos, fastSin, TWO_PI } from '../fireworks/SineTable';
 
 // Below this burst intensity nothing shakes at all — only large/dense
 // explosions (peony, rose, multi-ring, big hybrids) should punch the camera;
@@ -6,6 +7,16 @@ import type { Container } from 'pixi.js';
 const MIN_INTENSITY = 0.35;
 const MAX_OFFSET_PX = 10;
 const BASE_DURATION_SECONDS = 0.28;
+
+// Static noise table, built once at module load — same convention as every
+// fireworks pattern file. A shake only draws one value per frame for its own
+// short ~0.28-0.35s duration, so 256 slots is comfortable headroom; stride
+// stays prime (131), coprime with the power-of-two table size.
+const RANDOM_TABLE_SIZE = 256;
+const RANDOM_MASK = RANDOM_TABLE_SIZE - 1;
+const RANDOM_STRIDE = 131;
+const randomTable = new Float32Array(RANDOM_TABLE_SIZE);
+for (let i = 0; i < RANDOM_TABLE_SIZE; i++) randomTable[i] = Math.random();
 
 /**
  * A tiny, cheap camera-shake: nudges `worldContainer.position` (see
@@ -23,9 +34,17 @@ export class ScreenShakeManager {
   private age = 0;
   private duration = 0;
   private magnitude = 0;
+  /** Persistent walking cursor into the static `randomTable` — see `nextRand()`. */
+  private rIdx = 0;
 
   constructor(worldContainer: Container) {
     this.worldContainer = worldContainer;
+  }
+
+  /** Walks `randomTable` one step — zero live `Math.random()` calls. */
+  private nextRand(): number {
+    this.rIdx = (this.rIdx + RANDOM_STRIDE) & RANDOM_MASK;
+    return randomTable[this.rIdx];
   }
 
   /** `intensity` is roughly 0-1.5 (see FireworksSystem's onExplode). */
@@ -60,7 +79,7 @@ export class ScreenShakeManager {
     const remaining = 1 - this.age / this.duration;
     const eased = remaining * remaining; // ease-out: sharp punch, quick settle
     const currentMagnitude = this.magnitude * eased;
-    const angle = Math.random() * Math.PI * 2;
-    this.worldContainer.position.set(Math.cos(angle) * currentMagnitude, Math.sin(angle) * currentMagnitude);
+    const angle = this.nextRand() * TWO_PI;
+    this.worldContainer.position.set(fastCos(angle) * currentMagnitude, fastSin(angle) * currentMagnitude);
   }
 }

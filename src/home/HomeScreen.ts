@@ -111,6 +111,8 @@ export class HomeScreen {
   readonly app: Application;
   private readonly deps: HomeScreenDeps;
   private readonly titleText: Text;
+  /** Built once — layout() only ever mutates its `fontSize` on resize (Pixi's `TextStyle` propagates the change to `titleText` on its own), instead of a fresh `FillGradient`/`TextStyle` pair being allocated every resize call. */
+  private readonly titleTextStyle: TextStyle;
   private readonly subtitleText: Text;
   private readonly cards: Card[] = [];
 
@@ -118,9 +120,27 @@ export class HomeScreen {
     this.app = app;
     this.deps = deps;
 
+    // Ported from the old `background: linear-gradient(180deg, #ffe9b3, #ff9f45); -webkit-background-clip: text` — a real Pixi FillGradient on the text itself, not a flat color.
+    const titleGradient = new FillGradient({
+      type: 'linear',
+      start: { x: 0, y: 0 },
+      end: { x: 0, y: 1 },
+      textureSpace: 'local',
+      colorStops: [
+        { offset: 0, color: 0xffe9b3 },
+        { offset: 1, color: 0xff9f45 },
+      ],
+    });
+    this.titleTextStyle = new TextStyle({
+      fontFamily: 'Tajawal, system-ui, sans-serif',
+      fontSize: TITLE_FONT_SIZE_WIDE,
+      fontWeight: '800',
+      fill: titleGradient,
+      dropShadow: { color: 0xff9f45, alpha: 0.25, blur: 24, distance: 2 },
+    });
     this.titleText = new Text({
       text: 'مزاج',
-      style: this.titleStyle(TITLE_FONT_SIZE_WIDE),
+      style: this.titleTextStyle,
     });
     this.titleText.anchor.set(0.5, 0);
     layer.addChild(this.titleText);
@@ -145,27 +165,6 @@ export class HomeScreen {
   /** `layer` is a Container main.ts already added to the shared app.stage, toggled visible/hidden alongside every other screen — this class never creates its own Application or canvas. */
   static create(app: Application, layer: Container, deps: HomeScreenDeps): HomeScreen {
     return new HomeScreen(app, layer, deps);
-  }
-
-  private titleStyle(fontSize: number): TextStyle {
-    // Ported from the old `background: linear-gradient(180deg, #ffe9b3, #ff9f45); -webkit-background-clip: text` — a real Pixi FillGradient on the text itself, not a flat color.
-    const gradient = new FillGradient({
-      type: 'linear',
-      start: { x: 0, y: 0 },
-      end: { x: 0, y: 1 },
-      textureSpace: 'local',
-      colorStops: [
-        { offset: 0, color: 0xffe9b3 },
-        { offset: 1, color: 0xff9f45 },
-      ],
-    });
-    return new TextStyle({
-      fontFamily: 'Tajawal, system-ui, sans-serif',
-      fontSize,
-      fontWeight: '800',
-      fill: gradient,
-      dropShadow: { color: 0xff9f45, alpha: 0.25, blur: 24, distance: 2 },
-    });
   }
 
   /**
@@ -263,7 +262,7 @@ export class HomeScreen {
     const columns = screen.width >= NARROW_BREAKPOINT ? 3 : 2;
     const titleFontSize = screen.width >= NARROW_BREAKPOINT ? TITLE_FONT_SIZE_WIDE : TITLE_FONT_SIZE_NARROW;
 
-    this.titleText.style = this.titleStyle(titleFontSize);
+    this.titleTextStyle.fontSize = titleFontSize;
     this.titleText.position.set(screen.width / 2, PADDING_TOP);
     this.subtitleText.position.set(screen.width / 2, PADDING_TOP + this.titleText.height + TITLE_SUBTITLE_GAP);
 
@@ -281,17 +280,24 @@ export class HomeScreen {
     }
 
     // Pass 2: row-by-row, take the max content height (CSS Grid's implicit
-    // row track sizing) and position every card in that row identically.
+    // row track sizing) and position every card in that row identically —
+    // plain indexed loops instead of slice()/map()/spread, so laying out the
+    // grid on resize allocates no temporary arrays at all.
     let rowTop = gridTop;
     for (let start = 0; start < this.cards.length; start += columns) {
-      const row = this.cards.slice(start, start + columns);
-      const rowHeight = Math.max(...row.map((c) => c.contentHeight));
+      const rowEnd = Math.min(start + columns, this.cards.length);
 
-      row.forEach((card, indexInRow) => {
-        // RTL: first card in the array lands at the row's right edge.
+      let rowHeight = 0;
+      for (let i = start; i < rowEnd; i++) {
+        if (this.cards[i].contentHeight > rowHeight) rowHeight = this.cards[i].contentHeight;
+      }
+
+      for (let i = start; i < rowEnd; i++) {
+        const indexInRow = i - start;
+        // RTL: first card in the row lands at the row's right edge.
         const cardX = innerX + innerWidth - (indexInRow + 1) * cardWidth - indexInRow * GRID_GAP;
-        this.positionCard(card, cardX, rowTop, cardWidth, rowHeight);
-      });
+        this.positionCard(this.cards[i], cardX, rowTop, cardWidth, rowHeight);
+      }
 
       rowTop += rowHeight + GRID_GAP;
     }
