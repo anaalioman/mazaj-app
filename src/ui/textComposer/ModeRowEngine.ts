@@ -521,17 +521,24 @@ export class ModeRowEngine {
     }
   }
 
-  /** Ages/culls every live delete-spark — same filter-and-recycle loop FireworksSystem.update() itself uses for its own particle pool. Gated on an empty array so an idle composer costs nothing per frame. */
+  /** Ages/culls every live delete-spark — swap-with-last removal instead of `.filter()` (no new array per frame), same technique FireworksSystem.update() itself uses for its own particle pool. Gated on an empty array so an idle composer costs nothing per frame. */
   private syncDeleteSparks(ticker: Ticker): void {
     if (this.sparkParticles.length === 0) return;
-    this.sparkParticles = this.sparkParticles.filter((particle) => {
+    let i = 0;
+    while (i < this.sparkParticles.length) {
+      const particle = this.sparkParticles[i];
       const alive = particle.update(ticker.deltaTime);
       if (!alive) {
         particle.kill();
         this.sparkDeadPool.push(particle);
+        const last = this.sparkParticles.pop();
+        if (i < this.sparkParticles.length && last) {
+          this.sparkParticles[i] = last;
+        }
+      } else {
+        i++;
       }
-      return alive;
-    });
+    }
   }
 
   /**
