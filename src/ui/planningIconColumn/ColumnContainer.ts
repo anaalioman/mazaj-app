@@ -1,10 +1,13 @@
-import { Application, Container, Sprite, type FederatedPointerEvent } from 'pixi.js';
+import { Application, Container, Sprite, type FederatedPointerEvent, type Ticker } from 'pixi.js';
 import type { AudioManager } from '../../audio/AudioManager';
 import { atlasTexture } from '../svgIconTexture';
 import { IDLE_ALPHA, type IconRowSpec, type Row } from './types';
 import { buildRow, labelStyle } from './RowComponent';
 import { createBounceState, flashTap, syncRowGlow, triggerBounce } from './AnimationEngine';
 import { getColumnLeftEdgeX, layoutColumn } from './LayoutManager';
+
+/** Matches SideDockPanel/BottomSheetPanel's own slide-animation duration — one consistent feel across every panel that slides in this app. */
+const CHROME_SLIDE_MS = 220;
 
 /**
  * The planning screen's right-hand icon column — 14 rows, each an
@@ -31,6 +34,9 @@ export class PlanningIconColumn {
   private readonly audio: AudioManager;
   private readonly bounce = createBounceState();
   private readonly rows = new Map<string, Row>();
+  /** 1 = docked at its normal on-screen position, 0 = slid fully off past the right edge — see setChromeVisible()'s own doc comment. */
+  private chromeAnimT = 1;
+  private chromeAnimDir = 0;
 
   constructor(app: Application, audio: AudioManager, specs: IconRowSpec[]) {
     this.app = app;
@@ -55,9 +61,54 @@ export class PlanningIconColumn {
     // desync — and every row's GlowFilter is left untouched instead of
     // being rewritten 60x/sec for nothing on screen.
     app.ticker.add((ticker) => {
+      this.syncChromeSlide(ticker);
       if (!this.container.visible) return;
       syncRowGlow(this.rows, this.bounce, ticker);
     });
+  }
+
+  /**
+   * Slides the whole column off past the right edge (and back) — used by
+   * PlanningScreen while the player is actively placing a shot/pin, so the
+   * icon column stops eating screen width right when it matters most; see
+   * PlanningScreen's own doc comment on the swipe-to-reveal gesture that
+   * calls this back to `true`. Purely a `container.x`/`alpha` tween, same
+   * slide-duration convention as SideDockPanel/BottomSheetPanel — every
+   * row's own position (set once by LayoutManager) never changes, the whole
+   * column just translates as one rigid unit.
+   */
+  setChromeVisible(visible: boolean): void {
+    const alreadyStable = this.chromeAnimDir === 0 && (visible ? this.chromeAnimT >= 1 : this.chromeAnimT <= 0);
+    if (alreadyStable) return;
+    this.chromeAnimDir = visible ? 1 : -1;
+    if (visible) this.container.visible = true;
+  }
+
+  private syncChromeSlide(ticker: Ticker): void {
+    if (this.chromeAnimDir === 0) return;
+    this.chromeAnimT += (ticker.deltaMS / CHROME_SLIDE_MS) * this.chromeAnimDir;
+    this.chromeAnimT = Math.max(0, Math.min(1, this.chromeAnimT));
+    this.container.x = (1 - this.chromeAnimT) * this.app.screen.width;
+    this.container.alpha = this.chromeAnimT;
+    if (this.chromeAnimDir > 0 && this.chromeAnimT >= 1) this.chromeAnimDir = 0;
+    if (this.chromeAnimDir < 0 && this.chromeAnimT <= 0) {
+      this.chromeAnimDir = 0;
+      this.container.visible = false;
+    }
+  }
+
+  /**
+   * Hard, non-animated reset to fully-shown — used by PlanningScreen's own
+   * show()/hide() (entering/exiting the planning screen entirely), so a
+   * mid-flight chrome-slide from a previous shot-placement session can never
+   * bleed into the next time the screen opens.
+   */
+  resetChromeVisible(): void {
+    this.chromeAnimT = 1;
+    this.chromeAnimDir = 0;
+    this.container.x = 0;
+    this.container.alpha = 1;
+    this.container.visible = true;
   }
 
   /** Click sound + tactile flash + bounce/glow spike + the row's own action — the bookkeeping every row's `pointertap` triggers, centralized here since it's the one place that owns the shared bounce state across all rows. */

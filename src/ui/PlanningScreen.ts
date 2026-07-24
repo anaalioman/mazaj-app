@@ -145,6 +145,18 @@ export class PlanningScreen {
   private hintFadeTick: ((t: Ticker) => void) | undefined;
   private hintComposing = false;
   private hintAutoHidden = true;
+  /** True while the main icon column is slid away because the player is actively placing a shot/pin (see hideChromeThenRun()/isChromeHidden()) — distinct from `hide()`'s own full screen-exit collapse. */
+  private chromeHidden = false;
+  /**
+   * Which side panel (if any) the player last deliberately opened via its
+   * own main-column trigger icon — kept even after the panel auto-closes
+   * itself on a confirmed pick (ShapesPanel.pick()/ColorPickerPanel.select()
+   * both call their own setOpen(false) internally), so the right-to-left
+   * swipe-reveal gesture (see revealChrome()) can still bring it back. Only
+   * cleared by re-tapping the same trigger icon to close it deliberately, or
+   * by fully entering/exiting the planning screen (show()/hide()).
+   */
+  private lastActivePanelKind: 'camera' | 'dimmer' | 'glow' | 'lab' | 'shapes' | 'color' | null = null;
 
   constructor(deps: PlanningScreenDeps) {
     this.deps = deps;
@@ -282,16 +294,16 @@ export class PlanningScreen {
    */
   private buildIconRowSpecs(): IconRowSpec[] {
     return [
-      { id: 'mzj-planning-open-dimmer', icon: 'palette', label: 'إضاءة الخلفية', onTap: () => this.toggleSubpanel('dimmer') },
-      { id: 'mzj-planning-auto-show', icon: 'sparkles', label: 'العرض التلقائي', onTap: () => this.toggleAutoShow() },
-      { id: 'mzj-planning-open-lab', icon: 'sliders', label: 'المختبر', onTap: () => this.toggleSubpanel('lab') },
-      { id: 'mzj-planning-open-text', icon: 'T', label: 'نص', onTap: () => this.textComposer.open() },
-      { id: 'mzj-planning-random-mode', icon: 'shuffle', label: 'توليد عشوائي هجين', onTap: () => this.toggleRandomMode() },
-      { id: 'mzj-planning-mode-mass', icon: 'fireworksMood', label: 'إطلاق جماعي', onTap: () => this.setMode('mass') },
-      { id: 'mzj-planning-mode-sequential', icon: 'mapPin', label: 'إطلاق متتابع', onTap: () => this.setMode('sequential') },
-      { id: 'mzj-planning-open-shapes', icon: 'shapes', label: 'الأشكال', onTap: () => this.toggleShapesPanel() },
-      { id: 'mzj-planning-open-camera', icon: 'camera', label: 'فيديو خلفية حي', onTap: () => this.toggleSubpanel('camera') },
-      { id: 'mzj-planning-record', icon: 'recordDot', label: 'تسجيل فيديو', onTap: () => this.deps.onToggleRecording() },
+      { id: 'mzj-planning-open-dimmer', icon: 'palette', label: 'إضاءة الخلفية', onTap: () => this.hideChromeThenRun(() => this.toggleSubpanel('dimmer')) },
+      { id: 'mzj-planning-auto-show', icon: 'sparkles', label: 'العرض التلقائي', onTap: () => this.hideChromeThenRun(() => this.toggleAutoShow()) },
+      { id: 'mzj-planning-open-lab', icon: 'sliders', label: 'المختبر', onTap: () => this.hideChromeThenRun(() => this.toggleSubpanel('lab')) },
+      { id: 'mzj-planning-open-text', icon: 'T', label: 'نص', onTap: () => this.hideChromeThenRun(() => this.textComposer.open()) },
+      { id: 'mzj-planning-random-mode', icon: 'shuffle', label: 'توليد عشوائي هجين', onTap: () => this.hideChromeThenRun(() => this.toggleRandomMode()) },
+      { id: 'mzj-planning-mode-mass', icon: 'fireworksMood', label: 'إطلاق جماعي', onTap: () => this.hideChromeThenRun(() => this.setMode('mass')) },
+      { id: 'mzj-planning-mode-sequential', icon: 'mapPin', label: 'إطلاق متتابع', onTap: () => this.hideChromeThenRun(() => this.setMode('sequential')) },
+      { id: 'mzj-planning-open-shapes', icon: 'shapes', label: 'الأشكال', onTap: () => this.hideChromeThenRun(() => this.toggleShapesPanel()) },
+      { id: 'mzj-planning-open-camera', icon: 'camera', label: 'فيديو خلفية حي', onTap: () => this.hideChromeThenRun(() => this.toggleSubpanel('camera')) },
+      { id: 'mzj-planning-record', icon: 'recordDot', label: 'تسجيل فيديو', onTap: () => this.hideChromeThenRun(() => this.deps.onToggleRecording()) },
       // No "لقطة" row here anymore — it used to sit right next to
       // "صورة خلفية" and share its icon with "فيديو خلفية حي" above, a real
       // mis-tap risk on a real device (a tap meant for the snapshot could
@@ -306,11 +318,52 @@ export class PlanningScreen {
         // The one and only trigger for the native OS file picker — see
         // PROGRESS.md's remaining hard constraint for why this stays a real
         // (if invisible) DOM `<input type="file">`.
-        onTap: () => this.bgImageInput.click(),
+        onTap: () => this.hideChromeThenRun(() => this.bgImageInput.click()),
       },
-      { id: 'mzj-planning-open-glow', icon: 'gem', label: 'توهج الألعاب النارية', onTap: () => this.toggleSubpanel('glow') },
-      { id: 'mzj-planning-open-color', icon: 'droplet', label: 'لون المقذوفة', onTap: () => this.toggleColorPicker() },
+      { id: 'mzj-planning-open-glow', icon: 'gem', label: 'توهج الألعاب النارية', onTap: () => this.hideChromeThenRun(() => this.toggleSubpanel('glow')) },
+      { id: 'mzj-planning-open-color', icon: 'droplet', label: 'لون المقذوفة', onTap: () => this.hideChromeThenRun(() => this.toggleColorPicker()) },
     ];
+  }
+
+  /**
+   * Rule shared by every row above: touching *any* main-column icon slides
+   * the whole column away immediately (see PlanningIconColumn.setChromeVisible),
+   * whether or not it happens to open a side panel — then runs the row's own
+   * actual action. See revealChrome() for how the swipe gesture undoes this.
+   */
+  private hideChromeThenRun(action: () => void): void {
+    this.chromeHidden = true;
+    this.iconColumn.setChromeVisible(false);
+    action();
+  }
+
+  /** True while placing a shot/pin with the chrome slid away — fireworksMood.ts/PlanningMode check this to know a raw pointerdown might be a swipe-reveal rather than a tap-to-fire/place. */
+  isChromeHidden(): boolean {
+    return this.chromeHidden;
+  }
+
+  /**
+   * The right-to-left swipe gesture: brings back both the main icon column
+   * *and* whichever side panel was last deliberately opened (if any), so the
+   * player always has a full second chance at any icon in either panel — see
+   * lastActivePanelKind's own doc comment for why that memory survives a
+   * panel's own auto-close-on-pick.
+   */
+  revealChrome(): void {
+    if (!this.chromeHidden) return;
+    this.chromeHidden = false;
+    this.iconColumn.setChromeVisible(true);
+    if (this.lastActivePanelKind === 'shapes') {
+      this.shapesPanel.setOpen(true);
+    } else if (this.lastActivePanelKind === 'color') {
+      this.colorPicker.setOpen(true);
+    } else if (this.lastActivePanelKind) {
+      const entry = this.subpanelEntries().find((e) => e.kind === this.lastActivePanelKind);
+      if (entry) {
+        entry.panel.setOpen(true);
+        if (entry.triggerId) this.iconColumn.setActive(entry.triggerId, true);
+      }
+    }
   }
 
   /** Called by fireworksMood.ts once a recording actually starts/stops, to sync the icon. */
@@ -319,6 +372,9 @@ export class PlanningScreen {
   }
 
   show(mode: LaunchMode): void {
+    this.chromeHidden = false;
+    this.lastActivePanelKind = null;
+    this.iconColumn.resetChromeVisible();
     this.applyMode(mode);
     this.iconColumn.container.visible = true;
     this.reshowHint();
@@ -336,6 +392,9 @@ export class PlanningScreen {
   }
 
   hide(): void {
+    this.chromeHidden = false;
+    this.lastActivePanelKind = null;
+    this.iconColumn.resetChromeVisible();
     this.iconColumn.container.visible = false;
     this.stopHintFade();
     this.hintText.alpha = 0;
@@ -387,6 +446,7 @@ export class PlanningScreen {
     this.closeAllSubpanels();
     this.colorPicker.setOpen(false);
     this.shapesPanel.setOpen(true);
+    this.lastActivePanelKind = 'shapes';
     this.reshowHint();
   }
 
@@ -506,6 +566,7 @@ export class PlanningScreen {
     this.closeAllSubpanels();
     this.shapesPanel.setOpen(false);
     this.colorPicker.setOpen(willOpen);
+    this.lastActivePanelKind = willOpen ? 'color' : null;
   }
 
   private toggleShapesPanel(): void {
@@ -513,6 +574,7 @@ export class PlanningScreen {
     this.closeAllSubpanels();
     this.colorPicker.setOpen(false);
     this.shapesPanel.setOpen(willOpen);
+    this.lastActivePanelKind = willOpen ? 'shapes' : null;
   }
 
   private closeAllSubpanels(): void {
@@ -562,6 +624,7 @@ export class PlanningScreen {
       entry.panel.setOpen(isTarget && willOpen);
       if (entry.triggerId) this.iconColumn.setActive(entry.triggerId, isTarget && willOpen);
     }
+    this.lastActivePanelKind = willOpen ? kind : null;
   }
 
   /**

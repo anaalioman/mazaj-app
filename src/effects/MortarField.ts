@@ -15,6 +15,11 @@ interface Station {
  * launches stay fully free-form (any tapped x/y), the nearest tube just
  * flashes and recoils so the scene reads as "fired from the ground" instead
  * of constraining where a shell can actually launch from.
+ *
+ * Hidden by default — the tubes only belong on screen while "مدفع" (Mortar
+ * Mode) is actually selected (see setVisible(), driven by PlanningScreen's
+ * own onInputModeChange in fireworksMood.ts); free-tap play keeps the bottom
+ * edge completely clear of them, matching the mode's own name.
  */
 export class MortarField {
   private readonly app: Application;
@@ -24,6 +29,7 @@ export class MortarField {
   constructor(app: Application) {
     this.app = app;
     this.container = new Container();
+    this.container.visible = false;
     app.stage.addChild(this.container);
 
     for (let i = 0; i < STATION_COUNT; i++) {
@@ -42,14 +48,61 @@ export class MortarField {
     app.renderer.on('resize', () => this.layout());
   }
 
+  /**
+   * Shows/hides every tube at once — see the class's own doc comment on why
+   * this defaults to hidden. Turning it back on resets every station's own
+   * flash/recoil state first: fireNear() keeps firing on every launch
+   * regardless of visibility (harmless while hidden — update() itself no-ops
+   * per station), so without this reset a tube could pop back into view
+   * mid-flash from a launch that happened while free-tap mode was active.
+   */
+  setVisible(visible: boolean): void {
+    this.container.visible = visible;
+    if (visible) {
+      for (const station of this.stations) {
+        station.flashTimer = 0;
+        station.flash.visible = false;
+        station.base.scale.y = 1;
+      }
+    }
+  }
+
+  /**
+   * A tapered barrel on a tripod stand instead of the old flat rounded-rect
+   * tube — wider at the base, narrowing toward the muzzle like a real mortar,
+   * with a shaded half + a highlight strip faking a cylindrical light wrap
+   * (Pixi's Graphics has no gradient fill), reinforcement bands, and a
+   * metallic rim around a dark bore. Every shape is drawn with y=0 at the
+   * ground and negative y going up — the same convention update()'s own
+   * `base.scale.y` recoil relies on (scaling from that ground origin), so
+   * the redesign has to keep it or the recoil dip breaks.
+   */
   private drawTube(g: Graphics): void {
-    g.roundRect(-9, -34, 18, 34, 3).fill({ color: 0x1c1d24 });
-    g.roundRect(-11, -6, 22, 10, 2).fill({ color: 0x111217 });
-    g.circle(0, -34, 10).fill({ color: 0x2a2c36 });
+    // Soft contact shadow, grounding the tripod visually.
+    g.ellipse(0, 1, 15, 4).fill({ color: 0x000000, alpha: 0.35 });
+
+    // Tripod stand: two angled support legs + a low foot plate.
+    g.poly([-16, 2, -5, -10, 5, -10, 16, 2]).fill({ color: 0x15161c });
+    g.roundRect(-13, -2, 26, 5, 2).fill({ color: 0x0d0e12 });
+
+    // Tapered barrel — wider at the base (±9px) narrowing to the muzzle (±6px).
+    g.poly([-9, -8, -6, -42, 6, -42, 9, -8]).fill({ color: 0x2c2e3a });
+    // Shadowed right half + a thin highlight strip on the left edge fake a
+    // cylindrical light wrap without a real gradient fill.
+    g.poly([0, -8, 1, -42, 6, -42, 9, -8]).fill({ color: 0x1a1b23 });
+    g.roundRect(-7.5, -40, 2, 32, 1).fill({ color: 0x565970, alpha: 0.7 });
+
+    // Reinforcement bands.
+    g.roundRect(-8.5, -28, 17, 3, 1).fill({ color: 0x121319 });
+    g.roundRect(-7.5, -17, 15, 3, 1).fill({ color: 0x121319 });
+
+    // Muzzle: a metallic rim around a dark bore.
+    g.ellipse(0, -42, 7.5, 3.2).fill({ color: 0x40434f }).stroke({ width: 1, color: 0x6c7086, alpha: 0.6 });
+    g.ellipse(0, -42, 4.6, 2).fill({ color: 0x07080b });
   }
 
   private drawFlash(g: Graphics): void {
-    g.circle(0, -40, 16).fill({ color: 0xfff3c4, alpha: 0.9 });
+    g.circle(0, -44, 16).fill({ color: 0xfff3c4, alpha: 0.9 });
   }
 
   private layout(): void {
@@ -88,6 +141,7 @@ export class MortarField {
   }
 
   update(delta: number): void {
+    if (!this.container.visible) return;
     for (const station of this.stations) {
       if (station.flashTimer <= 0) continue;
 

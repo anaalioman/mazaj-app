@@ -18,6 +18,7 @@ import { PlanningScreen, type InputMode } from '../ui/PlanningScreen';
 import { canSaveToGallery, saveSnapshotToGallery } from '../media/GallerySaver';
 import { tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
 import { createOffscreenCanvas, triggerDownload } from '../dom/shadowServices';
+import { trackSwipeOrTap } from '../utils/swipeGesture';
 
 export interface FireworksMoodHandle {
   show(): void;
@@ -206,6 +207,11 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
     // Same مدفع/حر targeting mode as ordinary free-tap firing below — a
     // sequential pin lands wherever a normal shot would from the same tap.
     resolveX: (x) => (inputMode === 'mortar' ? mortarField.getNearestX(x) : x),
+    // Deferred closures, not direct calls — `planningScreen` isn't assigned
+    // until later in this function (same TDZ constraint as getActiveShape
+    // above), but neither ever runs until a real pointer event does.
+    isChromeHidden: () => planningScreen.isChromeHidden(),
+    onSwipeReveal: () => planningScreen.revealChrome(),
   });
   uiContainer.addChild(planningMode.layer);
 
@@ -237,6 +243,23 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
   moodLayer.on('pointerdown', (event) => {
     if (showStarted || planningMode.isActive || planningScreen.hasMassSelection()) return;
     const { x, y } = event.global;
+    // While the planning screen's chrome is slid away for shot placement, a
+    // leftward drag past the threshold means "bring the panels back", not
+    // "fire here" — see PlanningScreen.isChromeHidden()/revealChrome() and
+    // swipeGesture.ts's own doc comment on why this has to live inside this
+    // existing handler rather than a separate, later-registered listener.
+    if (planningScreen.isChromeHidden()) {
+      trackSwipeOrTap(
+        app,
+        event,
+        () => planningScreen.revealChrome(),
+        () => {
+          const launchX = inputMode === 'mortar' ? mortarField.getNearestX(x) : x;
+          fireAt(launchX, y);
+        },
+      );
+      return;
+    }
     const launchX = inputMode === 'mortar' ? mortarField.getNearestX(x) : x;
     fireAt(launchX, y);
   });
@@ -926,6 +949,9 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
     // "مدفع" moved from the header into ShapesPanel — see its own doc-comment.
     onInputModeChange: (mode) => {
       inputMode = mode;
+      // The tubes themselves only belong on screen while Mortar Mode is
+      // actually selected — see MortarField's own doc comment.
+      mortarField.setVisible(mode === 'mortar');
     },
     // "العرض التلقائي" is a third continuous-launch screen, alongside
     // متتابع/جماعي — the exit button (below) governs it too now, not just

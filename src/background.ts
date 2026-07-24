@@ -3,12 +3,19 @@ import { fastSin, TWO_PI } from './fireworks/SineTable';
 import { createDecodedImageElement, createLiveStreamVideoElement, createLoopingVideoElement } from './dom/shadowServices';
 
 // Deep Sky Canvas palette.
-const SKY_TOP = 0x050508; // Royal Black
-const SKY_BOTTOM = 0x0f111a; // Deep Midnight Blue
-const HORIZON_GLOW_COLOR = '91, 74, 181'; // indigo/violet, as an rgb() triplet for alpha stops
+const SKY_TOP = 0x000000; // True black at the zenith — the darkest a screen can show, so nothing above the horizon glow ever reads as washed out.
+const SKY_BOTTOM = 0x0a0c16; // Deepened from the previous 0x0f111a — still a real navy-indigo (not flat black, so the gradient itself is visible), but noticeably richer/darker than before.
+const HORIZON_GLOW_COLOR = '124, 58, 190'; // Richer, more saturated violet-magenta than the previous desaturated indigo (91, 74, 181) — reads as genuinely radiant against the deeper black instead of pale.
+const HORIZON_GLOW_PEAK_ALPHA = 0.62; // Raised from 0.55 to match the richer color above.
+/** Warm gold, matching the app's own established gold identity (HomeScreen's GOLD/card-title colors) — twinkling stars read as golden points of light rather than plain white. */
+const STAR_COLOR = 0xffe9b3;
 const STAR_MIN_COUNT = 50;
 const STAR_MAX_COUNT = 80;
-const STAR_UPPER_BAND = 0.8; // stars only scattered across the upper 80% of the screen
+// Confines stars to the screen's upper third (fracY in [0, 1/3)) — up against
+// the very top edge — narrower than the previous half-screen band, so they
+// read as a distant, high band of sky rather than crowding toward the middle.
+// Depth still comes from correlating size/brightness with fracY (buildStars()).
+const STAR_UPPER_BAND = 1 / 3;
 const TWINKLE_SPEED = 0.02;
 
 interface TwinkleStar {
@@ -237,7 +244,7 @@ export class BackgroundLayer {
       textureSpace: 'local',
       colorStops: [
         { offset: 0, color: `rgba(${HORIZON_GLOW_COLOR}, 0)` },
-        { offset: 1, color: `rgba(${HORIZON_GLOW_COLOR}, 0.55)` },
+        { offset: 1, color: `rgba(${HORIZON_GLOW_COLOR}, ${HORIZON_GLOW_PEAK_ALPHA})` },
       ],
     });
     this.horizonGradient = gradient;
@@ -255,10 +262,16 @@ export class BackgroundLayer {
     for (let i = 0; i < count; i++) {
       const fracX = Math.random();
       const fracY = Math.random() * STAR_UPPER_BAND;
-      const radius = 0.4 + Math.random() * 1.3;
-      const baseAlpha = 0.35 + Math.random() * 0.5;
+      // Visual depth: a star nearer the middle of the screen (fracY close to
+      // STAR_UPPER_BAND) reads as "closer" — bigger and brighter — while one
+      // nearer the very top (fracY close to 0) reads as "farther" — smaller
+      // and dimmer. `depth` in [0, 1] drives both, plus per-star jitter so
+      // same-depth stars still vary.
+      const depth = fracY / STAR_UPPER_BAND;
+      const radius = 0.3 + depth * 1.1 + Math.random() * 0.5;
+      const baseAlpha = 0.3 + depth * 0.4 + Math.random() * 0.3;
 
-      const display = new Graphics().circle(fracX * width, fracY * height, radius).fill({ color: 0xffffff });
+      const display = new Graphics().circle(fracX * width, fracY * height, radius).fill({ color: STAR_COLOR });
       display.alpha = baseAlpha;
       container.addChild(display);
 
@@ -314,7 +327,7 @@ export class BackgroundLayer {
     }
 
     for (const star of this.stars) {
-      star.display.clear().circle(star.fracX * width, star.fracY * height, star.radius).fill({ color: 0xffffff });
+      star.display.clear().circle(star.fracX * width, star.fracY * height, star.radius).fill({ color: STAR_COLOR });
     }
   }
 

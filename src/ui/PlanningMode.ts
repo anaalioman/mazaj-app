@@ -1,6 +1,7 @@
 import { Application, Container, Graphics, Text, TextStyle, type FederatedPointerEvent } from 'pixi.js';
 import type { BurstType } from '../fireworks/FireworksSystem';
 import { tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
+import { trackSwipeOrTap } from '../utils/swipeGesture';
 
 export interface VisibleRange {
   /** Screen y where the reachable (dashboard-free) area begins. */
@@ -29,11 +30,13 @@ export interface PlanningModeDeps {
   getActiveShape: () => BurstType | null;
   /** Maps a tapped x to where a new pin should actually land — identity in "حر" input mode, snapped to the nearest mortar tube in "مدفع", so pin placement follows the same targeting mode as ordinary free-tap firing. */
   resolveX: (x: number) => number;
+  /** True while PlanningScreen's icon column/side panel are slid away for shot placement — see PlanningScreen.isChromeHidden(). Gates whether a fresh tap on empty space might instead be the swipe-to-reveal gesture (see onSwipeReveal). */
+  isChromeHidden: () => boolean;
+  /** The right-to-left swipe-to-reveal gesture fired instead of placing a pin — see PlanningScreen.revealChrome(). */
+  onSwipeReveal: () => void;
 }
 
 const SEQUENTIAL_DELAY_MS = 800;
-const LONG_PRESS_MS = 500;
-const MOVE_CANCEL_PX = 12;
 const PIN_RADIUS = 13;
 const PIN_HIT_RADIUS = PIN_RADIUS * 1.6;
 
@@ -50,11 +53,12 @@ interface Pin {
 /**
  * Sequential-launch placement: while active, tapping empty space places a
  * numbered pin stamped with whatever shape is currently selected in the
- * planning screen; tapping an existing pin does nothing on a quick tap —
- * only a 500ms press-and-hold removes it (and renumbers the rest). Pins
- * stay fixed and fully visible throughout planning; "ابدأ العرض" (not a
- * button in here) is what actually fires them, each 800ms apart in the
- * order they were placed, then clears the board in the same instant.
+ * planning screen; tapping an *existing* pin removes it immediately (and
+ * renumbers the rest) — a plain confirm-by-tapping-again, no long hold
+ * needed. Pins stay fixed and fully visible throughout planning; "ابدأ
+ * العرض" (not a button in here) is what actually fires them, each 800ms
+ * apart in the order they were placed, then clears the board in the same
+ * instant.
  */
 export class PlanningMode {
   private readonly app: Application;
@@ -62,6 +66,8 @@ export class PlanningMode {
   private readonly getVisibleRange: () => VisibleRange;
   private readonly getActiveShape: () => BurstType | null;
   private readonly resolveX: (x: number) => number;
+  private readonly isChromeHidden: () => boolean;
+  private readonly onSwipeReveal: () => void;
   /** Public so fireworksMood.ts can reparent it into uiContainer (planning-time placement markers, not final art — see fireworksMood.ts's own container-tree doc comment). */
   readonly layer: Container;
   private pins: Pin[] = [];
@@ -71,24 +77,19 @@ export class PlanningMode {
   // after the player has already left it.
   private pendingLaunchTimers: TickerTimerHandle[] = [];
 
-  private pressTimer: TickerTimerHandle | undefined;
-  private pressTargetIndex: number | null = null;
-  private pressStart: { x: number; y: number } | null = null;
-
   constructor(deps: PlanningModeDeps) {
     this.app = deps.app;
     this.onLaunchPin = deps.onLaunchPin;
     this.getVisibleRange = deps.getVisibleRange;
     this.getActiveShape = deps.getActiveShape;
     this.resolveX = deps.resolveX;
+    this.isChromeHidden = deps.isChromeHidden;
+    this.onSwipeReveal = deps.onSwipeReveal;
     this.layer = new Container();
     this.layer.visible = false;
     this.app.stage.addChild(this.layer);
 
     this.app.stage.on('pointerdown', this.handlePointerDown);
-    this.app.stage.on('pointermove', this.handlePointerMove);
-    this.app.stage.on('pointerup', this.handlePointerUp);
-    this.app.stage.on('pointerupoutside', this.handlePointerUp);
   }
 
   get isActive(): boolean {
@@ -98,7 +99,6 @@ export class PlanningMode {
   setActive(enabled: boolean): void {
     this.active = enabled;
     this.layer.visible = enabled;
-    if (!enabled) this.cancelPress();
   }
 
   private handlePointerDown = (event: FederatedPointerEvent): void => {
@@ -111,35 +111,35 @@ export class PlanningMode {
     const { x, y } = this.layer.toLocal(event.global);
 
     const hitIndex = this.pins.findIndex((pin) => Math.hypot(pin.x - x, pin.y - y) <= PIN_HIT_RADIUS);
-    if (hitIndex >= 0) {
-      this.pressTargetIndex = hitIndex;
-      this.pressStart = { x, y };
-      this.pressTimer = tickerSetTimeout(this.app.ticker, () => {
-        if (this.pressTargetIndex !== null) this.removePinAt(this.pressTargetIndex);
-        this.cancelPress();
-      }, LONG_PRESS_MS);
+
+    // While the chrome is slid away for placement, a leftward drag past the
+    // threshold always means "bring the panels back" — checked before
+    // anything else (even before whether a shape is currently armed, or an
+    // existing pin was hit), so a swipe can never get silently swallowed by
+    // "no shape picked yet" or "this landed on an existing pin". See
+    // PlanningScreen.isChromeHidden()/revealChrome() and swipeGesture.ts's
+    // own doc comment on why this has to be resolved inside the existing
+    // handler rather than via a competing stage-level listener.
+    if (this.isChromeHidden()) {
+      trackSwipeOrTap(
+        this.app,
+        event,
+        () => this.onSwipeReveal(),
+        () => this.resolveTap(hitIndex, x, y),
+      );
       return;
     }
+    this.resolveTap(hitIndex, x, y);
+  };
 
+  /** A confirmed plain tap (not a swipe): removes the pin it landed on, or places a new one if a shape is armed — the two outcomes a tap in this mode can ever have. */
+  private resolveTap(hitIndex: number, x: number, y: number): void {
+    if (hitIndex >= 0) {
+      this.removePinAt(hitIndex);
+      return;
+    }
     const type = this.getActiveShape();
     if (type) this.addPin(this.resolveX(x), y, type);
-  };
-
-  private handlePointerMove = (event: FederatedPointerEvent): void => {
-    if (!this.active || !this.pressStart) return;
-    const { x, y } = this.layer.toLocal(event.global);
-    if (Math.hypot(x - this.pressStart.x, y - this.pressStart.y) > MOVE_CANCEL_PX) this.cancelPress();
-  };
-
-  private handlePointerUp = (): void => {
-    this.cancelPress();
-  };
-
-  private cancelPress(): void {
-    this.pressTimer?.cancel();
-    this.pressTimer = undefined;
-    this.pressTargetIndex = null;
-    this.pressStart = null;
   }
 
   /**
