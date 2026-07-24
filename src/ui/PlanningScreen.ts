@@ -576,10 +576,19 @@ export class PlanningScreen {
     this.bgImageInput.addEventListener('change', () => {
       const file = this.bgImageInput.files?.[0];
       if (!file) return;
-      void this.deps.background.setImage(file).then(() => {
-        this.uploadHint.show('image');
-        this.iconColumn.setActive('mzj-planning-bg-image', true);
-      });
+      // Rejects on a corrupt/unsupported image file (createDecodedImageElement's
+      // own image.decode() call) — caught here, same as the live-camera
+      // handler above, instead of an unhandled promise rejection with no
+      // feedback at all when a player picks a bad file.
+      void this.deps.background
+        .setImage(file)
+        .then(() => {
+          this.uploadHint.show('image');
+          this.iconColumn.setActive('mzj-planning-bg-image', true);
+        })
+        .catch((error) => {
+          console.error('تعذّر تحميل صورة الخلفية (الملف تالف أو غير مدعوم):', error);
+        });
     });
 
     // CameraPickerPanel's "رفع فيديو"/"توثيق مباشر" choice buttons trigger
@@ -588,11 +597,16 @@ export class PlanningScreen {
     this.bgVideoInput.addEventListener('change', () => {
       const file = this.bgVideoInput.files?.[0];
       if (!file) return;
-      void this.deps.background.setVideo(file).then(() => {
-        this.liveDocumentationArmed = false;
-        this.uploadHint.show('video');
-        this.iconColumn.setActive('mzj-planning-open-camera', true);
-      });
+      void this.deps.background
+        .setVideo(file)
+        .then(() => {
+          this.liveDocumentationArmed = false;
+          this.uploadHint.show('video');
+          this.iconColumn.setActive('mzj-planning-open-camera', true);
+        })
+        .catch((error) => {
+          console.error('تعذّر تحميل فيديو الخلفية (الملف تالف أو غير مدعوم):', error);
+        });
     });
   }
 
