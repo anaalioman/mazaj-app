@@ -109,6 +109,42 @@ export class BackgroundLayer {
   async setVideo(file: File): Promise<void> {
     const objectUrl = URL.createObjectURL(file);
     const video = createLoopingVideoElement(objectUrl);
+
+    // Distinguishes a genuine corrupt/unsupported file from a harmless
+    // autoplay-policy block — video.play() alone can't tell them apart, it
+    // rejects the same way for both. Only a real decode failure fires
+    // 'error' (with video.error set); confirmed live (Playwright + a
+    // garbage file) that without this, a corrupt video silently left the
+    // backdrop blank with zero feedback, unlike setImage()'s own
+    // image.decode() rejection.
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          video.removeEventListener('loadeddata', onLoaded);
+          video.removeEventListener('error', onError);
+        };
+        const onLoaded = () => {
+          cleanup();
+          resolve();
+        };
+        const onError = () => {
+          cleanup();
+          reject(new Error(video.error?.message || 'صيغة الفيديو غير مدعومة'));
+        };
+        video.addEventListener('loadeddata', onLoaded);
+        video.addEventListener('error', onError);
+      });
+    } catch (error) {
+      // Never tracked in videoObjectUrl at this point — revoke directly here
+      // instead of leaving it orphaned (same leak class fixed earlier for
+      // the success path).
+      URL.revokeObjectURL(objectUrl);
+      throw error;
+    }
+
+    // Only reached once the file has genuinely decoded — an autoplay-policy
+    // rejection here is real but harmless (muted+playsInline avoids it in
+    // practice anyway), so it stays silently swallowed.
     await video.play().catch(() => undefined);
 
     this.stopVideo();
