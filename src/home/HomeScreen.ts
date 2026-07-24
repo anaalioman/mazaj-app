@@ -215,6 +215,13 @@ export class HomeScreen {
         fontWeight: '700',
         fill: CARD_TITLE_COLOR,
         align: 'center',
+        // Required for layout()'s own `wordWrapWidth` assignment to have any
+        // effect at all — PixiJS ignores wordWrapWidth entirely unless
+        // wordWrap is explicitly true (confirmed against pixi.js's own
+        // TextStyle/CanvasTextMetrics source). Without this, a long mood
+        // title (e.g. "أحجار الزجاج") could overflow the card's own bounds
+        // on a narrow 2-column layout instead of wrapping onto a second line.
+        wordWrap: true,
       }),
     });
     titleText.anchor.set(0.5, 0);
