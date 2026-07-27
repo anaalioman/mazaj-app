@@ -9,7 +9,6 @@ import {
   TextStyle,
   type FederatedPointerEvent,
 } from 'pixi.js';
-import { BackdropBlurFilter } from 'pixi-filters';
 import { iconTexture } from '../ui/svgIconTexture';
 import type { IconName } from '../ui/icons';
 
@@ -90,6 +89,9 @@ const CARD_DESC_COLOR = 0xffffff;
 const CARD_DESC_ALPHA = 0.55;
 const LOCKED_ALPHA = 0.5;
 
+/** A vertical drag past this many px counts as a scroll, not a card tap — same reasoning as every other tap-vs-drag disambiguation in this app (see utils/swipeGesture.ts). */
+const DRAG_THRESHOLD_PX = 8;
+
 interface Card {
   id: MoodId;
   active: boolean;
@@ -115,10 +117,29 @@ export class HomeScreen {
   private readonly titleTextStyle: TextStyle;
   private readonly subtitleText: Text;
   private readonly cards: Card[] = [];
+  /** Everything that scrolls (title, subtitle, every card) — `layer` itself (main.ts's own show/hide handle) never moves; only this inner container's own `.y` does. */
+  private readonly content: Container;
+  /** A full-screen invisible hit surface behind `content`, catching drag-starts that land on empty space (the gaps between cards, or below the last row) — cards themselves still hit-test first for their own taps, since they're drawn on top (see buildCard()'s own added-after-this ordering). */
+  private readonly dragSurface: Container;
+  private scrollY = 0;
+  private minScrollY = 0;
+  private dragPointerId: number | null = null;
+  private dragStartY = 0;
+  private dragStartScrollY = 0;
+  /** True once the current gesture has moved past DRAG_THRESHOLD_PX — checked by every card's own pointertap so a scroll can never also fire deps.onSelect(). */
+  private dragMoved = false;
 
   private constructor(app: Application, layer: Container, deps: HomeScreenDeps) {
     this.app = app;
     this.deps = deps;
+
+    this.dragSurface = new Container();
+    this.dragSurface.eventMode = 'static';
+    this.dragSurface.on('pointerdown', (event: FederatedPointerEvent) => this.handleDragStart(event));
+    layer.addChild(this.dragSurface);
+
+    this.content = new Container();
+    layer.addChild(this.content);
 
     // Ported from the old `background: linear-gradient(180deg, #ffe9b3, #ff9f45); -webkit-background-clip: text` — a real Pixi FillGradient on the text itself, not a flat color.
     const titleGradient = new FillGradient({
@@ -143,7 +164,7 @@ export class HomeScreen {
       style: this.titleTextStyle,
     });
     this.titleText.anchor.set(0.5, 0);
-    layer.addChild(this.titleText);
+    this.content.addChild(this.titleText);
 
     this.subtitleText = new Text({
       text: 'اختر مزاجك',
@@ -151,12 +172,22 @@ export class HomeScreen {
     });
     this.subtitleText.alpha = 0.6;
     this.subtitleText.anchor.set(0.5, 0);
-    layer.addChild(this.subtitleText);
+    this.content.addChild(this.subtitleText);
 
     for (const mood of MOODS) {
-      const card = this.buildCard(layer, mood);
+      const card = this.buildCard(this.content, mood);
       this.cards.push(card);
     }
+
+    // Global drag tracking — same convention as every other draggable
+    // control in this app (PixiSlider, PlanningMode, TextComposer's resize
+    // handles): pointerdown starts locally (dragSurface or a card's own
+    // root, see buildCard()), pointermove/pointerup are tracked on
+    // app.stage so a fast finger sliding off the original target never
+    // drops the gesture.
+    app.stage.on('pointermove', (event: FederatedPointerEvent) => this.handleDragMove(event));
+    app.stage.on('pointerup', (event: FederatedPointerEvent) => this.handleDragEnd(event));
+    app.stage.on('pointerupoutside', (event: FederatedPointerEvent) => this.handleDragEnd(event));
 
     app.renderer.on('resize', () => this.layout());
     this.layout();
@@ -168,12 +199,11 @@ export class HomeScreen {
   }
 
   /**
-   * One mood card: a glass rounded-rect background (`BackdropBlurFilter`,
-   * the same real backdrop-blur technique HeaderBar's pills use), a tinted
-   * icon tile, title, description, and — for locked moods — a "قريبًا"
-   * badge pinned to the card's top-left (RTL's `inset-inline-end`). Only
-   * `mood.active` cards are interactive; locked ones are visually dimmed
-   * and never claim a hitArea at all.
+   * One mood card: a glass rounded-rect background, a tinted icon tile,
+   * title, description, and — for locked moods — a "قريبًا" badge pinned to
+   * the card's top-left (RTL's `inset-inline-end`). Only `mood.active` cards
+   * are interactive; locked ones are visually dimmed and never claim a
+   * hitArea at all.
    */
   private buildCard(layer: Container, mood: MoodCard): Card {
     const root = new Container();
@@ -181,16 +211,24 @@ export class HomeScreen {
     if (mood.active) {
       root.eventMode = 'static';
       root.cursor = 'pointer';
+      // A second, independent listener on this same target — Pixi's
+      // stopPropagation() (called by the listener below) only blocks
+      // bubbling to *ancestors*, never other listeners on the exact same
+      // object, so this still fires and lets a drag starting on a card
+      // itself be tracked exactly like one starting on empty space (see
+      // dragSurface's own doc comment).
+      root.on('pointerdown', (event: FederatedPointerEvent) => this.handleDragStart(event));
       root.on('pointerdown', (event: FederatedPointerEvent) => event.stopPropagation());
       root.on('pointertap', (event: FederatedPointerEvent) => {
         event.stopPropagation();
+        // A scroll drag must never also open a mood — see dragMoved's own doc comment.
+        if (this.dragMoved) return;
         this.deps.onSelect(mood.id);
       });
     }
     layer.addChild(root);
 
     const bg = new Graphics();
-    bg.filters = [new BackdropBlurFilter({ strength: 8, quality: 4 })];
     root.addChild(bg);
 
     const iconBg = new Graphics();
@@ -203,9 +241,13 @@ export class HomeScreen {
     iconSprite.width = 26;
     iconSprite.height = 26;
     root.addChild(iconSprite);
-    void iconTexture(mood.icon, ICON_SOURCE_SIZE, '#ffffff').then((texture) => {
-      iconSprite.texture = texture;
-    });
+    void iconTexture(mood.icon, ICON_SOURCE_SIZE, '#ffffff')
+      .then((texture) => {
+        iconSprite.texture = texture;
+      })
+      .catch((error: unknown) => {
+        console.error(`Failed to load home mood icon: ${mood.icon}`, error);
+      });
 
     const titleText = new Text({
       text: mood.title,
@@ -264,6 +306,7 @@ export class HomeScreen {
   /** Recomputes everything from the current screen size — columns, card width, per-row heights (matching CSS Grid's own implicit row-sizing: every card in a row shares the tallest card's height). Called once at construction and again on every resize. */
   private layout(): void {
     const screen = this.app.screen;
+    this.dragSurface.hitArea = new Rectangle(0, 0, screen.width, screen.height);
     const innerWidth = Math.min(INNER_MAX_WIDTH, screen.width - PADDING_X * 2);
     const innerX = (screen.width - innerWidth) / 2;
     const columns = screen.width >= NARROW_BREAKPOINT ? 3 : 2;
@@ -291,6 +334,7 @@ export class HomeScreen {
     // plain indexed loops instead of slice()/map()/spread, so laying out the
     // grid on resize allocates no temporary arrays at all.
     let rowTop = gridTop;
+    let contentBottom = gridTop;
     for (let start = 0; start < this.cards.length; start += columns) {
       const rowEnd = Math.min(start + columns, this.cards.length);
 
@@ -306,8 +350,37 @@ export class HomeScreen {
         this.positionCard(this.cards[i], cardX, rowTop, cardWidth, rowHeight);
       }
 
-      rowTop += rowHeight + GRID_GAP;
+      contentBottom = rowTop + rowHeight;
+      rowTop = contentBottom + GRID_GAP;
     }
+
+    // Real vertical scrolling: content shorter than the screen simply pins
+    // at y=0 (minScrollY collapses to 0 too, so the drag clamp below already
+    // disables any effective movement — no separate special-case needed).
+    this.minScrollY = Math.min(0, screen.height - contentBottom);
+    this.scrollY = Math.max(this.minScrollY, Math.min(0, this.scrollY));
+    this.content.y = this.scrollY;
+  }
+
+  private handleDragStart(event: FederatedPointerEvent): void {
+    this.dragPointerId = event.pointerId;
+    this.dragStartY = event.global.y;
+    this.dragStartScrollY = this.scrollY;
+    this.dragMoved = false;
+  }
+
+  private handleDragMove(event: FederatedPointerEvent): void {
+    if (this.dragPointerId === null || event.pointerId !== this.dragPointerId) return;
+    const dy = event.global.y - this.dragStartY;
+    if (!this.dragMoved && Math.abs(dy) >= DRAG_THRESHOLD_PX) this.dragMoved = true;
+    if (!this.dragMoved) return;
+    this.scrollY = Math.max(this.minScrollY, Math.min(0, this.dragStartScrollY + dy));
+    this.content.y = this.scrollY;
+  }
+
+  private handleDragEnd(event: FederatedPointerEvent): void {
+    if (this.dragPointerId === null || event.pointerId !== this.dragPointerId) return;
+    this.dragPointerId = null;
   }
 
   private positionCard(card: Card, x: number, y: number, width: number, height: number): void {
