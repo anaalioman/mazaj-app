@@ -30,6 +30,7 @@ void initializeMonetization();
  * MOODS list) doesn't pay for code it hasn't shown the player yet.
  */
 const app = new Application();
+let canvasMounted = false;
 
 async function boot(): Promise<void> {
   await app.init({
@@ -58,6 +59,7 @@ async function boot(): Promise<void> {
   app.ticker.maxFPS = 60;
 
   document.body.appendChild(app.canvas);
+  canvasMounted = true;
   styleFullscreenCanvas(app.canvas);
 
   const homeLayer = new Container();
@@ -88,6 +90,9 @@ async function boot(): Promise<void> {
   // duplicate mood instance (duplicate header, dashboard, submit listener,
   // ...) inside the same fireworksLayer.
   let fireworksLoading: Promise<FireworksMoodHandle> | null = null;
+  // Cached after the first successful import — later entries reuse this
+  // instead of paying for another dynamic import() just to read a constant.
+  let fireworksBackground: string | null = null;
 
   function goHome(): void {
     fireworksHandle?.hide();
@@ -100,20 +105,34 @@ async function boot(): Promise<void> {
     homeLayer.visible = false;
     fireworksLayer.visible = true;
 
-    if (fireworksHandle) {
-      app.renderer.background.color = (await import('./moods/fireworksMood')).ROYAL_BLACK;
-      fireworksHandle.show();
-      return;
-    }
+    try {
+      if (fireworksHandle) {
+        if (fireworksBackground !== null) app.renderer.background.color = fireworksBackground;
+        fireworksHandle.show();
+        return;
+      }
 
-    if (!fireworksLoading) {
-      fireworksLoading = import('./moods/fireworksMood').then(({ startFireworksMood, ROYAL_BLACK }) => {
-        app.renderer.background.color = ROYAL_BLACK;
-        return startFireworksMood(app, fireworksLayer, goHome);
-      });
-    }
+      if (!fireworksLoading) {
+        fireworksLoading = import('./moods/fireworksMood').then(({ startFireworksMood, ROYAL_BLACK }) => {
+          fireworksBackground = ROYAL_BLACK;
+          app.renderer.background.color = ROYAL_BLACK;
+          return startFireworksMood(app, fireworksLayer, goHome);
+        });
+      }
 
-    fireworksHandle = await fireworksLoading;
+      fireworksHandle = await fireworksLoading;
+    } catch (error) {
+      // Never leave the player staring at an empty/half-built screen — fall
+      // back to the home screen exactly as if they'd pressed "الرئيسية".
+      fireworksHandle = null;
+      // Never keep a rejected Promise cached here — the next tap must start
+      // a genuinely new load attempt, not resolve to the same failure.
+      fireworksLoading = null;
+      fireworksLayer.visible = false;
+      homeLayer.visible = true;
+      app.renderer.background.color = HOME_BACKGROUND;
+      console.error('Failed to open the fireworks mood:', error);
+    }
   }
 
   HomeScreen.create(app, homeLayer, {
@@ -123,4 +142,18 @@ async function boot(): Promise<void> {
   });
 }
 
-void boot();
+void boot().catch((error: unknown) => {
+  console.error('Failed to boot Mazaj:', error);
+  // app.init() can fail before the renderer/canvas exist at all — reading
+  // app.canvas at that point can itself throw, so canvasMounted (a plain
+  // boolean set right after the real appendChild) is the only safe check
+  // here, not document.body.contains(app.canvas).
+  if (!canvasMounted) {
+    const message = document.createElement('div');
+    message.textContent = 'تعذّر تشغيل التطبيق. يرجى إعادة المحاولة لاحقًا.';
+    message.style.cssText =
+      'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;' +
+      'background:#000;color:#fff;font-family:sans-serif;font-size:16px;text-align:center;padding:24px;';
+    document.body.appendChild(message);
+  }
+});
