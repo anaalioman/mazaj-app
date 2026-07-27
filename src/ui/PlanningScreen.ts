@@ -9,6 +9,7 @@ import { ShapesPanel } from './ShapesPanel';
 import { PlanningIconColumn, type IconRowSpec } from './PlanningIconColumn';
 import type { BottomSheetPanel } from './BottomSheetPanel';
 import { SliderSheetPanel, CameraPickerPanel } from './PlanningSubpanels';
+import { BackdropControlsPanel } from './BackdropControlsPanel';
 import { tickerSetTimeout, type TickerTimerHandle } from '../utils/tickerTimers';
 import { createHiddenFileInput } from '../dom/shadowServices';
 
@@ -69,8 +70,10 @@ const SLIDERS = {
   lifespan: { label: 'عمر الجسيمات', min: 0.4, max: 2.5, step: 0.05, value: 1.7 },
   scale: { label: 'اتساع الانفجار', min: 0.5, max: 2, step: 0.05, value: 1 },
   glow: { label: 'توهج الألعاب النارية', min: 0, max: 10, step: 0.5, value: 0 },
-  dimmer: { label: 'إضاءة الخلفية', min: 0, max: 1, step: 0.01, value: 1 },
 } satisfies Record<string, SliderSpec>;
+
+/** Matches DEFAULT_BURST_SETTINGS-style sync note above: BackgroundLayer's own `dimmer` field starts at 1 (background.ts) — this has to start there too. */
+const DIMMER_INITIAL_VALUE = 1;
 
 const HINT_VISIBLE_MS = 2600;
 const HINT_TEXT = 'اختر الشكل وحدد موقعه';
@@ -125,7 +128,7 @@ export class PlanningScreen {
   private readonly iconColumn: PlanningIconColumn;
   private readonly colorPicker: ColorPickerPanel;
   private readonly shapesPanel: ShapesPanel;
-  private readonly dimmerPanel: SliderSheetPanel;
+  private readonly backdropControls: BackdropControlsPanel;
   private readonly glowPanel: SliderSheetPanel;
   private readonly labPanel: SliderSheetPanel;
   private readonly cameraPanel: CameraPickerPanel;
@@ -140,7 +143,8 @@ export class PlanningScreen {
   private mortarModeEnabled = false;
   private liveDocumentationArmed = false;
   private randomModeEnabled = false;
-  private autoShowEnabled = false;
+  /** True once the player has picked "العرض التلقائي" — does NOT start the engine's continuous auto-launch by itself anymore (see setAutoShow()'s own doc comment); only "ابدأ العرض" (beginShow() in fireworksMood.ts) actually starts it, same gating mass/sequential already had. */
+  private autoShowArmed = false;
   private hintTimer: TickerTimerHandle | undefined;
   private hintFadeTick: ((t: Ticker) => void) | undefined;
   private hintComposing = false;
@@ -156,7 +160,7 @@ export class PlanningScreen {
    * cleared by re-tapping the same trigger icon to close it deliberately, or
    * by fully entering/exiting the planning screen (show()/hide()).
    */
-  private lastActivePanelKind: 'camera' | 'dimmer' | 'glow' | 'lab' | 'shapes' | 'color' | null = null;
+  private lastActivePanelKind: 'camera' | 'glow' | 'lab' | 'shapes' | 'color' | null = null;
 
   constructor(deps: PlanningScreenDeps) {
     this.deps = deps;
@@ -201,19 +205,33 @@ export class PlanningScreen {
     this.shapesPanel = new ShapesPanel(
       deps.app,
       getLeftBoundary,
-      (open) => this.iconColumn.setActive('mzj-planning-open-shapes', open),
+      (open) => {
+        this.iconColumn.setActive('mzj-planning-open-shapes', open);
+        this.syncBackdropControlsVisibility();
+      },
       (type) => this.handlePickShape(type),
       () => this.handleToggleGroundFountain(),
       () => this.handleToggleMortarMode(),
     );
     deps.uiContainer.addChild(this.shapesPanel.container);
 
-    // The four bottom-sheet subpanels (see PlanningSubpanels.ts /
+    // "فيديو خلفية حي" + "صورة خلفية" + the bare vertical brightness fader —
+    // moved out of the main icon column into their own floating group (see
+    // BackdropControlsPanel's own doc comment) so their visibility can
+    // follow the player's actual planning context (see
+    // syncBackdropControlsVisibility()) instead of the column's own
+    // hide/show state.
+    this.backdropControls = new BackdropControlsPanel({
+      app: deps.app,
+      onTapVideo: () => this.toggleSubpanel('camera'),
+      onTapImage: () => this.bgImageInput.click(),
+      dimmerInitialValue: DIMMER_INITIAL_VALUE,
+      onDimmerChange: (v) => deps.background.setDimmer(v),
+    });
+    deps.uiContainer.addChild(this.backdropControls.container);
+
+    // The three remaining bottom-sheet subpanels (see PlanningSubpanels.ts /
     // BottomSheetPanel) — fully Pixi, no more `.mzj-planning-subpanel` DOM.
-    this.dimmerPanel = new SliderSheetPanel(deps.app, [
-      { ...SLIDERS.dimmer, onChange: (v) => deps.background.setDimmer(v) },
-    ]);
-    deps.uiContainer.addChild(this.dimmerPanel.container);
     this.glowPanel = new SliderSheetPanel(deps.app, [
       { ...SLIDERS.glow, onChange: (v) => deps.fireworks.updateSettings({ glow: v }) },
     ]);
@@ -240,7 +258,7 @@ export class PlanningScreen {
           .setLiveCamera()
           .then(() => {
             this.liveDocumentationArmed = true;
-            this.iconColumn.setActive('mzj-planning-open-camera', true);
+            this.backdropControls.setVideoActive(true);
           })
           .catch((error) => {
             console.error('تعذّر تشغيل الكاميرا الحية (تحقّق من إذن الوصول للكاميرا):', error);
@@ -276,10 +294,9 @@ export class PlanningScreen {
   }
 
   /** Every subpanel that shares the bottom-sheet dock spot, paired with the icon-column trigger row whose active state tracks "is this one open" — `undefined` for the camera trigger, whose active state means something else entirely (see toggleSubpanel's own doc comment). */
-  private subpanelEntries(): { kind: 'camera' | 'dimmer' | 'glow' | 'lab'; panel: BottomSheetPanel; triggerId?: string }[] {
+  private subpanelEntries(): { kind: 'camera' | 'glow' | 'lab'; panel: BottomSheetPanel; triggerId?: string }[] {
     return [
       { kind: 'camera', panel: this.cameraPanel },
-      { kind: 'dimmer', panel: this.dimmerPanel, triggerId: 'mzj-planning-open-dimmer' },
       { kind: 'glow', panel: this.glowPanel, triggerId: 'mzj-planning-open-glow' },
       { kind: 'lab', panel: this.labPanel, triggerId: 'mzj-planning-open-lab' },
     ];
@@ -288,13 +305,12 @@ export class PlanningScreen {
   /**
    * Every row's behavior, ported 1:1 from the old DOM buttons' `click`
    * listeners — see PlanningIconColumn for how these actually render/hit-
-   * test. Subpanel triggers (camera/dimmer/glow/lab) still open the
-   * existing HTML subpanels for now (next pass in PROGRESS.md); the shapes/
-   * color triggers already open fully-Pixi SideDockPanels.
+   * test. Subpanel triggers (camera/glow/lab) still open the existing HTML
+   * subpanels for now (next pass in PROGRESS.md); the shapes/color triggers
+   * already open fully-Pixi SideDockPanels.
    */
   private buildIconRowSpecs(): IconRowSpec[] {
     return [
-      { id: 'mzj-planning-open-dimmer', icon: 'palette', label: 'إضاءة الخلفية', onTap: () => this.hideChromeThenRun(() => this.toggleSubpanel('dimmer')) },
       { id: 'mzj-planning-auto-show', icon: 'sparkles', label: 'العرض التلقائي', onTap: () => this.hideChromeThenRun(() => this.toggleAutoShow()) },
       { id: 'mzj-planning-open-lab', icon: 'sliders', label: 'المختبر', onTap: () => this.hideChromeThenRun(() => this.toggleSubpanel('lab')) },
       { id: 'mzj-planning-open-text', icon: 'T', label: 'نص', onTap: () => this.hideChromeThenRun(() => this.textComposer.open()) },
@@ -302,24 +318,11 @@ export class PlanningScreen {
       { id: 'mzj-planning-mode-mass', icon: 'fireworksMood', label: 'إطلاق جماعي', onTap: () => this.hideChromeThenRun(() => this.setMode('mass')) },
       { id: 'mzj-planning-mode-sequential', icon: 'mapPin', label: 'إطلاق متتابع', onTap: () => this.hideChromeThenRun(() => this.setMode('sequential')) },
       { id: 'mzj-planning-open-shapes', icon: 'shapes', label: 'الأشكال', onTap: () => this.hideChromeThenRun(() => this.toggleShapesPanel()) },
-      { id: 'mzj-planning-open-camera', icon: 'camera', label: 'فيديو خلفية حي', onTap: () => this.hideChromeThenRun(() => this.toggleSubpanel('camera')) },
       { id: 'mzj-planning-record', icon: 'recordDot', label: 'تسجيل فيديو', onTap: () => this.hideChromeThenRun(() => this.deps.onToggleRecording()) },
-      // No "لقطة" row here anymore — it used to sit right next to
-      // "صورة خلفية" and share its icon with "فيديو خلفية حي" above, a real
-      // mis-tap risk on a real device (a tap meant for the snapshot could
-      // land on the native file/photo picker instead). The floating red
-      // shutter button (fireworksMood.ts, visible only during a running
-      // show) is now the one and only way to snapshot — no adjacent control
-      // it can be confused with.
-      {
-        id: 'mzj-planning-bg-image',
-        icon: 'image',
-        label: 'صورة خلفية',
-        // The one and only trigger for the native OS file picker — see
-        // PROGRESS.md's remaining hard constraint for why this stays a real
-        // (if invisible) DOM `<input type="file">`.
-        onTap: () => this.hideChromeThenRun(() => this.bgImageInput.click()),
-      },
+      // "فيديو خلفية حي" and "صورة خلفية" no longer live here — see
+      // BackdropControlsPanel's own doc comment for why they moved into
+      // their own floating group, synced to shapes/random/auto-show
+      // context instead of the main column's own hide/show state.
       { id: 'mzj-planning-open-glow', icon: 'gem', label: 'توهج الألعاب النارية', onTap: () => this.hideChromeThenRun(() => this.toggleSubpanel('glow')) },
       { id: 'mzj-planning-open-color', icon: 'droplet', label: 'لون المقذوفة', onTap: () => this.hideChromeThenRun(() => this.toggleColorPicker()) },
     ];
@@ -335,6 +338,20 @@ export class PlanningScreen {
     this.chromeHidden = true;
     this.iconColumn.setChromeVisible(false);
     action();
+  }
+
+  /**
+   * "فيديو خلفية حي"/"صورة خلفية" + the brightness fader (see
+   * BackdropControlsPanel) show together whenever the player is in an
+   * active planning/launch context — "الأشكال" open (the most-used panel
+   * during planning), "توليد عشوائي هجين" toggled, or "العرض التلقائي"
+   * armed — and hide the instant none of those hold, independently of the
+   * main column's own hide/show state (see hideChromeThenRun() above, which
+   * deliberately does NOT touch this group at all). Forced fully closed
+   * during an actual running show — see hide()'s own explicit setOpen(false).
+   */
+  private syncBackdropControlsVisibility(): void {
+    this.backdropControls.setOpen(this.shapesPanel.open || this.randomModeEnabled || this.autoShowArmed);
   }
 
   /** True while placing a shot/pin with the chrome slid away — fireworksMood.ts/PlanningMode check this to know a raw pointerdown might be a swipe-reveal rather than a tap-to-fire/place. */
@@ -378,6 +395,10 @@ export class PlanningScreen {
     this.applyMode(mode);
     this.iconColumn.container.visible = true;
     this.reshowHint();
+    // randomModeEnabled/autoShowArmed persist across hide()/show() (they're
+    // independent toggles, not reset here) — re-sync so backdropControls
+    // reappears immediately if either was already on before this restore.
+    this.syncBackdropControlsVisibility();
   }
 
   /** Restarts the hint's visible-then-auto-fade cycle — shared by show() (mood boot / endShow() restore) and setMode() (the player just picked a launch mode and needs guiding to the next step). */
@@ -401,6 +422,7 @@ export class PlanningScreen {
     this.hintTimer?.cancel();
     this.colorPicker.setOpen(false);
     this.shapesPanel.setOpen(false);
+    this.backdropControls.setOpen(false);
     // The camera trigger's active state means "a video background is set",
     // not "its panel is open" — it must survive closing/reopening the
     // screen, so it's the one entry below with no triggerId to reset (see
@@ -589,22 +611,39 @@ export class PlanningScreen {
     this.randomModeEnabled = enabled;
     this.deps.fireworks.setRandomMode(enabled);
     this.iconColumn.setActive('mzj-planning-random-mode', enabled);
+    this.syncBackdropControlsVisibility();
   }
 
   private toggleAutoShow(): void {
-    this.setAutoShow(!this.autoShowEnabled);
+    this.setAutoShow(!this.autoShowArmed);
   }
 
+  /**
+   * Arms/disarms "العرض التلقائي" only — does NOT touch the engine's
+   * continuous auto-launch itself anymore. Same gating mass/sequential mode
+   * selection already has: picking a mode never fires anything by itself,
+   * only "ابدأ العرض" (beginShow() in fireworksMood.ts) actually starts
+   * firing, giving the player a chance to set up text/background first
+   * regardless of which launch style they picked. Disarming is still a safe
+   * moment to force the engine off directly, in case it happened to be
+   * running (e.g. the exit button cancelling mid-show via disableAutoShow()).
+   */
   private setAutoShow(enabled: boolean): void {
-    this.autoShowEnabled = enabled;
-    this.deps.fireworks.setAutoLaunch(enabled);
+    this.autoShowArmed = enabled;
+    if (!enabled) this.deps.fireworks.setAutoLaunch(false);
     this.iconColumn.setActive('mzj-planning-auto-show', enabled);
     this.deps.onAutoShowChange(enabled);
+    this.syncBackdropControlsVisibility();
   }
 
-  /** External off-switch for "العرض التلقائي" — the exit button (see fireworksMood.ts's endShow()) must be able to fully stop it too, not just the icon-column toggle: it now governs every launch screen (متتابع/جماعي/عشوائي), not only the planned-show flow. A no-op if it's already off. */
+  /** True once armed — fireworksMood.ts's beginShow() checks this to know whether "ابدأ العرض" should also start the engine's continuous auto-launch alongside whatever mass/sequential plan is active. */
+  isAutoShowArmed(): boolean {
+    return this.autoShowArmed;
+  }
+
+  /** External off-switch for "العرض التلقائي" — the exit button (see fireworksMood.ts's endShow()) must be able to fully stop/disarm it too, not just the icon-column toggle: it now governs every launch screen (متتابع/جماعي/عشوائي), not only the planned-show flow. A no-op if it's already off. */
   disableAutoShow(): void {
-    if (this.autoShowEnabled) this.setAutoShow(false);
+    if (this.autoShowArmed) this.setAutoShow(false);
   }
 
   /**
@@ -613,7 +652,7 @@ export class PlanningScreen {
    * left alone here — for it, "active" means "a video background is
    * currently set" (see wireMedia), not "this panel happens to be open".
    */
-  private toggleSubpanel(kind: 'camera' | 'dimmer' | 'glow' | 'lab'): void {
+  private toggleSubpanel(kind: 'camera' | 'glow' | 'lab'): void {
     const entries = this.subpanelEntries();
     const target = entries.find((entry) => entry.kind === kind)!;
     const willOpen = !target.panel.open;
@@ -634,8 +673,8 @@ export class PlanningScreen {
    * armed here so beginShow() auto-starts/stops recording around it).
    */
   private wireMedia(): void {
-    // "صورة خلفية"'s own tap (opening the native file picker) is wired
-    // directly on its icon-column row — see buildIconRowSpecs().
+    // "صورة خلفية"'s own tap (opening the native file picker) lives on
+    // BackdropControlsPanel now — see its onTapImage wiring in the constructor.
     this.bgImageInput.addEventListener('change', () => {
       const file = this.bgImageInput.files?.[0];
       if (!file) return;
@@ -647,7 +686,7 @@ export class PlanningScreen {
         .setImage(file)
         .then(() => {
           this.uploadHint.show('image');
-          this.iconColumn.setActive('mzj-planning-bg-image', true);
+          this.backdropControls.setImageActive(true);
         })
         .catch((error) => {
           console.error('تعذّر تحميل صورة الخلفية (الملف تالف أو غير مدعوم):', error);
@@ -665,7 +704,7 @@ export class PlanningScreen {
         .then(() => {
           this.liveDocumentationArmed = false;
           this.uploadHint.show('video');
-          this.iconColumn.setActive('mzj-planning-open-camera', true);
+          this.backdropControls.setVideoActive(true);
         })
         .catch((error) => {
           console.error('تعذّر تحميل فيديو الخلفية (الملف تالف أو غير مدعوم):', error);

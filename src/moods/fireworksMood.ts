@@ -1,5 +1,4 @@
 import { Application, Circle, Container, Graphics, Rectangle, Sprite, Text, TextStyle, type Texture, type Ticker } from 'pixi.js';
-import { BackdropBlurFilter } from 'pixi-filters';
 import { iconTexture, preloadIconAtlas } from '../ui/svgIconTexture';
 import { FireworksSystem } from '../fireworks/FireworksSystem';
 import { TextReveal } from '../effects/TextReveal';
@@ -139,11 +138,16 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
   // Fire-and-forget: unlocking must never block the panel from appearing,
   // and it's still within the same user-initiated call chain that opened
   // this mood (the browser's autoplay-gesture leniency covers this).
-  void audio.unlock().then(() => {
-    if (audio.hasMissingSounds()) {
-      console.info('أضف ملفات الصوت في public/audio/ لتفعيل المؤثرات الصوتية (راجع public/audio/README.md).');
-    }
-  });
+  void audio
+    .unlock()
+    .then(() => {
+      if (audio.hasMissingSounds()) {
+        console.info('أضف ملفات الصوت في public/audio/ لتفعيل المؤثرات الصوتية (راجع public/audio/README.md).');
+      }
+    })
+    .catch((error: unknown) => {
+      console.error('تعذّر تهيئة الصوت:', error);
+    });
   const mortarField = new MortarField(app);
   worldContainer.addChild(mortarField.container);
   const explosionFlash = new ScreenFlash(app);
@@ -306,6 +310,16 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
   // must stay visible for this continuous-launch screen too, not just the
   // planned-show flow (see updateExitButtonVisibility() below).
   let autoShowActive = false;
+  // Hard safety cap on "العرض التلقائي": continuous auto-launching has no
+  // natural end (unlike a planned mass/sequential show, which finishes on
+  // its own), so left running indefinitely it's real, sustained GPU/CPU load
+  // with no player-driven reason to stop — a genuine device-heat concern on
+  // a phone. A real device-temperature API doesn't exist for a Capacitor
+  // WebView without writing a native plugin, so this is a fixed, conservative
+  // ceiling instead: auto-stops exactly like the exit button would, cleanly,
+  // via the same endShow() path.
+  const AUTO_SHOW_MAX_MS = 60_000;
+  let autoShowStopTimer: TickerTimerHandle | undefined;
   // Mirrors PlanningScreen.hasMassSelection() — tracked locally rather than
   // queried from planningScreen directly, since onModeChange (passed into
   // PlanningScreen's own constructor below) calls updateExitButtonVisibility()
@@ -373,6 +387,15 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
       launchPlannedShow();
     }
 
+    // "العرض التلقائي" only actually starts firing here, at "ابدأ العرض" —
+    // arming it (PlanningScreen.setAutoShow()) never touches the engine
+    // itself. Independent of whichever mass/sequential plan launchPlannedShow()
+    // just fired above (both can run together if the player armed both).
+    if (planningScreen.isAutoShowArmed()) {
+      fireworks.setAutoLaunch(true);
+      autoShowStopTimer = tickerSetTimeout(app.ticker, () => endShow(), AUTO_SHOW_MAX_MS);
+    }
+
     // The planning screen must never still be up once the show begins,
     // whether or not the player closed it themselves first.
     planningScreen.hide();
@@ -421,6 +444,14 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
     // *pending*, never-fired selection gets abandoned below.
     const wasShowRunning = showStarted;
     fireworks.clearActive();
+    // clearActive() only clears already-in-flight rockets/particles — the
+    // engine's own continuous auto-launch loop (see FireworksSystem.update())
+    // keeps scheduling new ones otherwise. Also cancels this show's own
+    // AUTO_SHOW_MAX_MS safety timer (see beginShow()) so a manual exit
+    // doesn't leave a stale timer that could call endShow() again later.
+    fireworks.setAutoLaunch(false);
+    autoShowStopTimer?.cancel();
+    autoShowStopTimer = undefined;
     // A sequential show's staggered per-pin Ticker timers (see PlanningMode's
     // own doc comment) keep running past this point otherwise — a real leak
     // a field test caught: rockets kept firing on the idle screen after the
@@ -435,6 +466,50 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
     // the planned-show flow — pressing it stops عشوائي too.
     planningScreen.disableAutoShow();
     if (!wasShowRunning) planningScreen.clearPendingSelection();
+    showStarted = false;
+    updateExitButtonVisibility();
+    updateShutterButtonVisibility();
+  }
+
+  /**
+   * Full teardown for leaving this mood entirely — called from handle.hide()
+   * below (main.ts's goHome(), or the header's own "الرئيسية" button), never
+   * from inside the mood itself. A strict superset of endShow()'s own reset:
+   * safe to call whether or not any show was ever running (every operation
+   * here is already a no-op on empty/idle state), and — unlike endShow(),
+   * which deliberately keeps a *completed* show's mass selection around so
+   * the same plan can be repeated without leaving the mood — always
+   * abandons any pending plan, since there's no "repeat" concept once the
+   * player has actually left. Recording, if any, is discarded rather than
+   * downloaded (see stopRecording()'s own `discard` param doc comment) so
+   * simply glancing at the home screen never triggers a surprise download
+   * of an incomplete clip. Left running behind the home screen otherwise:
+   * the continuous auto-launch loop, its safety timer, PlanningMode's
+   * staggered per-pin timers, the MediaRecorder/its audio stream, an
+   * in-flight snapshot capture (its lift-up animation, and — where still
+   * possible — its save; see cancelActiveSnapshot's own doc comment for
+   * exactly what this can and can't actually stop), and a still-fading
+   * camera flash — exactly the set this function stops.
+   */
+  function resetForExit(): void {
+    fireworks.clearActive();
+    fireworks.setAutoLaunch(false);
+    autoShowStopTimer?.cancel();
+    autoShowStopTimer = undefined;
+    planningMode.cancelPending();
+    if (recording.isRecording) void stopRecording(true);
+    cancelActiveSnapshot?.();
+    cancelActiveFlash?.();
+    snapshotErrorHideTimer?.cancel();
+    snapshotErrorHideTimer = undefined;
+    snapshotErrorText.alpha = 0;
+    snapshotErrorText.text = '';
+    textReveal.clear();
+    header.resetStartShowButton();
+    idleFade.disarmAndShow();
+    planningScreen.show(planningScreen.getMode());
+    planningScreen.disableAutoShow();
+    planningScreen.clearPendingSelection();
     showStarted = false;
     updateExitButtonVisibility();
     updateShutterButtonVisibility();
@@ -465,7 +540,21 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
   redrawCameraFlash();
   app.renderer.on('resize', () => redrawCameraFlash());
 
+  // Cancel handle for whatever flash is currently fading, if any — set by
+  // flashScreen() below, cleared once that flash either finishes on its own
+  // or is cancelled. resetForExit() (leaving the mood mid-flash) calls this
+  // directly so a flash left fading behind the home screen doesn't keep its
+  // app.ticker callback alive for no reason.
+  let cancelActiveFlash: (() => void) | null = null;
+
   function flashScreen(): void {
+    // A new capture's flash must not race a still-fading previous one (the
+    // shutter button is disabled for the duration of a capture — see
+    // setShutterButtonEnabled() — so this only matters for the one case
+    // that guard doesn't cover: resetForExit() re-arming the mood for a
+    // fresh visit while an old flash was still fading).
+    cancelActiveFlash?.();
+
     cameraFlash.alpha = 1;
     let elapsedMs = 0;
     const step = (t: Ticker): void => {
@@ -473,9 +562,18 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
       const progress = Math.min(1, elapsedMs / FLASH_FADE_MS);
       const eased = 1 - (1 - progress) ** 3;
       cameraFlash.alpha = 1 - eased;
-      if (progress >= 1) app.ticker.remove(step);
+      if (progress >= 1) {
+        app.ticker.remove(step);
+        cancelActiveFlash = null;
+      }
     };
     app.ticker.add(step);
+
+    cancelActiveFlash = () => {
+      app.ticker.remove(step);
+      cameraFlash.alpha = 0;
+      cancelActiveFlash = null;
+    };
   }
 
   // A snapshot failure used to be visible only in console.error — invisible
@@ -552,154 +650,410 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
     }
   }
 
-  function playSnapshotLiftUp(snapshotTexture: SnapshotTexture): void {
-    const texture = snapshotTexture.texture;
+  /**
+   * Plays the rise animation only — ownership of the extracted Texture
+   * itself (and when it's safe to destroy) stays with takeSnapshot()'s own
+   * SnapshotTexture wrapper; this function never calls destroySafely(),
+   * only resolves `done` once its own frame/thumb sprites are fully torn
+   * down (normal finish) or once `cancel()` is called (early stop).
+   * Destroying the shared texture here (as this used to) raced against
+   * takeSnapshot()'s own concurrent `extract.base64()` read of that same
+   * texture — whichever finished first could tear it out from under the
+   * other. See takeSnapshot()'s own Promise.allSettled() for the actual fix.
+   *
+   * `cancel()` — used by takeSnapshot() when resetForExit() (leaving the
+   * mood mid-snapshot) cancels the in-flight capture — tears the frame/thumb
+   * down immediately, same as a normal finish, and resolves `done` right
+   * away instead of waiting out the rest of the animation. `cancel()` itself
+   * never triggers the shutter sound: if cancellation happens before the
+   * tick that would have played it (elapsedMs still under LIFT_HOLD_MS),
+   * this capture's shutter sound simply never plays; if the sound had
+   * already played on an earlier tick, cancelling now cannot undo that — it
+   * already happened.
+   *
+   * The whole setup below (frame/thumb creation, adding them to
+   * uiContainer, registering the ticker callback) runs inside a try/catch:
+   * if any step throws partway through, everything already created up to
+   * that point is torn back down (removed from uiContainer, destroyed, its
+   * ticker callback removed if it was already registered) before the error
+   * is rethrown — so a partial failure here never leaves an orphaned
+   * Graphics/Sprite on screen or a dangling app.ticker callback.
+   */
+  function playSnapshotLiftUp(texture: Texture): { done: Promise<void>; cancel: () => void } {
     const frameWidth = Math.min(app.screen.width, app.screen.height) * LIFT_THUMB_WIDTH_RATIO;
     const frameHeight = (texture.height / texture.width) * frameWidth;
     const centerX = app.screen.width / 2;
     const centerY = app.screen.height / 2;
 
-    // Two flat siblings on app.stage — deliberately *not* nested inside a
-    // wrapper Container. While debugging this in a sandboxed headless
-    // browser (software-WebGL, not representative of a real GPU), a
-    // wrapper Container with its own `.position` holding these as children
-    // sometimes failed to render after an `extract.texture()`/
-    // `extract.base64()` call — but later isolation attempts gave
-    // inconsistent results for identical code, pointing at a flaky test
-    // environment rather than a deterministic bug. Kept flat anyway since
-    // it's no more complex and removes that variable entirely; this should
-    // be re-verified on a real device build rather than trusted from this
-    // sandbox alone.
-    const frame = new Graphics()
-      .roundRect(-frameWidth / 2 - 5, -frameHeight / 2 - 5, frameWidth + 10, frameHeight + 10, 10)
-      .fill({ color: 0xffffff })
-      .stroke({ width: 1, color: 0x000000, alpha: 0.12 });
-    frame.eventMode = 'none';
-    frame.position.set(centerX, centerY);
-    app.stage.addChild(frame);
+    let frame: Graphics | undefined;
+    let thumb: Sprite | undefined;
+    let registeredTick: ((ticker: Ticker) => void) | undefined;
 
-    const thumb = new Sprite(texture);
-    thumb.eventMode = 'none';
-    thumb.anchor.set(0.5);
-    thumb.width = frameWidth;
-    thumb.height = frameHeight;
-    thumb.position.set(centerX, centerY);
-    // The .width/.height setters above already computed the scale needed
-    // to fit the extracted (much larger) texture into the thumbnail size —
-    // the animation below must multiply against *this* base, not overwrite
-    // it, or the sprite would snap back to its full, unscaled texture size
-    // the instant the rise animation's own scale factor is first applied.
-    const thumbBaseScaleX = thumb.scale.x;
-    const thumbBaseScaleY = thumb.scale.y;
-    app.stage.addChild(thumb);
+    try {
+      // In `uiContainer`, not `app.stage` directly — every other piece of
+      // this mood's own floating HUD (exit/shutter buttons, snapshot error
+      // text) lives there too; nothing belonging to this screen should be
+      // parented straight onto the app-wide stage.
+      frame = new Graphics()
+        .roundRect(-frameWidth / 2 - 5, -frameHeight / 2 - 5, frameWidth + 10, frameHeight + 10, 10)
+        .fill({ color: 0xffffff })
+        .stroke({ width: 1, color: 0x000000, alpha: 0.12 });
+      frame.eventMode = 'none';
+      frame.position.set(centerX, centerY);
+      uiContainer.addChild(frame);
 
-    // Fires the instant the rise motion actually begins (not at tap-time —
-    // see takeSnapshot(), which deliberately does *not* play this sound
-    // itself anymore), so the click is heard in sync with the photo
-    // starting to lift, not with the (silent, camera-flash-only) capture
-    // moment a beat earlier.
-    let shutterSoundPlayed = false;
-    let elapsedMs = 0;
+      thumb = new Sprite(texture);
+      thumb.eventMode = 'none';
+      thumb.anchor.set(0.5);
+      thumb.width = frameWidth;
+      thumb.height = frameHeight;
+      thumb.position.set(centerX, centerY);
+      // The .width/.height setters above already computed the scale needed
+      // to fit the extracted (much larger) texture into the thumbnail size —
+      // the animation below must multiply against *this* base, not overwrite
+      // it, or the sprite would snap back to its full, unscaled texture size
+      // the instant the rise animation's own scale factor is first applied.
+      const thumbBaseScaleX = thumb.scale.x;
+      const thumbBaseScaleY = thumb.scale.y;
+      uiContainer.addChild(thumb);
 
-    // Driven by app.ticker — the same 60fps-synced loop every other moving
-    // piece in this file (fireworks, mortars, text reveal, shockwave,
-    // screen shake) already runs on, rather than a separate raw
-    // requestAnimationFrame call. `ticker.deltaMS` accounts for real frame
-    // spacing the same way those updates do.
-    const tick = (ticker: Ticker): void => {
-      elapsedMs += ticker.deltaMS;
-      if (elapsedMs < LIFT_HOLD_MS) return;
-      if (!shutterSoundPlayed) {
-        shutterSoundPlayed = true;
-        audio.playCameraShutter();
+      // Local, non-optional aliases — once execution reaches this point both
+      // are guaranteed created and added, so the ticker-driven code below
+      // (which can run many frames later) references these instead of the
+      // outer `frame`/`thumb` variables, which stay typed as possibly
+      // `undefined` for the catch block above.
+      const frameNode = frame;
+      const thumbNode = thumb;
+
+      // Fires the instant the rise motion actually begins (not at tap-time —
+      // see takeSnapshot(), which deliberately does *not* play this sound
+      // itself anymore), so the click is heard in sync with the photo
+      // starting to lift, not with the (silent, camera-flash-only) capture
+      // moment a beat earlier.
+      let shutterSoundPlayed = false;
+      let elapsedMs = 0;
+      let settled = false;
+      let resolveDone!: () => void;
+      const done = new Promise<void>((resolve) => {
+        resolveDone = resolve;
+      });
+
+      // Each step is independent — wrapped in its own try/catch so a failure
+      // in one (e.g. removeChild() on a node already detached some other way)
+      // can never block the rest: the ticker callback must come off, and
+      // both frameNode and thumbNode must each still get their own
+      // detach-then-destroy attempt regardless of what happened to the
+      // others. `node.parent` is checked before removeChild() rather than
+      // calling it unconditionally — removeChild() on a node this container
+      // doesn't actually own is not this function's failure to make. Every
+      // caught error is logged, never swallowed silently.
+      function teardown(): void {
+        try {
+          app.ticker.remove(tick);
+        } catch (error) {
+          console.error('تعذّر إزالة مستمع حركة رفع اللقطة:', error);
+        }
+        try {
+          if (frameNode.parent) frameNode.parent.removeChild(frameNode);
+        } catch (error) {
+          console.error('تعذّر فصل إطار اللقطة عن حاويته:', error);
+        }
+        try {
+          frameNode.destroy();
+        } catch (error) {
+          console.error('تعذّر تدمير إطار اللقطة:', error);
+        }
+        try {
+          if (thumbNode.parent) thumbNode.parent.removeChild(thumbNode);
+        } catch (error) {
+          console.error('تعذّر فصل الصورة المصغّرة عن حاويتها:', error);
+        }
+        try {
+          // Sprite only — `texture` itself is a shared resource
+          // takeSnapshot() still owns via its own SnapshotTexture, disposed
+          // only once both this animation and the save operation have
+          // settled.
+          thumbNode.destroy({ texture: false, textureSource: false });
+        } catch (error) {
+          console.error('تعذّر تدمير الصورة المصغّرة:', error);
+        }
       }
-      const t = Math.min(1, (elapsedMs - LIFT_HOLD_MS) / LIFT_MOVE_MS);
-      const eased = 1 - (1 - t) ** 3;
-      const y = centerY - LIFT_RISE_DISTANCE * eased;
-      const alpha = 1 - eased;
-      const scale = 1 - (1 - LIFT_END_SCALE) * eased;
-      frame.position.y = y;
-      frame.alpha = alpha;
-      frame.scale.set(scale);
-      thumb.position.y = y;
-      thumb.alpha = alpha;
-      thumb.scale.set(thumbBaseScaleX * scale, thumbBaseScaleY * scale);
-      if (t < 1) return;
 
-      app.ticker.remove(tick);
-      app.stage.removeChild(frame);
-      app.stage.removeChild(thumb);
-      frame.destroy();
-      // Sprite only — `texture` itself is a shared resource takeSnapshot()
-      // still owns via `snapshotTexture`, disposed through its own
-      // idempotent destroySafely() below, not through this sprite's own
-      // teardown.
-      thumb.destroy({ texture: false, textureSource: false });
-      snapshotTexture.destroySafely();
-    };
-    app.ticker.add(tick);
+      // Sole path to ending this animation, whether by normal completion,
+      // cancel(), or a caught error from inside tick() — `settled` guards it
+      // so cancel() racing a same-tick natural finish (or a second cancel()
+      // call) can never teardown or resolveDone() twice. teardown() itself
+      // never throws (every step inside it is independently caught), so
+      // resolveDone() below is always reached regardless of what teardown()
+      // did or didn't manage to clean up — otherwise `done` would hang
+      // forever and takeSnapshot()'s `await Promise.allSettled([liftDone,
+      // saveDone])` would never reach its own finally that destroys
+      // snapshotTexture, leaving snapshotInProgress/the shutter button stuck
+      // disabled too.
+      function finishOnce(error?: unknown): void {
+        if (settled) return;
+        settled = true;
+        if (error !== undefined) console.error('تعذّر تشغيل حركة رفع اللقطة:', error);
+        teardown();
+        resolveDone();
+      }
+
+      // Driven by app.ticker — the same 60fps-synced loop every other moving
+      // piece in this file (fireworks, mortars, text reveal, shockwave,
+      // screen shake) already runs on, rather than a separate raw
+      // requestAnimationFrame call. `ticker.deltaMS` accounts for real frame
+      // spacing the same way those updates do. The whole body runs inside a
+      // try/catch: a synchronous throw from audio.playCameraShutter(), any of
+      // the position/alpha/scale writes below, or teardown() on natural
+      // finish must never leave this ticker callback registered or `done`
+      // unresolved — see finishOnce() above for why that would otherwise wedge
+      // takeSnapshot() itself.
+      function tick(ticker: Ticker): void {
+        try {
+          elapsedMs += ticker.deltaMS;
+          if (elapsedMs < LIFT_HOLD_MS) return;
+          if (!shutterSoundPlayed) {
+            shutterSoundPlayed = true;
+            audio.playCameraShutter();
+          }
+          const t = Math.min(1, (elapsedMs - LIFT_HOLD_MS) / LIFT_MOVE_MS);
+          const eased = 1 - (1 - t) ** 3;
+          const y = centerY - LIFT_RISE_DISTANCE * eased;
+          const alpha = 1 - eased;
+          const scale = 1 - (1 - LIFT_END_SCALE) * eased;
+          frameNode.position.y = y;
+          frameNode.alpha = alpha;
+          frameNode.scale.set(scale);
+          thumbNode.position.y = y;
+          thumbNode.alpha = alpha;
+          thumbNode.scale.set(thumbBaseScaleX * scale, thumbBaseScaleY * scale);
+          if (t < 1) return;
+
+          finishOnce();
+        } catch (error) {
+          finishOnce(error);
+        }
+      }
+      app.ticker.add(tick);
+      registeredTick = tick;
+
+      function cancel(): void {
+        finishOnce();
+      }
+
+      return { done, cancel };
+    } catch (error) {
+      // Same independent-step principle as teardown() above: whatever
+      // partly got created before the throw, each piece of it gets its own
+      // detach-then-destroy attempt regardless of whether an earlier one
+      // failed — a failed removeChild(thumb) must not skip thumb.destroy()
+      // or frame's own cleanup. The original construction error is what's
+      // rethrown at the end either way; these are cleanup-of-cleanup
+      // failures, logged, never allowed to replace or swallow it.
+      if (registeredTick) {
+        try {
+          app.ticker.remove(registeredTick);
+        } catch (removeError) {
+          console.error('تعذّر إزالة مستمع الحركة بعد فشل إنشاء لقطة الرفع:', removeError);
+        }
+      }
+      if (thumb) {
+        try {
+          if (thumb.parent) thumb.parent.removeChild(thumb);
+        } catch (removeError) {
+          console.error('تعذّر فصل الصورة المصغّرة بعد فشل إنشاء لقطة الرفع:', removeError);
+        }
+        try {
+          thumb.destroy({ texture: false, textureSource: false });
+        } catch (destroyError) {
+          console.error('تعذّر تدمير الصورة المصغّرة بعد فشل إنشاء لقطة الرفع:', destroyError);
+        }
+      }
+      if (frame) {
+        try {
+          if (frame.parent) frame.parent.removeChild(frame);
+        } catch (removeError) {
+          console.error('تعذّر فصل إطار اللقطة بعد فشل إنشاء لقطة الرفع:', removeError);
+        }
+        try {
+          frame.destroy();
+        } catch (destroyError) {
+          console.error('تعذّر تدمير إطار اللقطة بعد فشل إنشاء لقطة الرفع:', destroyError);
+        }
+      }
+      throw error;
+    }
+  }
+
+  // --- Snapshot lifecycle: single-flight guard + cancellation on exit ---
+  //
+  // One capture at a time only — a rapid double-tap on the shutter button
+  // used to be able to kick off two concurrent `extract.texture()` calls,
+  // each with its own lift-up animation and save, racing each other for no
+  // reason. `snapshotInProgress` blocks a second tap outright; the button
+  // itself is also visually disabled for the same window (see
+  // setShutterButtonEnabled()) so a second tap has a visible reason to do
+  // nothing instead of silently failing.
+  //
+  // Leaving the mood mid-snapshot (resetForExit(), e.g. "الرئيسية") calls
+  // `cancelActiveSnapshot()`: it stops the lift-up animation immediately
+  // (see playSnapshotLiftUp()'s own cancel()) and marks the capture as
+  // cancelled. Neither `extract.base64()` nor `saveSnapshotToGallery()` can
+  // actually be aborted mid-flight — neither Pixi's extraction nor
+  // GallerySaver expose a real abort — so whichever of those two is already
+  // running at the moment of cancellation keeps running to completion in
+  // the background exactly as if the player had stayed. What `cancelled`
+  // *can* still control is the choice point in between: once
+  // `extract.base64()` resolves, saveSnapshotToGallery()/triggerDownload()
+  // haven't started yet, so a cancelled capture skips them outright instead
+  // of writing a photo for a capture the player already abandoned — see the
+  // `if (cancelled) return;` inside takeSnapshot()'s saveDone below. Either
+  // way, showSnapshotError() is always suppressed once cancelled, so no
+  // stale error toast can surface on a screen the player has since left (or
+  // returned to for an unrelated, later capture). This is a genuine,
+  // permanent limitation on the two uncancellable calls themselves, not a
+  // bug: there is no cancellable primitive to call instead of them.
+  let snapshotInProgress = false;
+  let cancelActiveSnapshot: (() => void) | null = null;
+
+  function setShutterButtonEnabled(enabled: boolean): void {
+    shutterButton.eventMode = enabled ? 'static' : 'none';
+    shutterButton.alpha = enabled ? 1 : 0.5;
   }
 
   async function takeSnapshot(): Promise<void> {
-    // Extracted once as a Texture (not base64 directly) so the lift-up
-    // thumbnail and the actually-saved photo are guaranteed to be the exact
-    // same frame — fireworks animate every tick, so extracting twice could
-    // otherwise show the player a thumbnail that doesn't match what landed
-    // in their gallery.
-    const snapshotTexture = new SnapshotTexture(
-      app.renderer.extract.texture({
-        target: worldContainer,
-        resolution: Math.min(app.renderer.resolution * 1.5, 3),
-      }),
-    );
+    if (snapshotInProgress) return;
+    snapshotInProgress = true;
+    setShutterButtonEnabled(false);
 
-    flashScreen();
-    // The shutter sound itself fires from inside playSnapshotLiftUp(),
-    // synced to the exact frame the thumbnail starts rising — see its own
-    // doc comment. playSnapshotLiftUp() alone calls destroySafely() once
-    // its lift animation finishes; a second call from anywhere else
-    // (including a bug added here later) is a guaranteed no-op, not a
-    // double-free — see SnapshotTexture's own doc comment.
-    playSnapshotLiftUp(snapshotTexture);
-    // `extract.base64()` reads pixels back from the GPU via a canvas
-    // readback. While debugging in this sandbox's headless/software-WebGL
-    // browser, new display objects sometimes stopped rendering after this
-    // call ran — results were inconsistent across repeated identical runs,
-    // more consistent with a flaky sandbox test environment than a
-    // deterministic engine bug, but unresolved either way. Waiting for one
-    // real rendered frame here before calling base64() is a cheap,
-    // harmless precaution regardless of the root cause; this whole
-    // sequence still needs verification on a real device build. Goes
-    // through app.ticker like every other frame-wait in this file, rather
-    // than a raw requestAnimationFrame call.
-    await new Promise<void>((resolve) => { tickerSetTimeout(app.ticker, resolve, 0); });
+    let cancelled = false;
 
     try {
-      // Targets worldContainer exclusively — see this file's own
-      // container-tree doc comment. Every UI control (including the flash
-      // and the lift-up thumbnail itself) lives in the sibling uiContainer
-      // and is structurally invisible to this capture.
-      const dataUrl = await app.renderer.extract.base64(snapshotTexture.texture);
-      // "لقطة" ≠ "تنزيل": on the real app, this must land straight in the
-      // device's own photo gallery, never a file-download prompt — see
-      // GallerySaver's own doc comment. The `<a download>` browser pattern
-      // only runs as a fallback where there's no OS gallery to write into
-      // at all (this file previewed in a plain browser tab, e.g. during
-      // this project's own sandboxed development/testing).
-      if (canSaveToGallery()) {
-        await saveSnapshotToGallery(dataUrl);
-      } else {
-        triggerDownload(dataUrl, `mazaj-snapshot-${Date.now()}.png`);
+      // Extracted once as a Texture (not base64 directly) so the lift-up
+      // thumbnail and the actually-saved photo are guaranteed to be the
+      // exact same frame — fireworks animate every tick, so extracting
+      // twice could otherwise show the player a thumbnail that doesn't
+      // match what landed in their gallery.
+      const snapshotTexture = new SnapshotTexture(
+        app.renderer.extract.texture({
+          target: worldContainer,
+          resolution: Math.min(app.renderer.resolution * 1.5, 3),
+        }),
+      );
+
+      // Ownership of snapshotTexture starts the instant extract.texture()
+      // above actually succeeds — every step from here through the final
+      // await must therefore run inside this one try/finally, not just the
+      // Promise.allSettled() call at the end of it: a throw in flashScreen(),
+      // playSnapshotLiftUp(), the one-tick wait, or building saveDone itself
+      // used to skip destroySafely() entirely and leak the GPU texture,
+      // since the old finally only wrapped the very last await. Starting the
+      // try right after a successful extraction instead closes that gap.
+      try {
+        flashScreen();
+        // The shutter sound itself fires from inside playSnapshotLiftUp(),
+        // synced to the exact frame the thumbnail starts rising — see its
+        // own doc comment. Runs concurrently with the save below;
+        // snapshotTexture is only ever destroyed once *both* have genuinely
+        // finished (success, failure, or cancellation) — never from inside
+        // either one individually, which used to race (see
+        // playSnapshotLiftUp()'s own doc comment for the premature-
+        // destruction bug this replaced).
+        const lift = playSnapshotLiftUp(snapshotTexture.texture);
+        cancelActiveSnapshot = () => {
+          cancelled = true;
+          lift.cancel();
+        };
+        const liftDone = lift.done;
+
+        // `extract.base64()` reads pixels back from the GPU via a canvas
+        // readback. While debugging in this sandbox's headless/software-WebGL
+        // browser, new display objects sometimes stopped rendering after this
+        // call ran — results were inconsistent across repeated identical runs,
+        // more consistent with a flaky sandbox test environment than a
+        // deterministic engine bug, but unresolved either way. Waiting for one
+        // real rendered frame here before calling base64() is a cheap,
+        // harmless precaution regardless of the root cause; this whole
+        // sequence still needs verification on a real device build. Goes
+        // through app.ticker like every other frame-wait in this file, rather
+        // than a raw requestAnimationFrame call.
+        await new Promise<void>((resolve) => { tickerSetTimeout(app.ticker, resolve, 0); });
+
+        // Checked here, immediately after the frame wait and before
+        // extract.base64() is ever called: cancelling during that wait (e.g.
+        // resetForExit() firing while this tick is still pending) must not
+        // let a GPU readback start behind a screen that's already gone back
+        // to Home. Once base64() itself starts it's real and uncancellable
+        // (see below) — this is the one point where skipping it entirely is
+        // still possible. Resolves immediately rather than doing any work,
+        // so Promise.allSettled() below never has anything left pending.
+        const saveDone = cancelled ? Promise.resolve() : (async () => {
+          try {
+            // Targets worldContainer exclusively — see this file's own
+            // container-tree doc comment. Every UI control (including the
+            // flash and the lift-up thumbnail itself) lives in the sibling
+            // uiContainer and is structurally invisible to this capture.
+            const dataUrl = await app.renderer.extract.base64(snapshotTexture.texture);
+            // Unlike the extraction just above (already ran to completion,
+            // uncancellable) and saveSnapshotToGallery()/triggerDownload()
+            // just below (once started, also uncancellable — see
+            // cancelActiveSnapshot's own doc comment), starting the save at
+            // all is still a choice at this exact point: if resetForExit()
+            // cancelled this capture while extract.base64() was in flight,
+            // there is no reason to write anything anywhere once it resolves.
+            if (cancelled) return;
+            // "لقطة" ≠ "تنزيل": on the real app, this must land straight in
+            // the device's own photo gallery, never a file-download prompt —
+            // see GallerySaver's own doc comment. The `<a download>` browser
+            // pattern only runs as a fallback where there's no OS gallery to
+            // write into at all (this file previewed in a plain browser tab,
+            // e.g. during this project's own sandboxed development/testing).
+            // Once started, this itself runs to completion even if `cancelled`
+            // becomes true while it's in flight — see cancelActiveSnapshot's
+            // own doc comment above for why that's a real, permanent
+            // limitation and not a bug.
+            if (canSaveToGallery()) {
+              await saveSnapshotToGallery(dataUrl);
+            } else {
+              triggerDownload(dataUrl, `mazaj-snapshot-${Date.now()}.png`);
+            }
+          } catch (error) {
+            // console.error alone is invisible in a shipped APK without USB
+            // debugging attached — a field test that fails silently here
+            // gives no way to tell "it failed" from "it worked but I didn't
+            // check the gallery yet". showSnapshotError() surfaces the real
+            // error message on screen so a real-device test actually reports
+            // something actionable back, instead of just "it doesn't show
+            // up" — but only while the player is still actually looking at
+            // this capture; a cancelled capture (mood already left, or a
+            // fresh capture since started) must never show a stale error.
+            console.error('تعذّر التقاط اللقطة:', error);
+            if (!cancelled) showSnapshotError(error instanceof Error ? error.message : String(error));
+          }
+        })();
+
+        // Neither operation's own outcome should block or skip the other.
+        await Promise.allSettled([liftDone, saveDone]);
+      } finally {
+        // The one and only place that disposes snapshotTexture — now
+        // guaranteed to run whether the block above finishes normally,
+        // throws at any point, or is short-circuited by cancellation.
+        snapshotTexture.destroySafely();
       }
     } catch (error) {
-      // console.error alone is invisible in a shipped APK without USB
-      // debugging attached — a field test that fails silently here gives
-      // no way to tell "it failed" from "it worked but I didn't check the
-      // gallery yet". showSnapshotError() surfaces the real error message
-      // on screen so a real-device test actually reports something
-      // actionable back, instead of just "it doesn't show up".
+      // Covers everything in the try block above that isn't already owned by
+      // saveDone's own catch — extract.texture(), flashScreen(),
+      // playSnapshotLiftUp(), and the one-tick wait before saveDone is even
+      // created. saveDone's internal errors never reach here: Promise.allSettled()
+      // never rejects, so a failure inside saveDone is fully handled by its
+      // own catch (console.error + conditional showSnapshotError()) and stops
+      // there — this block never sees or re-reports it.
       console.error('تعذّر التقاط اللقطة:', error);
-      showSnapshotError(error instanceof Error ? error.message : String(error));
+      if (!cancelled) showSnapshotError(error instanceof Error ? error.message : String(error));
+    } finally {
+      snapshotInProgress = false;
+      cancelActiveSnapshot = null;
+      setShutterButtonEnabled(true);
     }
   }
 
@@ -713,11 +1067,21 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
     }
   }
 
-  async function stopRecording(): Promise<void> {
+  /**
+   * `discard` is used only by resetForExit() below (leaving this mood
+   * entirely, e.g. "الرئيسية") — RecordingManager has no cancel-without-save
+   * primitive (its own stop() always resolves with the recorded Blob), so
+   * the only way to stop the recorder without also forcing an unwanted
+   * download of a recording the player never asked to finish is to still
+   * call stop() but simply not act on the Blob it resolves with. Every
+   * other call site (endShow(), toggleRecording()) keeps the existing
+   * save-and-download behavior.
+   */
+  async function stopRecording(discard = false): Promise<void> {
     if (!recording.isRecording) return;
     try {
       const blob = await recording.stop();
-      downloadBlob(blob, `mazaj-fireworks-${Date.now()}.webm`);
+      if (!discard) downloadBlob(blob, `mazaj-fireworks-${Date.now()}.webm`);
     } catch (error) {
       console.error('تعذّر إنهاء التسجيل:', error);
     } finally {
@@ -778,7 +1142,6 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
     .circle(0, 0, EXIT_BUTTON_DIAMETER / 2)
     .fill({ color: 0x0f172a, alpha: 0.45 })
     .stroke({ width: 1, color: 0xffffff, alpha: 0.16 });
-  exitButtonBg.filters = [new BackdropBlurFilter({ strength: 6, quality: 4 })];
   exitButton.addChild(exitButtonBg);
 
   const exitButtonIcon = new Sprite();
@@ -787,9 +1150,13 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
   exitButtonIcon.width = 16;
   exitButtonIcon.height = 16;
   exitButton.addChild(exitButtonIcon);
-  void iconTexture('x', 40, '#ffffff').then((texture) => {
-    exitButtonIcon.texture = texture;
-  });
+  void iconTexture('x', 40, '#ffffff')
+    .then((texture) => {
+      exitButtonIcon.texture = texture;
+    })
+    .catch((error: unknown) => {
+      console.error('تعذّر تحميل أيقونة زر الخروج:', error);
+    });
 
   uiContainer.addChild(exitButton);
 
@@ -900,15 +1267,16 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
   });
 
   function updateShutterButtonVisibility(): void {
-    // "العرض التلقائي" genuinely launches real rockets on its own timer —
-    // see FireworksSystem.update()'s autoLaunchEnabled branch — independent
-    // of "ابدأ العرض", so it counts as "a show is actually running" for the
-    // capture button exactly like showStarted does. "توليد عشوائي هجين"
-    // does *not* belong here: setRandomMode() only flags which burst
+    // "العرض التلقائي" no longer fires anything the instant it's toggled —
+    // it only arms (see PlanningScreen.setAutoShow()'s own doc comment), and
+    // actually starts firing exactly when showStarted becomes true (via
+    // beginShow()) same as every other launch style, so showStarted alone
+    // already covers it correctly here. "توليد عشوائي هجين" still doesn't
+    // belong here either way: setRandomMode() only flags which burst
     // patterns get used by whatever launches next — it never calls
     // launch() itself, so toggling it alone produces no scene worth
     // capturing yet.
-    shutterButton.visible = showStarted || autoShowActive;
+    shutterButton.visible = showStarted;
   }
 
   // PlanningIconColumn (built inside PlanningScreen below) needs every icon
@@ -953,21 +1321,15 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
       // actually selected — see MortarField's own doc comment.
       mortarField.setVisible(mode === 'mortar');
     },
-    // "العرض التلقائي" is a third continuous-launch screen, alongside
-    // متتابع/جماعي — the exit button (below) governs it too now, not just
-    // the planned-show flow. Unlike them it actually starts firing real
-    // rockets the instant it's toggled on (no "ابدأ العرض" gate — see
-    // FireworksSystem.setAutoLaunch()), so it gets the same full-immersion
-    // treatment beginShow() gives the planned flow: panel hidden, shutter
-    // button up. Only the exit button can bring the panel back afterward
-    // (endShow() already calls disableAutoShow() + planningScreen.show()),
-    // exactly like every other launch screen.
+    // "العرض التلقائي" is a third launch style, alongside متتابع/جماعي —
+    // this only fires when the player *arms* it (picks the icon), same
+    // gating as picking a mass/sequential mode: nothing actually launches,
+    // nothing collapses, until "ابدأ العرض" is pressed (see beginShow()'s
+    // own isAutoShowArmed() branch below). autoShowActive here just tracks
+    // "armed" for the exit button, so the player has a way to cancel an
+    // armed-but-not-yet-started selection, exactly like massSelectionActive.
     onAutoShowChange: (enabled) => {
       autoShowActive = enabled;
-      if (enabled) {
-        idleFade.hideNow();
-        planningScreen.hide();
-      }
       updateExitButtonVisibility();
       updateShutterButtonVisibility();
     },
@@ -1012,14 +1374,22 @@ export async function startFireworksMood(app: Application, moodLayer: Container,
   uiContainer.addChild(snapshotErrorText);
 
   // moodLayer's own visible/hitArea toggling is main.ts's job (it owns every
-  // screen's show/hide, see its own doc comment) — this handle only resets
-  // the header's own visibility, independent of idleFade's fade state,
-  // exactly as a fresh re-entry to the mood should look.
+  // screen's show/hide, see its own doc comment) — show() only resets the
+  // header's own visibility, independent of idleFade's fade state, exactly
+  // as a fresh re-entry to the mood should look; hide() additionally runs
+  // the full resetForExit() teardown (see its own doc comment) before
+  // that, so nothing keeps running behind the home screen.
   handle = {
     show(): void {
       header.container.visible = true;
     },
     hide(): void {
+      // Leaving this mood entirely (main.ts's goHome(), or the header's own
+      // "الرئيسية") must never leave anything running behind the home
+      // screen — see resetForExit()'s own doc comment for exactly what it
+      // stops and why it's safe to call unconditionally, including when
+      // nothing was ever running.
+      resetForExit();
       header.container.visible = false;
     },
   };

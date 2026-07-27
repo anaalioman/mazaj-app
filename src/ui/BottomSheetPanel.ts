@@ -4,7 +4,6 @@ import { fastSin } from '../fireworks/SineTable';
 const SLIDE_MS = 220;
 const PANEL_PADDING_X = 16;
 const PANEL_PADDING_Y = 14;
-const CORNER_RADIUS = 16;
 /** Matches the old `@keyframes mzj-glow-row-pulse`: `0.85s ease-in-out 2` — two full in/out cycles. */
 const PULSE_CYCLE_MS = 850;
 const PULSE_CYCLES = 2;
@@ -94,7 +93,7 @@ export abstract class BottomSheetPanel {
     if (this.pulseRing.visible) {
       this.pulseRing
         .clear()
-        .roundRect(-3, -3, this.panelWidth + 6, this.panelHeight + 6, CORNER_RADIUS + 3)
+        .rect(-3, -3, this.panelWidth + 6, this.panelHeight + 6)
         .stroke({ width: 3, color: PULSE_COLOR, alpha: PULSE_MAX_ALPHA * intensity });
     }
   };
@@ -130,21 +129,11 @@ export abstract class BottomSheetPanel {
     this.reflow();
   }
 
-  /** Top-left/top-right rounded, bottom corners square — Pixi's `roundRect` rounds all four uniformly, so the old CSS's `16px 16px 0 0` needs a hand-drawn path instead. */
+  /** Sharp-edged rectangle, not rounded — matches SideDockPanel's own crisp, slim-rectangle silhouette (see its own finalize() doc comment). */
   private drawBackground(): void {
     const w = this.panelWidth;
     const h = this.panelHeight;
-    const r = CORNER_RADIUS;
-    this.panelBg
-      .clear()
-      .moveTo(0, h)
-      .lineTo(0, r)
-      .arcTo(0, 0, r, 0, r)
-      .lineTo(w - r, 0)
-      .arcTo(w, 0, w, r, r)
-      .lineTo(w, h)
-      .closePath()
-      .fill({ color: 0xffffff, alpha: 0.04 });
+    this.panelBg.clear().rect(0, 0, w, h).fill({ color: 0xffffff, alpha: 0.04 });
     this.panelBg.hitArea = new Rectangle(0, 0, w, h);
   }
 

@@ -124,9 +124,13 @@ export abstract class SideDockPanel {
     this.panelHeight = TITLE_AREA + contentHeight + PANEL_PADDING * 2;
     this.panelBg
       .clear()
-      .roundRect(0, 0, this.panelWidth, this.panelHeight, 18)
+      // Sharp-edged rectangle, not a rounded/capsule shape — a deliberate
+      // design choice: every dock/sheet panel in this app now shares this
+      // same crisp, slim-rectangle silhouette instead of the softer rounded
+      // look it used to have.
+      .rect(0, 0, this.panelWidth, this.panelHeight)
       .fill({ color: 0x0a0a14, alpha: 0.6 })
-      .stroke({ width: 1.5, color: 0xffe9b3, alpha: 0.35 });
+      .stroke({ width: 1.5, color: 0xffe9b3, alpha: 0.7 });
     this.panelBg.hitArea = new Rectangle(0, 0, this.panelWidth, this.panelHeight);
     this.reflow();
   }
